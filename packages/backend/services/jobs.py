@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -18,6 +19,10 @@ from api.routes.sync import broadcast
 from core.events import emit as emit_event
 
 logger = logging.getLogger(__name__)
+
+# Serializes GPU-heavy operations (transcription + diarization) so concurrent
+# uploads don't exhaust GPU memory and crash the app.
+_gpu_lock = threading.Lock()
 
 
 class JobCancelled(Exception):
@@ -446,53 +451,62 @@ async def handle_transcription(
             batch_size=effective["batch_size"],
         )
 
-        transcription_result: TranscriptionResult | None = None
-        async for item in tx_engine.transcribe_stream(audio_path, options):
-            if isinstance(item, TranscriptionProgress):
-                # Map engine progress (0-1) to job progress (0-60%)
-                await progress_callback(item.progress * 60)
-            elif isinstance(item, TranscriptionResult):
-                transcription_result = item
+        # Serialize GPU-heavy operations so concurrent uploads don't OOM-crash.
+        # Each thread has its own event loop, so the lock safely blocks the
+        # second job's thread until the first finishes GPU work.
+        logger.info("Waiting for GPU lock for recording %s", recording_id)
+        with _gpu_lock:
+            logger.info("Acquired GPU lock for recording %s", recording_id)
 
-        if transcription_result is None:
-            raise ValueError("Transcription did not produce a result")
+            transcription_result: TranscriptionResult | None = None
+            async for item in tx_engine.transcribe_stream(audio_path, options):
+                if isinstance(item, TranscriptionProgress):
+                    # Map engine progress (0-1) to job progress (0-60%)
+                    await progress_callback(item.progress * 60)
+                elif isinstance(item, TranscriptionResult):
+                    transcription_result = item
 
-        detected_language = transcription_result.language
-        # Convert segments to dict format for diarization service
-        segments_data = [
-            {
-                "start": seg.start,
-                "end": seg.end,
-                "text": seg.text,
-                "confidence": seg.confidence,
-                "words": [
-                    {"word": w.word, "start": w.start, "end": w.end, "score": w.confidence}
-                    for w in seg.words
-                ] if seg.words else [],
-            }
-            for seg in transcription_result.segments
-        ]
-        speakers_found: list[str] = []
+            if transcription_result is None:
+                raise ValueError("Transcription did not produce a result")
 
-        # Run diarization if enabled
-        if diarize and segments_data:
-            # Wrap progress for diarization phase (60-95%)
-            async def diarization_progress(p: float) -> None:
-                await progress_callback(60 + p * 0.35)
+            detected_language = transcription_result.language
+            # Convert segments to dict format for diarization service
+            segments_data = [
+                {
+                    "start": seg.start,
+                    "end": seg.end,
+                    "text": seg.text,
+                    "confidence": seg.confidence,
+                    "words": [
+                        {"word": w.word, "start": w.start, "end": w.end, "score": w.confidence}
+                        for w in seg.words
+                    ] if seg.words else [],
+                }
+                for seg in transcription_result.segments
+            ]
+            speakers_found: list[str] = []
 
-            try:
-                logger.info("Starting diarization for %s with %d segments", audio_path, len(segments_data))
-                diarization_result = await dia_service.diarize(
-                    audio_path=audio_path,
-                    segments=segments_data,
-                    progress_callback=diarization_progress,
-                )
-                segments_data = diarization_result["segments"]
-                speakers_found = diarization_result["speakers"]
-                logger.info("Diarization found %d speakers", len(speakers_found))
-            except Exception as e:
-                # Log but don't fail - diarization is optional
-                logger.warning("Diarization failed, continuing without speakers: %s", e, exc_info=True)
+            # Run diarization if enabled
+            if diarize and segments_data:
+                # Wrap progress for diarization phase (60-95%)
+                async def diarization_progress(p: float) -> None:
+                    await progress_callback(60 + p * 0.35)
+
+                try:
+                    logger.info("Starting diarization for %s with %d segments", audio_path, len(segments_data))
+                    diarization_result = await dia_service.diarize(
+                        audio_path=audio_path,
+                        segments=segments_data,
+                        progress_callback=diarization_progress,
+                    )
+                    segments_data = diarization_result["segments"]
+                    speakers_found = diarization_result["speakers"]
+                    logger.info("Diarization found %d speakers", len(speakers_found))
+                except Exception as e:
+                    # Log but don't fail - diarization is optional
+                    logger.warning("Diarization failed, continuing without speakers: %s", e, exc_info=True)
+
+            logger.info("Released GPU lock for recording %s", recording_id)
 
         await progress_callback(95)
 

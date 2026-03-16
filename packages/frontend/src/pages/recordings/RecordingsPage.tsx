@@ -229,7 +229,7 @@ export function RecordingsPage({ onViewTranscript }: RecordingsPageProps) {
   );
 
   const handleBatchImport = useCallback(
-    async (files: FileList) => {
+    async (files: FileList | File[]) => {
       setIsUploading(true);
       setUploadError(null);
 
@@ -443,7 +443,7 @@ export function RecordingsPage({ onViewTranscript }: RecordingsPageProps) {
     <div className="space-y-6">
       {/* Upload and Record Section */}
       <div className="grid gap-4 md:grid-cols-2">
-        <UploadDropzone onUpload={handleUpload} isUploading={isUploading} />
+        <UploadDropzone onUpload={handleUpload} onUploadMultiple={handleBatchImport} isUploading={isUploading} />
 
         {/* Record Button, Setup Panel, or Recorder */}
         {recordingPhase === 'recording' ? (

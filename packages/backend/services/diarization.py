@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,11 @@ class DiarizationService:
     Uses lazy loading to avoid import errors when dependencies are not installed.
     """
 
+    # Class-level lock to prevent concurrent pipeline loads across instances
+    _load_lock = threading.Lock()
+    _shared_pipeline: Any = None
+    _shared_pipeline_device: str | None = None
+
     def __init__(
         self,
         device: str = "cpu",
@@ -70,8 +76,8 @@ class DiarizationService:
     def _ensure_loaded(self) -> None:
         """Ensure WhisperX diarization pipeline is loaded.
 
-        Sets HF_HUB_OFFLINE=1 before loading to prevent any auto-downloads.
-        Models must be pre-downloaded via the Settings UI.
+        Uses a class-level lock so concurrent jobs share one pipeline
+        instead of loading duplicates that exhaust GPU memory.
 
         Raises:
             ImportError: If dependencies are not installed.
@@ -80,42 +86,65 @@ class DiarizationService:
         if self._pipeline is not None:
             return
 
-        # Gate on model availability — refuse to auto-download
-        from core.pyannote_catalog import are_all_models_downloaded, get_missing_components
-        if not are_all_models_downloaded():
-            missing = get_missing_components()
-            raise RuntimeError(
-                f"Diarization models not downloaded: {missing}. "
-                "Download them in Settings → AI → Speaker Diarization."
-            )
+        with DiarizationService._load_lock:
+            # Double-check after acquiring lock
+            if self._pipeline is not None:
+                return
 
-        try:
-            import whisperx
-            from whisperx.diarize import DiarizationPipeline
-        except ImportError as e:
-            raise ImportError(
-                "WhisperX/pyannote is not installed. Install with: pip install 'verbatim-backend[ml]'"
-            ) from e
+            # Reuse shared pipeline if device matches
+            if (
+                DiarizationService._shared_pipeline is not None
+                and DiarizationService._shared_pipeline_device == self.device
+            ):
+                logger.info("Reusing cached diarization pipeline (device=%s)", self.device)
+                self._pipeline = DiarizationService._shared_pipeline
+                try:
+                    import whisperx
+                    self._whisperx = whisperx
+                except ImportError:
+                    pass
+                return
 
-        self._whisperx = whisperx
+            # Gate on model availability — refuse to auto-download
+            from core.pyannote_catalog import are_all_models_downloaded, get_missing_components
+            if not are_all_models_downloaded():
+                missing = get_missing_components()
+                raise RuntimeError(
+                    f"Diarization models not downloaded: {missing}. "
+                    "Download them in Settings → AI → Speaker Diarization."
+                )
 
-        logger.info("Loading WhisperX diarization pipeline (device=%s)", self.device)
+            try:
+                import whisperx
+                from whisperx.diarize import DiarizationPipeline
+            except ImportError as e:
+                raise ImportError(
+                    "WhisperX/pyannote is not installed. Install with: pip install 'verbatim-backend[ml]'"
+                ) from e
 
-        # Prevent any auto-downloads during pipeline construction
-        old_offline = os.environ.get("HF_HUB_OFFLINE")
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        try:
-            self._pipeline = DiarizationPipeline(
-                use_auth_token=self.hf_token,
-                device=self.device,
-            )
-        finally:
-            if old_offline is None:
-                os.environ.pop("HF_HUB_OFFLINE", None)
-            else:
-                os.environ["HF_HUB_OFFLINE"] = old_offline
+            self._whisperx = whisperx
 
-        logger.info("WhisperX diarization pipeline loaded successfully")
+            logger.info("Loading WhisperX diarization pipeline (device=%s)", self.device)
+
+            # Prevent any auto-downloads during pipeline construction
+            old_offline = os.environ.get("HF_HUB_OFFLINE")
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            try:
+                self._pipeline = DiarizationPipeline(
+                    use_auth_token=self.hf_token,
+                    device=self.device,
+                )
+            finally:
+                if old_offline is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = old_offline
+
+            # Cache for reuse by other instances
+            DiarizationService._shared_pipeline = self._pipeline
+            DiarizationService._shared_pipeline_device = self.device
+
+            logger.info("WhisperX diarization pipeline loaded and cached successfully")
 
     async def diarize(
         self,
@@ -196,6 +225,11 @@ class DiarizationService:
 
         if self._pipeline is not None:
             logger.info("Unloading diarization pipeline")
+            # Clear shared cache if it points to our pipeline
+            with DiarizationService._load_lock:
+                if DiarizationService._shared_pipeline is self._pipeline:
+                    DiarizationService._shared_pipeline = None
+                    DiarizationService._shared_pipeline_device = None
             del self._pipeline
             self._pipeline = None
 

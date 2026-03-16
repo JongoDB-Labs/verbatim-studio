@@ -3,10 +3,11 @@ import { cn } from '@/lib/utils';
 
 interface UploadDropzoneProps {
   onUpload: (file: File) => void;
+  onUploadMultiple?: (files: File[]) => void;
   isUploading: boolean;
 }
 
-export function UploadDropzone({ onUpload, isUploading }: UploadDropzoneProps) {
+export function UploadDropzone({ onUpload, onUploadMultiple, isUploading }: UploadDropzoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -32,9 +33,13 @@ export function UploadDropzone({ onUpload, isUploading }: UploadDropzoneProps) {
 
       const files = e.dataTransfer.files;
       if (files.length > 0) {
-        const file = files[0];
-        if (file.type.startsWith('audio/') || file.type.startsWith('video/')) {
-          onUpload(file);
+        const validFiles = Array.from(files).filter(
+          (f) => f.type.startsWith('audio/') || f.type.startsWith('video/')
+        );
+        if (validFiles.length > 1 && onUploadMultiple) {
+          onUploadMultiple(validFiles);
+        } else if (validFiles.length > 0) {
+          onUpload(validFiles[0]);
         }
       }
     },
@@ -50,13 +55,15 @@ export function UploadDropzone({ onUpload, isUploading }: UploadDropzoneProps) {
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
-      if (files && files.length > 0) {
+      if (files && files.length > 1 && onUploadMultiple) {
+        onUploadMultiple(Array.from(files));
+      } else if (files && files.length > 0) {
         onUpload(files[0]);
       }
       // Reset input value to allow re-uploading the same file
       e.target.value = '';
     },
-    [onUpload]
+    [onUpload, onUploadMultiple]
   );
 
   return (
@@ -77,6 +84,7 @@ export function UploadDropzone({ onUpload, isUploading }: UploadDropzoneProps) {
         ref={fileInputRef}
         type="file"
         accept="audio/*,video/*"
+        multiple
         onChange={handleFileChange}
         className="hidden"
         disabled={isUploading}

@@ -5,6 +5,7 @@ with optional GPU acceleration.
 """
 
 import logging
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,10 @@ class WhisperXTranscriptionEngine(ITranscriptionEngine):
     Supports GPU acceleration via CUDA and Apple Silicon via MPS.
     """
 
+    # Class-level cache and lock to prevent concurrent model loads across instances
+    _model_cache: dict[tuple[str, str, str], Any] = {}
+    _model_lock = threading.Lock()
+
     def __init__(
         self,
         model_size: str = "base",
@@ -63,36 +68,50 @@ class WhisperXTranscriptionEngine(ITranscriptionEngine):
         self._align_language: str | None = None
 
     def _ensure_loaded(self) -> None:
-        """Ensure WhisperX is loaded and model is ready."""
+        """Ensure WhisperX is loaded and model is ready.
+
+        Uses a class-level lock + cache so concurrent jobs share one model
+        instead of loading duplicates that exhaust GPU memory.
+        """
         if self._model is not None:
             return
 
-        # Apply PyTorch 2.6+ compatibility patches
-        self._patch_torch_load()
+        with WhisperXTranscriptionEngine._model_lock:
+            # Double-check after acquiring lock
+            if self._model is not None:
+                return
 
-        try:
-            import whisperx
-        except ImportError as e:
-            raise ImportError(
-                "WhisperX is not installed. Install with: pip install whisperx"
-            ) from e
+            # Apply PyTorch 2.6+ compatibility patches
+            self._patch_torch_load()
 
-        self._whisperx = whisperx
+            try:
+                import whisperx
+            except ImportError as e:
+                raise ImportError(
+                    "WhisperX is not installed. Install with: pip install whisperx"
+                ) from e
 
-        logger.info(
-            "Loading WhisperX model: %s (device=%s, compute_type=%s)",
-            self._model_size,
-            self._device,
-            self._compute_type,
-        )
+            self._whisperx = whisperx
 
-        self._model = whisperx.load_model(
-            self._model_size,
-            self._device,
-            compute_type=self._compute_type,
-        )
-
-        logger.info("WhisperX model loaded successfully")
+            cache_key = (self._model_size, self._device, self._compute_type)
+            if cache_key in WhisperXTranscriptionEngine._model_cache:
+                logger.info(
+                    "Reusing cached WhisperX model: %s (device=%s, compute_type=%s)",
+                    self._model_size, self._device, self._compute_type,
+                )
+                self._model = WhisperXTranscriptionEngine._model_cache[cache_key]
+            else:
+                logger.info(
+                    "Loading WhisperX model: %s (device=%s, compute_type=%s)",
+                    self._model_size, self._device, self._compute_type,
+                )
+                self._model = whisperx.load_model(
+                    self._model_size,
+                    self._device,
+                    compute_type=self._compute_type,
+                )
+                WhisperXTranscriptionEngine._model_cache[cache_key] = self._model
+                logger.info("WhisperX model loaded and cached successfully")
 
     def _patch_torch_load(self) -> None:
         """Apply PyTorch 2.6+ compatibility patches for pyannote."""
