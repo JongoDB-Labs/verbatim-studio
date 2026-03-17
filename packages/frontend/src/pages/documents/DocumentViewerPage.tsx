@@ -490,11 +490,11 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
                       </svg>
                       Extracted Text (Page {currentPdfPage})
                     </h3>
-                    {(document.metadata?.ocr_model_label || document.metadata?.ocr_duration_s) && (
+                    {!!(document.metadata?.ocr_model_label || document.metadata?.ocr_duration_s) && (
                       <p className="text-xs text-gray-400 dark:text-gray-500 mb-3 ml-6">
-                        {document.metadata.ocr_model_label && <span>{document.metadata.ocr_model_label as string}</span>}
-                        {document.metadata.ocr_model_label && document.metadata.ocr_duration_s && <span> · </span>}
-                        {document.metadata.ocr_duration_s && <span>{document.metadata.ocr_duration_s as number}s</span>}
+                        {!!document.metadata.ocr_model_label && <span>{String(document.metadata.ocr_model_label)}</span>}
+                        {!!(document.metadata.ocr_model_label && document.metadata.ocr_duration_s) && <span> · </span>}
+                        {!!document.metadata.ocr_duration_s && <span>{Number(document.metadata.ocr_duration_s)}s</span>}
                       </p>
                     )}
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
@@ -529,11 +529,11 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
                       </svg>
                       Extracted Text (OCR)
                     </h3>
-                    {(document.metadata?.ocr_model_label || document.metadata?.ocr_duration_s) && (
+                    {!!(document.metadata?.ocr_model_label || document.metadata?.ocr_duration_s) && (
                       <p className="text-xs text-gray-400 dark:text-gray-500 mb-3 ml-6">
-                        {document.metadata.ocr_model_label && <span>{document.metadata.ocr_model_label as string}</span>}
-                        {document.metadata.ocr_model_label && document.metadata.ocr_duration_s && <span> · </span>}
-                        {document.metadata.ocr_duration_s && <span>{document.metadata.ocr_duration_s as number}s</span>}
+                        {!!document.metadata.ocr_model_label && <span>{String(document.metadata.ocr_model_label)}</span>}
+                        {!!(document.metadata.ocr_model_label && document.metadata.ocr_duration_s) && <span> · </span>}
+                        {!!document.metadata.ocr_duration_s && <span>{Number(document.metadata.ocr_duration_s)}s</span>}
                       </p>
                     )}
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 max-h-[40vh] overflow-auto">
