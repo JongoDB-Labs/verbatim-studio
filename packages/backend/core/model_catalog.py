@@ -4,15 +4,35 @@ Defines available GGUF models that can be downloaded from HuggingFace.
 """
 
 MODEL_CATALOG: dict[str, dict] = {
+    "granite-4.0-h-tiny": {
+        "repo": "ibm-granite/granite-4.0-h-tiny-GGUF",
+        "filename": "granite-4.0-h-tiny-Q4_K_M.gguf",
+        "size_bytes": 4_230_000_000,
+        "label": "Granite 4.0 H-Tiny",
+        "description": "IBM's hybrid Mamba-2 model (7B total, 1B active). Efficient on long contexts with lower memory usage.",
+        "default": True,
+        "max_context": 131072,
+        "tier": "standard",
+        "ram_gb": 5,
+        "ram_estimates": {
+            2048: "~5 GB",
+            4096: "~5.5 GB",
+            8192: "~6 GB",
+            16384: "~6.5 GB",
+            32768: "~7.5 GB",
+            65536: "~10 GB",
+            131072: "~14 GB",
+        },
+    },
     "granite-3.3-8b": {
         "repo": "bartowski/ibm-granite_granite-3.3-8b-instruct-GGUF",
         "filename": "ibm-granite_granite-3.3-8b-instruct-Q4_K_M.gguf",
         "size_bytes": 4_920_000_000,
         "label": "Granite 3.3 8B",
-        "description": "IBM's instruct model. Recommended for chat and analysis.",
-        "default": True,
+        "description": "IBM's 8B instruct model. Good conversational quality.",
+        "default": False,
         "max_context": 131072,
-        "tier": "standard",
+        "tier": "legacy",
         "ram_gb": 5,
         "ram_estimates": {
             2048: "~5 GB",
@@ -23,6 +43,7 @@ MODEL_CATALOG: dict[str, dict] = {
             65536: "~13 GB",
             131072: "~21 GB",
         },
+        "legacy_note": "Granite 4.0 H-Tiny is now the recommended default.",
     },
     "mistral-small-3.2-24b": {
         "repo": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",

@@ -787,6 +787,7 @@ export interface AIModel {
   download_path: string | null;
   tier: string | null;
   ram_gb: number | null;
+  legacy_note: string | null;
 }
 
 export interface AIModelListResponse {

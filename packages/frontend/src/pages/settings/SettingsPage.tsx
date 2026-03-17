@@ -2676,7 +2676,10 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Models</label>
             <div className="space-y-3">
-              {ocrModels.map((model) => {
+              {[...ocrModels].sort((a, b) => {
+                const tierOrder: Record<string, number> = { legacy: 0, standard: 1, pro: 2, max: 3 };
+                return (tierOrder[a.tier || 'standard'] ?? 9) - (tierOrder[b.tier || 'standard'] ?? 9);
+              }).map((model) => {
                 const isDownloading = ocrDownloading === model.id || model.downloading;
                 const isInstalled = model.downloaded && !model.downloading;
                 const tierColors: Record<string, string> = {
@@ -2935,8 +2938,12 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Models</label>
             <div className="space-y-3">
-              {aiModels.map((model) => {
+              {[...aiModels].sort((a, b) => {
+                const tierOrder: Record<string, number> = { legacy: 0, standard: 1, pro: 2, max: 3 };
+                return (tierOrder[a.tier || 'standard'] ?? 9) - (tierOrder[b.tier || 'standard'] ?? 9);
+              }).map((model) => {
                 const tierColors: Record<string, string> = {
+                  legacy: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
                   standard: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
                   pro: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
                   max: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
@@ -2948,7 +2955,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                       : hardwareInfo.total_ram_gb)
                   : null;
                 const memoryRatio = model.ram_gb && availableMemoryGb ? model.ram_gb / availableMemoryGb : null;
-                const showMemoryWarning = memoryRatio !== null && memoryRatio > 0.6 && model.tier !== 'standard';
+                const showMemoryWarning = memoryRatio !== null && memoryRatio > 0.6 && model.tier !== 'legacy' && model.tier !== 'standard';
 
                 return (
                 <div
@@ -2999,6 +3006,9 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                         )}
                       </div>
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{model.description}</p>
+                      {model.legacy_note && (
+                        <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400 italic">{model.legacy_note}</p>
+                      )}
                       <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
                         ~{formatBytes(model.size_bytes)} download
                         {model.ram_gb ? ` | ~${model.ram_gb} GB RAM` : ''}

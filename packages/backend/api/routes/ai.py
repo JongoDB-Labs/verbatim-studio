@@ -314,6 +314,7 @@ class AIModelInfo(BaseModel):
     download_path: str | None
     tier: str | None = None
     ram_gb: int | None = None
+    legacy_note: str | None = None
 
 
 class AIModelListResponse(BaseModel):
@@ -346,6 +347,7 @@ async def list_models() -> AIModelListResponse:
             download_path=str(file_path) if downloaded else None,
             tier=entry.get("tier"),
             ram_gb=entry.get("ram_gb"),
+            legacy_note=entry.get("legacy_note"),
         ))
 
     return AIModelListResponse(models=items)
@@ -890,9 +892,9 @@ async def chat_multi_stream(
                 system_content + context_header + history_text
             ) + 60  # framing overhead
             available = ai_service._n_ctx - overhead_tokens - max_response_tokens
-            if available < 100:
-                available = 100
-            full_context = ai_service._truncate_to_fit(full_context, available)
+            if available < 0:
+                available = 0
+            full_context = ai_service._truncate_to_fit(full_context, available) if available > 0 else ""
 
         system_content += context_header + full_context
 
@@ -913,6 +915,16 @@ async def chat_multi_stream(
 
     # Add current message
     messages.append(ChatMessage(role="user", content=request.message))
+
+    # Trim history if total tokens exceed context budget
+    if hasattr(ai_service, '_count_tokens'):
+        total_text = " ".join(m.content for m in messages)
+        total_tokens = ai_service._count_tokens(total_text) + len(messages) * 15  # template overhead per message
+        budget = ai_service._n_ctx - max_response_tokens
+        while total_tokens > budget and len(messages) > 2:
+            # Drop the oldest history message (index 1, right after system)
+            removed = messages.pop(1)
+            total_tokens -= ai_service._count_tokens(removed.content) + 15
 
     options = ChatOptions(temperature=request.temperature, max_tokens=max_response_tokens)
 
