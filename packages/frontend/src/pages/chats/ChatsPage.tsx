@@ -5,7 +5,7 @@ import { formatDate } from '@/lib/utils';
 import type { ChatMessage } from '@/components/ai/ChatMessages';
 
 interface ChatsPageProps {
-  onLoadConversation: (messages: ChatMessage[]) => void;
+  onLoadConversation: (messages: ChatMessage[], compressedMemory?: string | null) => void;
   onOpenChat: () => void;
 }
 
@@ -24,7 +24,7 @@ export function ChatsPage({ onLoadConversation, onOpenChat }: ChatsPageProps) {
         role: m.role,
         content: m.content,
       }));
-      onLoadConversation(messages);
+      onLoadConversation(messages, detail.compressed_memory);
       onOpenChat();
     } catch {
       alert('Failed to load conversation');

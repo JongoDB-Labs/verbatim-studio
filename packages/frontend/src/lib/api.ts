@@ -742,6 +742,7 @@ export interface ChatMultiRequest {
   document_ids?: string[];   // Document IDs to attach for context
   file_context?: string;     // Text content from uploaded files (temporary)
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  compressed_memory?: string | null;
   temperature?: number;
   general_mode?: boolean;    // When true, Max answers any question
 }
@@ -749,6 +750,7 @@ export interface ChatMultiRequest {
 export interface ChatStreamToken {
   token?: string;
   done?: boolean;
+  compressed_memory?: string | null;
   model?: string;
   error?: string;
 }
@@ -1015,6 +1017,7 @@ export interface ConversationDetail {
   created_at: string;
   updated_at: string;
   messages: ConversationMessage[];
+  compressed_memory: string | null;
 }
 
 export interface ConversationListResponse {
@@ -2898,7 +2901,7 @@ class ApiClient {
 
     get: (id: string) => this.request<ConversationDetail>(`/api/conversations/${id}`),
 
-    create: (data: { title?: string; messages: Array<{ role: string; content: string }> }) =>
+    create: (data: { title?: string; messages: Array<{ role: string; content: string }>; compressed_memory?: string | null }) =>
       this.request<ConversationDetail>('/api/conversations', {
         method: 'POST',
         body: JSON.stringify(data),

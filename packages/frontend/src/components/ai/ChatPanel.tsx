@@ -13,6 +13,8 @@ interface ChatPanelProps {
   attached: ChatAttachment[];
   setAttached: React.Dispatch<React.SetStateAction<ChatAttachment[]>>;
   onNavigateToChats?: () => void;
+  compressedMemory: string | null;
+  setCompressedMemory: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 export function ChatPanel({
@@ -23,6 +25,8 @@ export function ChatPanel({
   attached,
   setAttached,
   onNavigateToChats,
+  compressedMemory,
+  setCompressedMemory,
 }: ChatPanelProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
@@ -68,6 +72,7 @@ export function ChatPanel({
         document_ids: documentIds,
         file_context: fileTexts.length > 0 ? fileTexts.join('\n\n') : undefined,
         history,
+        compressed_memory: compressedMemory,
         temperature: 0.7,
         general_mode: generalMode || undefined,
       })) {
@@ -77,6 +82,9 @@ export function ChatPanel({
         if (token.token) {
           fullContent += token.token;
           setStreamingContent(fullContent);
+        }
+        if (token.compressed_memory !== undefined) {
+          setCompressedMemory(token.compressed_memory);
         }
         if (token.done) {
           const assistantMessage: ChatMessage = {
@@ -100,7 +108,7 @@ export function ChatPanel({
       setIsStreaming(false);
       setStreamingContent('');
     }
-  }, [messages, attached, setMessages, generalMode]);
+  }, [messages, attached, setMessages, generalMode, compressedMemory, setCompressedMemory]);
 
   const handleAttach = useCallback((attachment: ChatAttachment) => {
     setAttached((prev) => [...prev, attachment]);
@@ -117,8 +125,9 @@ export function ChatPanel({
       setMessages([]);
       setAttached([]);
       setStreamingContent('');
+      setCompressedMemory(null);
     }
-  }, [messages.length, attached.length, setMessages, setAttached]);
+  }, [messages.length, attached.length, setMessages, setAttached, setCompressedMemory]);
 
   const handleSave = useCallback(async () => {
     if (messages.length === 0) {
@@ -143,6 +152,7 @@ export function ChatPanel({
       await api.conversations.create({
         title: saveTitle || undefined,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
+        compressed_memory: compressedMemory,
       });
       setShowSaveDialog(false);
       setSaveTitle('');
@@ -153,7 +163,7 @@ export function ChatPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [messages, saveTitle, isSaving]);
+  }, [messages, saveTitle, isSaving, compressedMemory]);
 
   const handleViewHistory = useCallback(() => {
     onClose();

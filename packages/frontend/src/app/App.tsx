@@ -189,6 +189,7 @@ function AppContent() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
+  const [chatCompressedMemory, setChatCompressedMemory] = useState<string | null>(null);
 
   // Sidebar collapsed state (persisted to localStorage)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
@@ -325,6 +326,7 @@ function AppContent() {
         }));
         setChatMessages(messages);
         setChatAttachments([]);
+        setChatCompressedMemory(detail.compressed_memory);
         setIsChatOpen(true);
       } catch {
         console.error('Failed to load conversation');
@@ -460,9 +462,10 @@ function AppContent() {
   }, [navigation, isChatOpen, chatAttachments]);
 
   // Load saved conversation into chat
-  const handleLoadConversation = useCallback((messages: ChatMessage[]) => {
+  const handleLoadConversation = useCallback((messages: ChatMessage[], compressedMemory?: string | null) => {
     setChatMessages(messages);
     setChatAttachments([]);
+    setChatCompressedMemory(compressedMemory ?? null);
   }, []);
 
   // Tour handlers
@@ -738,6 +741,8 @@ function AppContent() {
             attached={chatAttachments}
             setAttached={setChatAttachments}
             onNavigateToChats={handleNavigateToChats}
+            compressedMemory={chatCompressedMemory}
+            setCompressedMemory={setChatCompressedMemory}
           />
 
           {/* Onboarding Tour */}
