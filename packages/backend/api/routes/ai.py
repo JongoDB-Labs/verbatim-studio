@@ -175,6 +175,7 @@ class MultiChatRequest(BaseModel):
     file_context: str | None = None  # Text content from uploaded files (temporary)
     history: list[HistoryMessage] = []
     compressed_memory: str | None = None  # Compressed summary of older conversation turns
+    web_search_enabled: bool = False
     temperature: float = Field(default=0.7, ge=0, le=2)
     general_mode: bool = False  # When True, Max answers any question
 
@@ -821,6 +822,32 @@ async def chat_multi_stream(
         context_parts.append(f"=== Uploaded File {label} ===\n{request.file_context}\n")
         label_index += 1
 
+    # --- Web search (if enabled and query detected) ---
+    web_results_text = None
+    web_sources = []
+    if request.web_search_enabled:
+        from services.web_search import (
+            extract_search_query,
+            create_search_provider,
+            format_results_for_context,
+            WebSearchConfig,
+        )
+        search_query = extract_search_query(request.message)
+        if search_query:
+            try:
+                from core.config import settings as app_settings
+                config = WebSearchConfig(
+                    provider=app_settings.WEB_SEARCH_PROVIDER or "tavily",
+                    api_key=app_settings.WEB_SEARCH_API_KEY or "",
+                )
+                provider = create_search_provider(config)
+                results = await provider.search(search_query.text)
+                if results:
+                    web_results_text = format_results_for_context(results, max_tokens=1000)
+                    web_sources = [{"title": r.title, "url": r.url} for r in results]
+            except Exception as e:
+                logger.warning("Web search failed: %s", e)
+
     # Detect if user is asking for help with the app
     def is_help_intent(message: str) -> bool:
         """Detect if the user message is asking for help with Verbatim Studio."""
@@ -928,7 +955,7 @@ async def chat_multi_stream(
             system_tokens=count(system_content),
             user_message_tokens=count(request.message),
             memory_tokens=count(compressed_memory) if compressed_memory else 0,
-            web_result_tokens=0,
+            web_result_tokens=count(web_results_text) if web_results_text else 0,
             history_tokens=count(" ".join(m["content"] for m in recent_msgs)) if recent_msgs else 0,
             context_tokens=count(context_header + full_context),
         )
@@ -955,7 +982,7 @@ async def chat_multi_stream(
             system_tokens=count(system_content),
             user_message_tokens=count(request.message),
             memory_tokens=count(compressed_memory) if compressed_memory else 0,
-            web_result_tokens=0,
+            web_result_tokens=count(web_results_text) if web_results_text else 0,
             history_tokens=count(" ".join(m["content"] for m in recent_msgs)) if recent_msgs else 0,
             context_tokens=count(context_str),
         )
@@ -966,7 +993,7 @@ async def chat_multi_stream(
     messages = ctx_mgr.build_messages(
         system_content=system_content,
         compressed_memory=compressed_memory,
-        web_results=None,  # Phase 2
+        web_results=web_results_text,
         attached_context=context_str,
         recent_history=recent_msgs,
         user_message=request.message,
@@ -980,7 +1007,7 @@ async def chat_multi_stream(
                 if chunk.content:
                     yield f"data: {json.dumps({'token': chunk.content})}\n\n"
                 if chunk.finish_reason:
-                    yield f"data: {json.dumps({'done': True, 'compressed_memory': compressed_memory})}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'compressed_memory': compressed_memory, 'web_sources': web_sources})}\n\n"
         except Exception as e:
             logger.exception("Multi-chat stream failed")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"

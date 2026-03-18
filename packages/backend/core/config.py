@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Diarization settings
     DIARIZATION_DEVICE: str = "auto"  # Device: auto, cpu, cuda, mps
 
+    # Web search (enterprise)
+    WEB_SEARCH_PROVIDER: str | None = None  # tavily | brave | searxng
+    WEB_SEARCH_API_KEY: str | None = None
+
     # HuggingFace token for pyannote speaker diarization
     HF_TOKEN: str | None = None
 
