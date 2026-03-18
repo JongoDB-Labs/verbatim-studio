@@ -4,6 +4,7 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  webSources?: Array<{ title: string; url: string }>;
 }
 
 interface ChatMessagesProps {
@@ -53,6 +54,24 @@ export function ChatMessages({ messages, isStreaming, streamingContent }: ChatMe
             }`}
           >
             <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+            {msg.role === 'assistant' && msg.webSources && msg.webSources.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Sources:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {msg.webSources.map((source, i) => (
+                    <a
+                      key={i}
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 underline"
+                    >
+                      {source.title}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ))}

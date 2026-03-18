@@ -35,6 +35,7 @@ export function ChatPanel({
   const [saveTitle, setSaveTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [generalMode, setGeneralMode] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   const handleSend = useCallback(async (message: string) => {
     const userMessage: ChatMessage = {
@@ -65,6 +66,7 @@ export function ChatPanel({
       }
 
       let fullContent = '';
+      let currentWebSources: Array<{ title: string; url: string }> | undefined;
 
       for await (const token of api.ai.chatMultiStream({
         message,
@@ -75,6 +77,7 @@ export function ChatPanel({
         compressed_memory: compressedMemory,
         temperature: 0.7,
         general_mode: generalMode || undefined,
+        web_search_enabled: webSearchEnabled || undefined,
       })) {
         if (token.error) {
           throw new Error(token.error);
@@ -86,11 +89,15 @@ export function ChatPanel({
         if (token.compressed_memory !== undefined) {
           setCompressedMemory(token.compressed_memory);
         }
+        if (token.web_sources) {
+          currentWebSources = token.web_sources;
+        }
         if (token.done) {
           const assistantMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: 'assistant',
             content: fullContent,
+            webSources: currentWebSources,
           };
           setMessages((prev) => [...prev, assistantMessage]);
           setStreamingContent('');
@@ -108,7 +115,7 @@ export function ChatPanel({
       setIsStreaming(false);
       setStreamingContent('');
     }
-  }, [messages, attached, setMessages, generalMode, compressedMemory, setCompressedMemory]);
+  }, [messages, attached, setMessages, generalMode, webSearchEnabled, compressedMemory, setCompressedMemory]);
 
   const handleAttach = useCallback((attachment: ChatAttachment) => {
     setAttached((prev) => [...prev, attachment]);
@@ -184,6 +191,8 @@ export function ChatPanel({
         hasMessages={messages.length > 0}
         generalMode={generalMode}
         onToggleGeneralMode={() => setGeneralMode((prev) => !prev)}
+        webSearchEnabled={webSearchEnabled}
+        onToggleWebSearch={() => setWebSearchEnabled((prev) => !prev)}
       />
       <ChatMessages
         messages={messages}

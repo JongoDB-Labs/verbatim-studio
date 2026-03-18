@@ -10,6 +10,8 @@ interface ChatHeaderProps {
   hasMessages?: boolean;
   generalMode?: boolean;
   onToggleGeneralMode?: () => void;
+  webSearchEnabled?: boolean;
+  onToggleWebSearch?: () => void;
 }
 
 export function ChatHeader({
@@ -22,6 +24,8 @@ export function ChatHeader({
   hasMessages = false,
   generalMode = false,
   onToggleGeneralMode,
+  webSearchEnabled = false,
+  onToggleWebSearch,
 }: ChatHeaderProps) {
   return (
     <div className="border-b border-gray-200 dark:border-gray-700 px-4 py-3">
@@ -35,6 +39,23 @@ export function ChatHeader({
           <h2 className="font-semibold text-gray-900 dark:text-gray-100">Max</h2>
         </div>
         <div className="flex items-center gap-1">
+          {/* Web search toggle */}
+          {onToggleWebSearch && (
+            <button
+              onClick={onToggleWebSearch}
+              className={`min-w-touch min-h-touch flex items-center justify-center rounded transition-colors ${
+                webSearchEnabled
+                  ? 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30'
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+              aria-label={webSearchEnabled ? 'Disable web search' : 'Enable web search'}
+              title={webSearchEnabled ? 'Web search on' : 'Web search off'}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </button>
+          )}
           {/* General mode toggle */}
           {onToggleGeneralMode && (
             <button

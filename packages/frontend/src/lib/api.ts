@@ -745,12 +745,14 @@ export interface ChatMultiRequest {
   compressed_memory?: string | null;
   temperature?: number;
   general_mode?: boolean;    // When true, Max answers any question
+  web_search_enabled?: boolean;
 }
 
 export interface ChatStreamToken {
   token?: string;
   done?: boolean;
   compressed_memory?: string | null;
+  web_sources?: Array<{ title: string; url: string }>;
   model?: string;
   error?: string;
 }
