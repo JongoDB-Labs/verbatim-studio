@@ -746,6 +746,7 @@ export interface ChatMultiRequest {
   temperature?: number;
   general_mode?: boolean;    // When true, Max answers any question
   web_search_enabled?: boolean;
+  conversation_id?: string | null;
 }
 
 export interface ChatStreamToken {

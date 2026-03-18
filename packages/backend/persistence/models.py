@@ -461,6 +461,20 @@ class ConversationMessage(Base):
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 
 
+class ChatWebCache(Base):
+    """Cached web search results for a conversation."""
+
+    __tablename__ = "chat_web_cache"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    results: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+
+
 class SearchHistory(Base):
     """Search history entry for tracking user searches."""
 

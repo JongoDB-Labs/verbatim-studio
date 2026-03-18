@@ -176,6 +176,7 @@ class MultiChatRequest(BaseModel):
     history: list[HistoryMessage] = []
     compressed_memory: str | None = None  # Compressed summary of older conversation turns
     web_search_enabled: bool = False
+    conversation_id: str | None = None  # For web cache lookups
     temperature: float = Field(default=0.7, ge=0, le=2)
     general_mode: bool = False  # When True, Max answers any question
 
@@ -831,17 +832,59 @@ async def chat_multi_stream(
             create_search_provider,
             format_results_for_context,
             WebSearchConfig,
+            WebSearchResult,
         )
         search_query = extract_search_query(request.message)
         if search_query:
             try:
-                from core.config import settings as app_settings
-                config = WebSearchConfig(
-                    provider=app_settings.WEB_SEARCH_PROVIDER or "tavily",
-                    api_key=app_settings.WEB_SEARCH_API_KEY or "",
-                )
-                provider = create_search_provider(config)
-                results = await provider.search(search_query.text)
+                results = None
+
+                # Check cache first (if conversation is saved)
+                if request.conversation_id:
+                    from persistence.models import ChatWebCache
+                    cached = await db.execute(
+                        select(ChatWebCache).where(
+                            ChatWebCache.conversation_id == request.conversation_id,
+                            ChatWebCache.query == search_query.text,
+                        )
+                    )
+                    cached_result = cached.scalar_one_or_none()
+                    if cached_result:
+                        cached_data = json.loads(cached_result.results)
+                        results = [
+                            WebSearchResult(
+                                title=r["title"],
+                                url=r["url"],
+                                content=r["content"],
+                                relevance_score=r.get("relevance_score", 0.0),
+                            )
+                            for r in cached_data
+                        ]
+
+                # If not cached, query the search provider
+                if results is None:
+                    from core.config import settings as app_settings
+                    config = WebSearchConfig(
+                        provider=app_settings.WEB_SEARCH_PROVIDER or "tavily",
+                        api_key=app_settings.WEB_SEARCH_API_KEY or "",
+                    )
+                    provider = create_search_provider(config)
+                    results = await provider.search(search_query.text)
+
+                    # Save to cache for this conversation
+                    if request.conversation_id and results:
+                        from persistence.models import ChatWebCache
+                        cache_entry = ChatWebCache(
+                            conversation_id=request.conversation_id,
+                            query=search_query.text,
+                            results=json.dumps([{
+                                "title": r.title, "url": r.url,
+                                "content": r.content, "relevance_score": r.relevance_score,
+                            } for r in results]),
+                        )
+                        db.add(cache_entry)
+                        await db.commit()
+
                 if results:
                     web_results_text = format_results_for_context(results, max_tokens=1000)
                     web_sources = [{"title": r.title, "url": r.url} for r in results]
