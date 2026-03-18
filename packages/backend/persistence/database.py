@@ -178,3 +178,7 @@ async def _run_migrations(conn) -> None:
     # Add quality review support (edited_by, original_text, quality_review_records)
     from migrations.add_quality_review import migrate as migrate_quality_review
     await conn.run_sync(lambda _: migrate_quality_review(db_path))
+
+    # Add compressed_memory column to conversations table
+    from migrations.add_conversation_compressed_memory import migrate as migrate_conversation_compressed_memory
+    await conn.run_sync(lambda _: migrate_conversation_compressed_memory(db_path))
