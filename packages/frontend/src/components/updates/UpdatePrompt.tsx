@@ -182,9 +182,9 @@ export function UpdatePrompt({
 
             {/* Progress bar */}
             <div className="mb-2">
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-300 ease-out"
+                  className="h-full bg-blue-600 dark:bg-blue-500 rounded-full"
                   style={{ width: `${downloadPercent}%` }}
                 />
               </div>
