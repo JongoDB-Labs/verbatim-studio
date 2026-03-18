@@ -380,6 +380,96 @@ async def update_transcription_config(
     return _build_response(effective)
 
 
+# --- Web Search Settings ---
+
+
+class WebSearchSettingsResponse(BaseModel):
+    provider: str
+    api_key_set: bool
+    api_key_masked: str | None
+
+
+class WebSearchSettingsUpdate(BaseModel):
+    provider: str | None = None
+    api_key: str | None = None  # Empty string to clear
+
+
+@router.get("/web-search", response_model=WebSearchSettingsResponse)
+async def get_web_search_settings() -> WebSearchSettingsResponse:
+    """Get web search configuration."""
+    from sqlalchemy import select
+
+    from persistence.database import get_session_factory
+    from persistence.models import Setting
+    from services.encryption import decrypt_config
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == "web_search_settings")
+        )
+        setting = result.scalar_one_or_none()
+
+    config: dict = {}
+    if setting and setting.value:
+        config = decrypt_config(setting.value) if isinstance(setting.value, dict) else {}
+
+    # Fallback to env vars
+    provider = config.get("provider") or settings.WEB_SEARCH_PROVIDER or "tavily"
+    api_key = config.get("api_key") or settings.WEB_SEARCH_API_KEY
+
+    return WebSearchSettingsResponse(
+        provider=provider,
+        api_key_set=bool(api_key),
+        api_key_masked=_mask_token(api_key),
+    )
+
+
+@router.put("/web-search", response_model=WebSearchSettingsResponse)
+async def update_web_search_settings(body: WebSearchSettingsUpdate) -> WebSearchSettingsResponse:
+    """Update web search configuration."""
+    from sqlalchemy import select
+
+    from persistence.database import get_session_factory
+    from persistence.models import Setting
+    from services.encryption import decrypt_config, encrypt_config
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == "web_search_settings")
+        )
+        setting = result.scalar_one_or_none()
+
+        current: dict = {}
+        if setting and setting.value:
+            current = decrypt_config(setting.value) if isinstance(setting.value, dict) else {}
+
+        if body.provider is not None:
+            current["provider"] = body.provider
+        if body.api_key is not None:
+            current["api_key"] = body.api_key if body.api_key else None
+
+        encrypted = encrypt_config(current)
+
+        if setting:
+            setting.value = encrypted
+        else:
+            session.add(Setting(key="web_search_settings", value=encrypted))
+
+        await session.commit()
+
+    # Also update the runtime settings so they take effect immediately
+    if body.provider is not None:
+        settings.WEB_SEARCH_PROVIDER = current.get("provider")
+    if body.api_key is not None:
+        settings.WEB_SEARCH_API_KEY = current.get("api_key")
+
+    return WebSearchSettingsResponse(
+        provider=current.get("provider", "tavily"),
+        api_key_set=bool(current.get("api_key")),
+        api_key_masked=_mask_token(current.get("api_key")),
+    )
+
+
 # --- OAuth Credentials ---
 
 

@@ -47,6 +47,7 @@ def test_sensitive_fields_list():
     """Verify expected sensitive fields."""
     expected = {
         "password", "secret_key", "account_key", "connection_string",
-        "credentials_json", "oauth_tokens", "access_token", "refresh_token"
+        "credentials_json", "oauth_tokens", "access_token", "refresh_token",
+        "client_secret", "api_key",
     }
     assert SENSITIVE_FIELDS == expected

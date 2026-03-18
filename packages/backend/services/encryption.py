@@ -25,6 +25,7 @@ SENSITIVE_FIELDS = {
     "access_token",
     "refresh_token",
     "client_secret",
+    "api_key",
 }
 
 

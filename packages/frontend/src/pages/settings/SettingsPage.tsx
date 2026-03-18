@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus } from '@/lib/api';
+import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate } from '@/lib/api';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useKeybindingStore, DEFAULT_ACTIONS, formatCombo, type KeyCombo, type ActionCategory } from '@/stores/keybindingStore';
 import { StorageTypeSelector } from '@/components/storage/StorageTypeSelector';
@@ -358,6 +358,13 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [gpuInstallMessage, setGpuInstallMessage] = useState<string>('');
   const [gpuError, setGpuError] = useState<string>('');
 
+  // Web Search settings
+  const [webSearchSettings, setWebSearchSettings] = useState<WebSearchSettings | null>(null);
+  const [webSearchProvider, setWebSearchProvider] = useState('tavily');
+  const [webSearchApiKey, setWebSearchApiKey] = useState('');
+  const [showWebSearchKey, setShowWebSearchKey] = useState(false);
+  const [webSearchSaving, setWebSearchSaving] = useState(false);
+
   const defaultLanguage = settings.defaultLanguage || '';
   const defaultPlaybackSpeed = settings.defaultPlaybackSpeed || 1;
   const autoTranscribe = settings.autoTranscribe ?? false;
@@ -385,6 +392,10 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     api.system.mlStatus().then(setMlStatus).catch(console.error);
     api.system.getHardware().then(setHardwareInfo).catch(console.error);
     api.system.getCategoryCounts().then((r) => setCategoryCounts(r.categories)).catch(console.error);
+    api.config.getWebSearchSettings().then((ws) => {
+      setWebSearchSettings(ws);
+      setWebSearchProvider(ws.provider);
+    }).catch(console.error);
     // Fetch GPU status on Windows
     if (window.electronAPI?.platform === 'win32') {
       api.system.gpuStatus().then(setGpuStatus).catch(console.error);
@@ -612,6 +623,22 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       setTxSaving(false);
     }
   }, [hfTokenInput]);
+
+  const saveWebSearchSettings = useCallback(async () => {
+    setWebSearchSaving(true);
+    try {
+      const updates: WebSearchSettingsUpdate = {};
+      if (webSearchProvider) updates.provider = webSearchProvider;
+      if (webSearchApiKey) updates.api_key = webSearchApiKey;
+      const updated = await api.config.updateWebSearchSettings(updates);
+      setWebSearchSettings(updated);
+      setWebSearchApiKey('');
+    } catch (error) {
+      console.error('Failed to save web search settings:', error);
+    } finally {
+      setWebSearchSaving(false);
+    }
+  }, [webSearchProvider, webSearchApiKey]);
 
   const refreshAiModels = useCallback(() => {
     api.ai.listModels().then((r) => setAiModels(r.models)).catch(console.error);
@@ -3563,6 +3590,119 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
 
           <p className="text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-3">
             External providers require an Enterprise license. Contact sales@verbatim.studio for more information.
+          </p>
+        </div>
+      </div>
+
+      {/* Web Search Section */}
+      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Web Search</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Configure web search for Max AI assistant. Requires an API key from your chosen provider.
+          </p>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Provider Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Search Provider</label>
+            <select
+              value={webSearchProvider}
+              onChange={(e) => setWebSearchProvider(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 py-2 px-3 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="tavily">Tavily</option>
+              <option value="brave">Brave Search</option>
+              <option value="searxng">SearXNG</option>
+            </select>
+          </div>
+
+          {/* API Key */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              {webSearchProvider === 'tavily' && (
+                <>Get an API key from{' '}
+                  <a href="https://tavily.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
+                    tavily.com
+                  </a>
+                </>
+              )}
+              {webSearchProvider === 'brave' && (
+                <>Get an API key from{' '}
+                  <a href="https://brave.com/search/api/" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
+                    brave.com/search/api
+                  </a>
+                </>
+              )}
+              {webSearchProvider === 'searxng' && (
+                <>Configure your SearXNG instance URL as the API key.</>
+              )}
+            </p>
+            {webSearchSettings?.api_key_set && !webSearchApiKey && (
+              <div className="flex items-center gap-2 mb-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 dark:bg-green-900/20 text-sm text-green-700 dark:text-green-400">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Key configured ({webSearchSettings.api_key_masked})
+                </span>
+                <button
+                  onClick={async () => {
+                    setWebSearchSaving(true);
+                    try {
+                      const updated = await api.config.updateWebSearchSettings({ api_key: '' });
+                      setWebSearchSettings(updated);
+                    } finally {
+                      setWebSearchSaving(false);
+                    }
+                  }}
+                  disabled={webSearchSaving}
+                  className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:underline disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showWebSearchKey ? 'text' : 'password'}
+                  value={webSearchApiKey}
+                  onChange={(e) => setWebSearchApiKey(e.target.value)}
+                  placeholder={webSearchSettings?.api_key_set ? 'Enter new key to replace...' : 'Enter API key...'}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 py-2 px-3 pr-10 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowWebSearchKey(!showWebSearchKey)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  {showWebSearchKey ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              <button
+                onClick={saveWebSearchSettings}
+                disabled={(!webSearchApiKey.trim() && webSearchProvider === (webSearchSettings?.provider || 'tavily')) || webSearchSaving}
+                className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-3">
+            Web search allows Max to find current information from the internet during conversations.
           </p>
         </div>
       </div>

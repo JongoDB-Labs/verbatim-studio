@@ -1141,6 +1141,18 @@ export interface AISettingsUpdate {
   context_size?: number;
 }
 
+// Web Search Settings Types
+export interface WebSearchSettings {
+  provider: string;
+  api_key_set: boolean;
+  api_key_masked: string | null;
+}
+
+export interface WebSearchSettingsUpdate {
+  provider?: string;
+  api_key?: string;
+}
+
 // System Info Types
 export interface StoragePaths {
   data_dir: string;
@@ -2708,6 +2720,16 @@ class ApiClient {
 
     updateAI: (data: AISettingsUpdate) =>
       this.request<AISettingsResponse>('/api/config/ai', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+
+    // Web Search Settings
+    getWebSearchSettings: () =>
+      this.request<WebSearchSettings>('/api/config/web-search'),
+
+    updateWebSearchSettings: (data: WebSearchSettingsUpdate) =>
+      this.request<WebSearchSettings>('/api/config/web-search', {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
