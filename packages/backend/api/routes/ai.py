@@ -174,6 +174,7 @@ class MultiChatRequest(BaseModel):
     document_ids: list[str] = []  # Document IDs for context
     file_context: str | None = None  # Text content from uploaded files (temporary)
     history: list[HistoryMessage] = []
+    compressed_memory: str | None = None  # Compressed summary of older conversation turns
     temperature: float = Field(default=0.7, ge=0, le=2)
     general_mode: bool = False  # When True, Max answers any question
 
@@ -881,50 +882,95 @@ async def chat_multi_stream(
 
     max_response_tokens = 1024
 
+    # --- Memory compression ---
+    from services.conversation_memory import ConversationMemoryService
+    from services.context_manager import ContextManager
+
+    memory_service = ConversationMemoryService()
+    n_ctx = ai_service._n_ctx if hasattr(ai_service, '_n_ctx') else 8192
+    ctx_mgr = ContextManager(n_ctx=n_ctx, max_response_tokens=max_response_tokens)
+
+    compressed_memory = request.compressed_memory
+    history_dicts = [{"role": m.role, "content": m.content} for m in request.history]
+
+    # Check if history needs compression
+    if memory_service.should_compress(history_dicts):
+        old_msgs, recent_msgs = memory_service.split_history(history_dicts)
+        if old_msgs:
+            # Compress old messages via the LLM
+            compress_prompt = memory_service.build_compression_prompt(old_msgs, compressed_memory)
+            compress_system = memory_service.get_system_prompt(compressed_memory)
+            try:
+                compress_response = await ai_service.chat(
+                    [
+                        ChatMessage(role="system", content=compress_system),
+                        ChatMessage(role="user", content=compress_prompt),
+                    ],
+                    ChatOptions(temperature=0.3, max_tokens=300),
+                )
+                compressed_memory = compress_response.content
+            except Exception:
+                logger.warning("Memory compression failed, keeping full history")
+                recent_msgs = history_dicts
+    else:
+        recent_msgs = history_dicts
+
+    # Build context string from attached items
+    context_str = None
     if context_parts:
-        context_header = f"\n\nYou have access to {len(context_parts)} attached item(s) (transcripts, documents, or files):\n\n"
+        context_header = f"You have access to {len(context_parts)} attached item(s) (transcripts, documents, or files):\n\n"
         full_context = "\n".join(context_parts)
         original_context_len = len(full_context)
-        if hasattr(ai_service, '_truncate_to_fit'):
-            # Count tokens for non-context parts
-            history_text = "\n".join(m.content for m in request.history) + request.message
-            overhead_tokens = ai_service._count_tokens(
-                system_content + context_header + history_text
-            ) + 60  # framing overhead
-            available = ai_service._n_ctx - overhead_tokens - max_response_tokens
-            if available < 0:
-                available = 0
-            full_context = ai_service._truncate_to_fit(full_context, available) if available > 0 else ""
 
-        system_content += context_header + full_context
+        # Use ContextManager for budget allocation
+        count = ai_service._count_tokens if hasattr(ai_service, '_count_tokens') else lambda t: len(t) // 3
+        budget = ctx_mgr.allocate_budget(
+            system_tokens=count(system_content),
+            user_message_tokens=count(request.message),
+            memory_tokens=count(compressed_memory) if compressed_memory else 0,
+            web_result_tokens=0,
+            history_tokens=count(" ".join(m["content"] for m in recent_msgs)) if recent_msgs else 0,
+            context_tokens=count(context_header + full_context),
+        )
 
+        # Truncate context to fit budget
+        if hasattr(ai_service, '_truncate_to_fit') and budget.context < count(context_header + full_context):
+            full_context = ai_service._truncate_to_fit(full_context, budget.context) if budget.context > 0 else ""
+
+        context_str = context_header + full_context
         if len(full_context) < original_context_len:
-            system_content += (
+            context_str += (
                 "\n\nNote: The attached content was too large to include in full. "
                 "Some content has been omitted. For complete analysis, use the Summarize or Analyze features."
             )
+
+        # Trim history to fit budget
+        while recent_msgs and budget.history < count(" ".join(m["content"] for m in recent_msgs)):
+            recent_msgs.pop(0)
     else:
-        system_content += "\n\nNo transcripts or documents are currently attached. Help with general questions about Verbatim Studio."
+        context_str = "No transcripts or documents are currently attached. Help with general questions about Verbatim Studio."
+        # Still need to trim history even without context
+        count = ai_service._count_tokens if hasattr(ai_service, '_count_tokens') else lambda t: len(t) // 3
+        budget = ctx_mgr.allocate_budget(
+            system_tokens=count(system_content),
+            user_message_tokens=count(request.message),
+            memory_tokens=count(compressed_memory) if compressed_memory else 0,
+            web_result_tokens=0,
+            history_tokens=count(" ".join(m["content"] for m in recent_msgs)) if recent_msgs else 0,
+            context_tokens=count(context_str),
+        )
+        while recent_msgs and budget.history < count(" ".join(m["content"] for m in recent_msgs)):
+            recent_msgs.pop(0)
 
-    # Build messages list
-    messages = [ChatMessage(role="system", content=system_content)]
-
-    # Add history
-    for msg in request.history:
-        messages.append(ChatMessage(role=msg.role, content=msg.content))
-
-    # Add current message
-    messages.append(ChatMessage(role="user", content=request.message))
-
-    # Trim history if total tokens exceed context budget
-    if hasattr(ai_service, '_count_tokens'):
-        total_text = " ".join(m.content for m in messages)
-        total_tokens = ai_service._count_tokens(total_text) + len(messages) * 15  # template overhead per message
-        budget = ai_service._n_ctx - max_response_tokens
-        while total_tokens > budget and len(messages) > 2:
-            # Drop the oldest history message (index 1, right after system)
-            removed = messages.pop(1)
-            total_tokens -= ai_service._count_tokens(removed.content) + 15
+    # Build final messages using ContextManager
+    messages = ctx_mgr.build_messages(
+        system_content=system_content,
+        compressed_memory=compressed_memory,
+        web_results=None,  # Phase 2
+        attached_context=context_str,
+        recent_history=recent_msgs,
+        user_message=request.message,
+    )
 
     options = ChatOptions(temperature=request.temperature, max_tokens=max_response_tokens)
 
@@ -934,7 +980,7 @@ async def chat_multi_stream(
                 if chunk.content:
                     yield f"data: {json.dumps({'token': chunk.content})}\n\n"
                 if chunk.finish_reason:
-                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'compressed_memory': compressed_memory})}\n\n"
         except Exception as e:
             logger.exception("Multi-chat stream failed")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"

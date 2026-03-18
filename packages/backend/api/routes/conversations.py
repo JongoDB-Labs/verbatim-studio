@@ -29,6 +29,7 @@ class ConversationCreate(BaseModel):
 
     title: str | None = None
     messages: list[MessageCreate] = []
+    compressed_memory: str | None = None
 
 
 class ConversationUpdate(BaseModel):
@@ -68,6 +69,7 @@ class ConversationDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     messages: list[MessageResponse]
+    compressed_memory: str | None = None
 
     class Config:
         from_attributes = True
@@ -163,6 +165,7 @@ async def get_conversation(
             )
             for msg in sorted(conv.messages, key=lambda m: m.created_at)
         ],
+        compressed_memory=conv.compressed_memory,
     )
 
 
@@ -180,7 +183,7 @@ async def create_conversation(
                 title = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
                 break
 
-    conv = Conversation(title=title)
+    conv = Conversation(title=title, compressed_memory=data.compressed_memory)
     db.add(conv)
     await db.flush()  # Get the ID
 
@@ -221,6 +224,7 @@ async def create_conversation(
             )
             for msg in sorted(conv.messages, key=lambda m: m.created_at)
         ],
+        compressed_memory=conv.compressed_memory,
     )
 
 
@@ -265,6 +269,7 @@ async def update_conversation(
             )
             for msg in sorted(conv.messages, key=lambda m: m.created_at)
         ],
+        compressed_memory=conv.compressed_memory,
     )
 
 
