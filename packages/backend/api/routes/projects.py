@@ -816,3 +816,45 @@ async def get_project_sections(
         documents=doc_count,
         notes=note_count,
     )
+
+
+class BulkMoveRequest(BaseModel):
+    """Request to move multiple items to this project."""
+
+    recording_ids: list[str] = []
+    document_ids: list[str] = []
+
+
+@router.post("/{project_id}/move-items", response_model=MessageResponse)
+async def bulk_move_items(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str,
+    data: BulkMoveRequest,
+) -> MessageResponse:
+    """Move recordings and documents into a project."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    moved = 0
+
+    for rec_id in data.recording_ids:
+        rec_result = await db.execute(select(Recording).where(Recording.id == rec_id))
+        rec = rec_result.scalar_one_or_none()
+        if rec and rec.project_id != project_id:
+            rec.project_id = project_id
+            moved += 1
+
+    for doc_id in data.document_ids:
+        doc_result = await db.execute(select(Document).where(Document.id == doc_id))
+        doc = doc_result.scalar_one_or_none()
+        if doc and doc.project_id != project_id:
+            doc.project_id = project_id
+            moved += 1
+
+    await db.commit()
+    await broadcast("projects", "updated", project_id)
+    await broadcast("recordings", "updated")
+    await broadcast("documents", "updated")
+    return MessageResponse(message=f"Moved {moved} items to project", id=project_id)

@@ -16,6 +16,7 @@ from persistence import get_db
 from persistence.models import Document, DocumentTag, Project, StorageLocation
 from services.storage import storage_service, get_active_storage_location
 from storage.factory import get_adapter
+from api.dependencies import get_active_project_id
 from api.routes.sync import broadcast
 from core.events import emit as emit_event
 
@@ -266,6 +267,7 @@ async def list_documents(
     date_to: Annotated[str | None, Query(description="Filter to date (ISO 8601)")] = None,
     tag_ids: Annotated[str | None, Query(description="Comma-separated tag IDs to filter by")] = None,
     mime_type: Annotated[str | None, Query(description="Filter by MIME type")] = None,
+    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
 ) -> DocumentListResponse:
     """List all documents with pagination and filtering."""
     query = select(Document)
@@ -323,6 +325,10 @@ async def list_documents(
             query = query.where(Document.created_at <= to_date)
         except ValueError:
             pass
+
+    # Project scoping (from X-Active-Project header)
+    if active_project_id:
+        query = query.where(Document.project_id == active_project_id)
 
     # Tag filter — documents must have ALL specified tags
     if tag_ids and tag_ids.strip():

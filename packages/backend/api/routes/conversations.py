@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.dependencies import get_active_project_id
 from api.routes.sync import broadcast
 from persistence import get_db
 from persistence.models import Conversation, ConversationMessage
@@ -30,6 +31,7 @@ class ConversationCreate(BaseModel):
     title: str | None = None
     messages: list[MessageCreate] = []
     compressed_memory: str | None = None
+    project_id: str | None = None
 
 
 class ConversationUpdate(BaseModel):
@@ -85,6 +87,7 @@ class ConversationListResponse(BaseModel):
 @router.get("", response_model=ConversationListResponse)
 async def list_conversations(
     db: Annotated[AsyncSession, Depends(get_db)],
+    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
 ) -> ConversationListResponse:
     """List all saved conversations, most recent first."""
     # Get conversations with message count
@@ -97,6 +100,10 @@ async def list_conversations(
         .group_by(Conversation.id)
         .order_by(Conversation.updated_at.desc())
     )
+
+    # Project scoping (from X-Active-Project header)
+    if active_project_id:
+        query = query.where(Conversation.project_id == active_project_id)
 
     result = await db.execute(query)
     rows = result.all()
@@ -183,7 +190,11 @@ async def create_conversation(
                 title = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
                 break
 
-    conv = Conversation(title=title, compressed_memory=data.compressed_memory)
+    conv = Conversation(
+        title=title,
+        compressed_memory=data.compressed_memory,
+        project_id=data.project_id,
+    )
     db.add(conv)
     await db.flush()  # Get the ID
 

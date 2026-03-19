@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.dependencies import get_active_project_id
 from api.routes.sync import broadcast
 from persistence import get_db
 from persistence.models import (
@@ -280,6 +281,7 @@ async def _semantic_search(
     query_embedding: list[float],
     limit: int,
     exclude_ids: set[str],
+    project_id: str | None = None,
 ) -> list["GlobalSearchResult"]:
     """Perform semantic search using embeddings.
 
@@ -288,6 +290,7 @@ async def _semantic_search(
         query_embedding: The embedded query vector.
         limit: Maximum results.
         exclude_ids: Segment IDs to exclude (already found by keyword).
+        project_id: Optional project ID to scope results to.
 
     Returns:
         List of semantic search results.
@@ -306,6 +309,8 @@ async def _semantic_search(
         .join(Transcript, Segment.transcript_id == Transcript.id)
         .join(Recording, Transcript.recording_id == Recording.id)
     )
+    if project_id:
+        query = query.where(Recording.project_id == project_id)
 
     result = await db.execute(query)
     rows = result.all()
@@ -373,6 +378,7 @@ async def _semantic_search_documents(
     query_embedding: list[float],
     limit: int,
     exclude_ids: set[str],
+    project_id: str | None = None,
 ) -> list["GlobalSearchResult"]:
     """Perform semantic search on document embeddings.
 
@@ -381,6 +387,7 @@ async def _semantic_search_documents(
         query_embedding: The embedded query vector.
         limit: Maximum results.
         exclude_ids: Document chunk IDs to exclude (already found by keyword).
+        project_id: Optional project ID to scope results to.
 
     Returns:
         List of semantic search results for documents.
@@ -396,6 +403,8 @@ async def _semantic_search_documents(
         .join(Document, DocumentEmbedding.document_id == Document.id)
         .where(Document.status == "completed")
     )
+    if project_id:
+        query = query.where(Document.project_id == project_id)
 
     result = await db.execute(query)
     rows = result.all()
@@ -502,6 +511,7 @@ async def global_search(
     limit: Annotated[int, Query(ge=1, le=50, description="Maximum results")] = 20,
     semantic: Annotated[bool, Query(description="Include semantic search results")] = True,
     save_history: Annotated[bool, Query(description="Save to search history")] = True,
+    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
 ) -> GlobalSearchResponse:
     """Search across recordings, segments, documents, notes, and conversations.
 
@@ -531,6 +541,8 @@ async def global_search(
         .order_by(Recording.created_at.desc())
         .limit(keyword_limit)
     )
+    if active_project_id:
+        recording_query = recording_query.where(Recording.project_id == active_project_id)
     recording_result = await db.execute(recording_query)
     recordings = recording_result.scalars().all()
 
@@ -564,6 +576,8 @@ async def global_search(
         .order_by(Recording.created_at.desc(), Segment.start_time)
         .limit(keyword_limit)
     )
+    if active_project_id:
+        segment_query = segment_query.where(Recording.project_id == active_project_id)
     segment_result = await db.execute(segment_query)
     segments = segment_result.all()
 
@@ -601,6 +615,8 @@ async def global_search(
         .order_by(Document.created_at.desc(), DocumentEmbedding.chunk_index)
         .limit(keyword_limit)
     )
+    if active_project_id:
+        document_query = document_query.where(Document.project_id == active_project_id)
     document_result = await db.execute(document_query)
     document_chunks = document_result.all()
 
@@ -639,6 +655,8 @@ async def global_search(
         .order_by(Document.created_at.desc())
         .limit(keyword_limit)
     )
+    if active_project_id:
+        direct_doc_query = direct_doc_query.where(Document.project_id == active_project_id)
     direct_doc_result = await db.execute(direct_doc_query)
     direct_docs = direct_doc_result.scalars().all()
 
@@ -723,6 +741,8 @@ async def global_search(
         .order_by(ConversationMessage.created_at.desc())
         .limit(keyword_limit)
     )
+    if active_project_id:
+        conversation_query = conversation_query.where(Conversation.project_id == active_project_id)
     conversation_result = await db.execute(conversation_query)
     conversations = conversation_result.all()
 
@@ -769,6 +789,8 @@ async def global_search(
         .order_by(Conversation.updated_at.desc())
         .limit(keyword_limit)
     )
+    if active_project_id:
+        conv_title_query = conv_title_query.where(Conversation.project_id == active_project_id)
     conv_title_result = await db.execute(conv_title_query)
     conv_titles = conv_title_result.scalars().all()
 
@@ -800,7 +822,8 @@ async def global_search(
             remaining_slots = limit - len(results)
             if remaining_slots > 0:
                 segment_semantic_results = await _semantic_search(
-                    db, query_embedding, remaining_slots // 2 or 1, seen_ids
+                    db, query_embedding, remaining_slots // 2 or 1, seen_ids,
+                    project_id=active_project_id,
                 )
                 results.extend(segment_semantic_results)
                 seen_ids.update(r.id for r in segment_semantic_results)
@@ -809,7 +832,8 @@ async def global_search(
             remaining_slots = limit - len(results)
             if remaining_slots > 0:
                 document_semantic_results = await _semantic_search_documents(
-                    db, query_embedding, remaining_slots, seen_ids
+                    db, query_embedding, remaining_slots, seen_ids,
+                    project_id=active_project_id,
                 )
                 results.extend(document_semantic_results)
         except Exception as e:
