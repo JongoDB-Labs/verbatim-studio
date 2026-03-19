@@ -177,7 +177,7 @@ export function ChatPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [messages, saveTitle, isSaving, compressedMemory]);
+  }, [messages, saveTitle, isSaving, compressedMemory, activeProject]);
 
   const handleViewHistory = useCallback(() => {
     onClose();
