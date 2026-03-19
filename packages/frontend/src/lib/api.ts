@@ -578,6 +578,11 @@ export interface Project {
   project_type: ProjectTypeInfo | null;
   metadata: Record<string, unknown>;
   recording_count: number;
+  is_archived: boolean;
+  sort_order: number;
+  icon: string | null;
+  color: string | null;
+  document_count: number;
   inherited_tags: InheritedTag[];
   created_at: string;
   updated_at: string;
@@ -2412,10 +2417,11 @@ class ApiClient {
 
   // Projects
   projects = {
-    list: (options?: { search?: string; projectTypeId?: string; tag?: string }) => {
+    list: (options?: { search?: string; projectTypeId?: string; tag?: string; include_archived?: boolean }) => {
       const params = new URLSearchParams();
       if (options?.search) params.set('search', options.search);
       if (options?.projectTypeId) params.set('project_type_id', options.projectTypeId);
+      if (options?.include_archived) params.set('include_archived', 'true');
       if (options?.tag) params.set('tag', options.tag);
       const queryString = params.toString();
       return this.request<ProjectListResponse>(`/api/projects${queryString ? `?${queryString}` : ''}`);

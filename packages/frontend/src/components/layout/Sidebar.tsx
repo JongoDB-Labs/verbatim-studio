@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { isElectron } from '../../lib/api';
 import { DownloadIndicator } from '../downloads/DownloadIndicator';
 import { TaskIndicator } from '../tasks/TaskIndicator';
+import { ProjectSelector } from './ProjectSelector';
 
 // Import icon logo to get correct bundled path (works with both http and file:// protocols)
 import logoIcon from '/logo-icon.png';
@@ -238,6 +239,11 @@ export function Sidebar({ currentTab, onNavigate, theme, onCycleTheme, version, 
 
         {/* Middle: Navigation items */}
         <nav className={`flex-1 px-3 py-4 space-y-1 ${collapsed ? 'md:overflow-visible overflow-y-auto' : 'overflow-y-auto'}`}>
+          {/* Project Selector */}
+          <div className="px-0 mb-2">
+            <ProjectSelector collapsed={collapsed} />
+          </div>
+
           {NAV_ITEMS.map((item) => {
             const isActive = currentTab === item.key;
             return (
