@@ -825,8 +825,9 @@ async def chat_multi_stream(
         context_parts.append(f"=== Uploaded File {label} ===\n{request.file_context}\n")
         label_index += 1
 
-    # Auto-inject project context via semantic search (when no manual attachments)
-    if active_project_id and not request.recording_ids and not request.document_ids:
+    # Auto-inject project context via semantic search (when no manual attachments/files)
+    # Note: only searches recording segments; document embeddings are a future enhancement
+    if active_project_id and not request.recording_ids and not request.document_ids and not request.file_context:
         try:
             from services.embedding import embedding_service, bytes_to_embedding
             if embedding_service.is_available():
@@ -843,27 +844,30 @@ async def chat_multi_stream(
                 seg_result = await db.execute(seg_query)
                 seg_rows = seg_result.all()
 
-                # Score and rank
-                import math
-                scored_segments = []
-                for seg_emb, seg_text, rec_title in seg_rows:
-                    emb = bytes_to_embedding(seg_emb.embedding)
-                    dot = sum(a * b for a, b in zip(query_embedding, emb))
+                if len(seg_rows) > 5000:
+                    logger.info("Project auto-context: skipping — %d embeddings exceeds limit", len(seg_rows))
+                else:
+                    # Score and rank
+                    import math
+                    scored_segments = []
                     norm_a = math.sqrt(sum(a * a for a in query_embedding))
-                    norm_b = math.sqrt(sum(b * b for b in emb))
-                    score = dot / (norm_a * norm_b) if norm_a and norm_b else 0
-                    if score > 0.35:
-                        scored_segments.append((score, seg_text, rec_title))
+                    for seg_emb, seg_text, rec_title in seg_rows:
+                        emb = bytes_to_embedding(seg_emb.embedding)
+                        dot = sum(a * b for a, b in zip(query_embedding, emb))
+                        norm_b = math.sqrt(sum(b * b for b in emb))
+                        score = dot / (norm_a * norm_b) if norm_a and norm_b else 0
+                        if score > 0.35:
+                            scored_segments.append((score, seg_text, rec_title))
 
-                scored_segments.sort(key=lambda x: x[0], reverse=True)
+                    scored_segments.sort(key=lambda x: x[0], reverse=True)
 
-                # Inject top matches as context
-                if scored_segments:
-                    auto_context_parts = []
-                    for score, text, title in scored_segments[:5]:
-                        auto_context_parts.append(f"[From '{title}']: {text}")
-                    project_auto_context = "\n\n=== Relevant content from this project ===\n" + "\n\n".join(auto_context_parts)
-                    context_parts.append(project_auto_context)
+                    # Inject top matches as context
+                    if scored_segments:
+                        auto_context_parts = []
+                        for score, text, title in scored_segments[:5]:
+                            auto_context_parts.append(f"[From '{title}']: {text}")
+                        project_auto_context = "\n\n=== Relevant content from this project ===\n" + "\n\n".join(auto_context_parts)
+                        context_parts.append(project_auto_context)
         except Exception as e:
             logger.warning("Project auto-context failed: %s", e)
 
