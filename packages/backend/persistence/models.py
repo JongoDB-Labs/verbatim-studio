@@ -51,7 +51,7 @@ class RecordingTemplate(Base):
 
 
 class Project(Base):
-    """Project model for organizing recordings."""
+    """Project model — isolated workspace for organizing content."""
 
     __tablename__ = "projects"
 
@@ -62,11 +62,17 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    icon: Mapped[str | None] = mapped_column(String(50))
+    color: Mapped[str | None] = mapped_column(String(7))
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
     project_type: Mapped[ProjectType | None] = relationship(back_populates="projects")
     recordings: Mapped[list["Recording"]] = relationship(back_populates="project")
+    documents: Mapped[list["Document"]] = relationship(back_populates="project")
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="project")
 
 
 class Tag(Base):
@@ -372,7 +378,7 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
-    project: Mapped["Project | None"] = relationship()
+    project: Mapped["Project | None"] = relationship(back_populates="documents")
     source: Mapped["Document | None"] = relationship(remote_side=[id])
     storage_location: Mapped["StorageLocation | None"] = relationship()
     tags: Mapped[list["Tag"]] = relationship(
@@ -436,10 +442,14 @@ class Conversation(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     title: Mapped[str | None] = mapped_column(String(255))
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL")
+    )
     compressed_memory: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
+    project: Mapped["Project | None"] = relationship(back_populates="conversations")
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="ConversationMessage.created_at"
     )
