@@ -3,7 +3,7 @@
 import { useProjectStore } from '@/stores/projectStore';
 
 // Helper to get current active project ID for query keys
-function activeProjectScope(): string | undefined {
+export function activeProjectScope(): string | undefined {
   return useProjectStore.getState().activeProject?.id;
 }
 

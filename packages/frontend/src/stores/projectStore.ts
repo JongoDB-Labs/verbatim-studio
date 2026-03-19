@@ -1,6 +1,12 @@
+/**
+ * Global store for tracking the active project workspace.
+ * Uses Zustand with localStorage persistence. Null state means "All Projects" mode.
+ */
 import { create } from 'zustand';
 
-interface ActiveProject {
+const STORAGE_KEY = 'verbatim-active-project';
+
+export interface ActiveProject {
   id: string;
   name: string;
   color?: string | null;
@@ -18,20 +24,24 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     set({ activeProject: project });
     // Persist to localStorage
     if (project) {
-      localStorage.setItem('active-project', JSON.stringify(project));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
     } else {
-      localStorage.removeItem('active-project');
+      localStorage.removeItem(STORAGE_KEY);
     }
   },
 }));
 
 // Initialize from localStorage on module load
-const stored = localStorage.getItem('active-project');
+const stored = localStorage.getItem(STORAGE_KEY);
 if (stored) {
   try {
     const parsed = JSON.parse(stored);
-    useProjectStore.setState({ activeProject: parsed });
+    if (parsed && typeof parsed.id === 'string' && typeof parsed.name === 'string') {
+      useProjectStore.setState({ activeProject: parsed });
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   } catch {
-    localStorage.removeItem('active-project');
+    localStorage.removeItem(STORAGE_KEY);
   }
 }
