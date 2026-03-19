@@ -16,6 +16,7 @@ import { DocumentFilters, type DocumentFilterState, type ViewMode } from '@/comp
 import { DocumentBulkActionBar } from '@/components/documents/DocumentBulkActionBar';
 import { UploadDocumentDialog } from '@/components/documents/UploadDocumentDialog';
 import { ProjectSelector } from '@/components/projects/ProjectSelector';
+import { useProjectStore } from '@/stores/projectStore';
 
 interface DocumentsPageProps {
   onViewDocument: (documentId: string) => void;
@@ -95,6 +96,8 @@ function loadSavedViewMode(): ViewMode {
 }
 
 export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
+  const { activeProject } = useProjectStore();
+
   // Local UI state
   const [filters, setFilters] = useState<DocumentFilterState>(loadSavedFilters);
   const [viewMode, setViewMode] = useState<ViewMode>(loadSavedViewMode);
@@ -313,7 +316,17 @@ export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Documents</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Documents</h1>
+            {activeProject && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                {activeProject.color && (
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: activeProject.color }} />
+                )}
+                {activeProject.name}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Upload and manage your documents
           </p>

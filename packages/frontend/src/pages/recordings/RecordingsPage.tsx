@@ -13,6 +13,7 @@ import { BulkActionBar } from '@/components/recordings/BulkActionBar';
 import { AudioRecorder } from '@/components/recordings/AudioRecorder';
 import { RecordingSetupPanel, type RecordingSettings } from '@/components/recordings/RecordingSetupPanel';
 import { ProjectSelector } from '@/components/projects/ProjectSelector';
+import { useProjectStore } from '@/stores/projectStore';
 import { RecordingTemplateManager } from '@/components/recordings/RecordingTemplateManager';
 import { UploadSetupDialog, type UploadOptions } from '@/components/recordings/UploadSetupDialog';
 
@@ -99,6 +100,7 @@ function loadSavedViewMode(): ViewMode {
 
 export function RecordingsPage({ onViewTranscript }: RecordingsPageProps) {
   const queryClient = useQueryClient();
+  const { activeProject } = useProjectStore();
 
   // Local UI state
   const [isUploading, setIsUploading] = useState(false);
@@ -441,6 +443,19 @@ export function RecordingsPage({ onViewTranscript }: RecordingsPageProps) {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Recordings</h1>
+        {activeProject && (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+            {activeProject.color && (
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: activeProject.color }} />
+            )}
+            {activeProject.name}
+          </span>
+        )}
+      </div>
+
       {/* Upload and Record Section */}
       <div className="grid gap-4 md:grid-cols-2">
         <UploadDropzone onUpload={handleUpload} onUploadMultiple={handleBatchImport} isUploading={isUploading} />

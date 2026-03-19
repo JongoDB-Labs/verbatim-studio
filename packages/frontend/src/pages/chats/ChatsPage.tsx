@@ -3,6 +3,7 @@ import { api, type ConversationDetail } from '@/lib/api';
 import { useConversations, useDeleteConversation } from '@/hooks';
 import { formatDate } from '@/lib/utils';
 import type { ChatMessage } from '@/components/ai/ChatMessages';
+import { useProjectStore } from '@/stores/projectStore';
 
 interface ChatsPageProps {
   onLoadConversation: (messages: ChatMessage[], compressedMemory?: string | null) => void;
@@ -10,6 +11,7 @@ interface ChatsPageProps {
 }
 
 export function ChatsPage({ onLoadConversation, onOpenChat }: ChatsPageProps) {
+  const { activeProject } = useProjectStore();
   const { data: conversationsData, isLoading: loading, error: fetchError, refetch } = useConversations();
   const conversations = conversationsData?.items ?? [];
   const error = fetchError?.message;
@@ -62,7 +64,17 @@ export function ChatsPage({ onLoadConversation, onOpenChat }: ChatsPageProps) {
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Saved Chats</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Saved Chats</h1>
+            {activeProject && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                {activeProject.color && (
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: activeProject.color }} />
+                )}
+                {activeProject.name}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Your saved conversations with Max
           </p>
