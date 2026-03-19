@@ -2965,7 +2965,7 @@ class ApiClient {
 
     get: (id: string) => this.request<ConversationDetail>(`/api/conversations/${id}`),
 
-    create: (data: { title?: string; messages: Array<{ role: string; content: string }>; compressed_memory?: string | null }) =>
+    create: (data: { title?: string; messages: Array<{ role: string; content: string }>; compressed_memory?: string | null; project_id?: string }) =>
       this.request<ConversationDetail>('/api/conversations', {
         method: 'POST',
         body: JSON.stringify(data),

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { useProjectStore } from '@/stores/projectStore';
 import { ChatHeader } from './ChatHeader';
 import { ChatMessages, type ChatMessage } from './ChatMessages';
 import { ChatInput } from './ChatInput';
@@ -37,6 +38,7 @@ export function ChatPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [generalMode, setGeneralMode] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const { activeProject } = useProjectStore();
 
   const handleSend = useCallback(async (message: string) => {
     const userMessage: ChatMessage = {
@@ -164,6 +166,7 @@ export function ChatPanel({
         title: saveTitle || undefined,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
         compressed_memory: compressedMemory,
+        project_id: activeProject?.id ?? undefined,
       });
       setShowSaveDialog(false);
       setSaveTitle('');
