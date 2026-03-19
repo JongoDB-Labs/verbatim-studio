@@ -60,3 +60,14 @@ def migrate(db_path: Path) -> None:
     except sqlite3.Error as e:
         logger.error(f"Database error during project workspace migration: {e}")
         raise
+    except Exception as e:
+        logger.error(f"Unexpected error during project workspace migration: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        migrate(Path(sys.argv[1]))
+    else:
+        migrate(Path("verbatim.db"))
