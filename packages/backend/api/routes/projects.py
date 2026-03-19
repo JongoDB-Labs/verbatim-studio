@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.routes.sync import broadcast
 from core.events import emit as emit_event
 from persistence.database import get_db
-from persistence.models import Document, Project, ProjectType, Recording, RecordingTag, Tag
+from persistence.models import Document, Project, ProjectType, Recording, RecordingTag, Setting, Tag
 from services.storage import storage_service
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,10 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
     project_type_id: str | None = None
     metadata: dict | None = None
+    is_archived: bool | None = None
+    sort_order: int | None = None
+    icon: str | None = None
+    color: str | None = None
 
 
 class InheritedTag(BaseModel):
@@ -66,6 +70,11 @@ class ProjectResponse(BaseModel):
     project_type: ProjectTypeInfo | None
     metadata: dict
     recording_count: int
+    is_archived: bool
+    sort_order: int
+    icon: str | None
+    color: str | None
+    document_count: int
     inherited_tags: list[InheritedTag]
     created_at: str
     updated_at: str
@@ -147,6 +156,7 @@ async def list_projects(
     search: Annotated[str | None, Query(description="Search by name")] = None,
     project_type_id: Annotated[str | None, Query(description="Filter by project type")] = None,
     tag: Annotated[str | None, Query(description="Filter by tag in metadata.tags")] = None,
+    include_archived: Annotated[bool, Query(description="Include archived projects")] = False,
 ) -> ProjectListResponse:
     """List all projects with recording counts."""
     # Base query with project type eager load
@@ -157,6 +167,9 @@ async def list_projects(
         .options(selectinload(Project.project_type))
         .order_by(Project.updated_at.desc())
     )
+
+    if not include_archived:
+        query = query.where(Project.is_archived == False)
 
     if search:
         query = query.where(Project.name.ilike(f"%{search}%"))
@@ -177,6 +190,11 @@ async def list_projects(
         )
         recording_count = count_result.scalar() or 0
 
+        doc_count_result = await db.execute(
+            select(func.count(Document.id)).where(Document.project_id == project.id)
+        )
+        document_count = doc_count_result.scalar() or 0
+
         # Compute inherited tags from recordings
         inherited_tags = await _compute_inherited_tags(db, project.id)
 
@@ -188,6 +206,11 @@ async def list_projects(
                 project_type=_project_type_to_info(project.project_type),
                 metadata=project.metadata_,
                 recording_count=recording_count,
+                is_archived=project.is_archived,
+                sort_order=project.sort_order,
+                icon=project.icon,
+                color=project.color,
+                document_count=document_count,
                 inherited_tags=inherited_tags,
                 created_at=project.created_at.isoformat(),
                 updated_at=project.updated_at.isoformat(),
@@ -203,6 +226,46 @@ async def list_projects(
         ]
 
     return ProjectListResponse(items=items, total=len(items))
+
+
+@router.get("/active/current")
+async def get_active_project(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Get the currently active project ID."""
+    result = await db.execute(
+        select(Setting).where(Setting.key == "active_project_id")
+    )
+    setting = result.scalar_one_or_none()
+    project_id = setting.value.get("id") if setting else None
+    return {"active_project_id": project_id}
+
+
+@router.put("/active/current")
+async def set_active_project(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    data: dict,
+) -> dict:
+    """Set the active project. Pass {"project_id": null} to clear."""
+    project_id = data.get("project_id")
+
+    if project_id:
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    result = await db.execute(
+        select(Setting).where(Setting.key == "active_project_id")
+    )
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = {"id": project_id}
+    else:
+        db.add(Setting(key="active_project_id", value={"id": project_id}))
+
+    await db.commit()
+    await broadcast("settings", "updated", "active_project_id")
+    return {"active_project_id": project_id}
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
@@ -255,6 +318,11 @@ async def create_project(
         project_type=_project_type_to_info(project.project_type),
         metadata=project.metadata_,
         recording_count=0,
+        is_archived=False,
+        sort_order=0,
+        icon=None,
+        color=None,
+        document_count=0,
         inherited_tags=[],  # New project has no recordings yet
         created_at=project.created_at.isoformat(),
         updated_at=project.updated_at.isoformat(),
@@ -286,6 +354,11 @@ async def get_project(
     )
     recording_count = count_result.scalar() or 0
 
+    doc_count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.project_id == project.id)
+    )
+    document_count = doc_count_result.scalar() or 0
+
     # Compute inherited tags from recordings
     inherited_tags = await _compute_inherited_tags(db, project.id)
 
@@ -296,6 +369,11 @@ async def get_project(
         project_type=_project_type_to_info(project.project_type),
         metadata=project.metadata_,
         recording_count=recording_count,
+        is_archived=project.is_archived,
+        sort_order=project.sort_order,
+        icon=project.icon,
+        color=project.color,
+        document_count=document_count,
         inherited_tags=inherited_tags,
         created_at=project.created_at.isoformat(),
         updated_at=project.updated_at.isoformat(),
@@ -378,6 +456,14 @@ async def update_project(
         project.project_type_id = data.project_type_id if data.project_type_id else None
     if data.metadata is not None:
         project.metadata_ = data.metadata
+    if data.is_archived is not None:
+        project.is_archived = data.is_archived
+    if data.sort_order is not None:
+        project.sort_order = data.sort_order
+    if data.icon is not None:
+        project.icon = data.icon
+    if data.color is not None:
+        project.color = data.color
 
     await db.commit()
     await broadcast("projects", "updated", project_id)
@@ -397,6 +483,11 @@ async def update_project(
     )
     recording_count = count_result.scalar() or 0
 
+    doc_count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.project_id == project.id)
+    )
+    document_count = doc_count_result.scalar() or 0
+
     # Compute inherited tags from recordings
     inherited_tags = await _compute_inherited_tags(db, project.id)
 
@@ -407,6 +498,11 @@ async def update_project(
         project_type=_project_type_to_info(project.project_type),
         metadata=project.metadata_,
         recording_count=recording_count,
+        is_archived=project.is_archived,
+        sort_order=project.sort_order,
+        icon=project.icon,
+        color=project.color,
+        document_count=document_count,
         inherited_tags=inherited_tags,
         created_at=project.created_at.isoformat(),
         updated_at=project.updated_at.isoformat(),
@@ -642,3 +738,81 @@ async def get_project_recordings(
     ]
 
     return ProjectRecordingsResponse(items=items, total=len(items))
+
+
+@router.patch("/{project_id}/archive", response_model=MessageResponse)
+async def archive_project(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str,
+) -> MessageResponse:
+    """Archive a project (soft-hide from sidebar)."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.is_archived = True
+    await db.commit()
+    await broadcast("projects", "updated", project_id)
+    return MessageResponse(message="Project archived", id=project_id)
+
+
+@router.patch("/{project_id}/unarchive", response_model=MessageResponse)
+async def unarchive_project(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str,
+) -> MessageResponse:
+    """Unarchive a project."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.is_archived = False
+    await db.commit()
+    await broadcast("projects", "updated", project_id)
+    return MessageResponse(message="Project unarchived", id=project_id)
+
+
+class ProjectSections(BaseModel):
+    """Content type counts for a project."""
+
+    recordings: int = 0
+    documents: int = 0
+    notes: int = 0
+
+
+@router.get("/{project_id}/sections", response_model=ProjectSections)
+async def get_project_sections(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str,
+) -> ProjectSections:
+    """Get content type counts for a project (auto type-based sections)."""
+    from persistence.models import Note
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    rec_count = await db.scalar(
+        select(func.count(Recording.id)).where(Recording.project_id == project_id)
+    ) or 0
+
+    doc_count = await db.scalar(
+        select(func.count(Document.id)).where(Document.project_id == project_id)
+    ) or 0
+
+    note_count = await db.scalar(
+        select(func.count(Note.id)).where(
+            (Note.recording_id.in_(
+                select(Recording.id).where(Recording.project_id == project_id)
+            )) |
+            (Note.document_id.in_(
+                select(Document.id).where(Document.project_id == project_id)
+            ))
+        )
+    ) or 0
+
+    return ProjectSections(
+        recordings=rec_count,
+        documents=doc_count,
+        notes=note_count,
+    )

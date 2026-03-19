@@ -122,6 +122,38 @@ async def seed_defaults(session: AsyncSession) -> None:
     await session.commit()
 
 
+async def _seed_default_project(session: AsyncSession) -> None:
+    """Ensure a 'General' default project exists for unscoped content."""
+    from sqlalchemy import select
+
+    from .models import Project, Setting
+
+    result = await session.execute(
+        select(Setting).where(Setting.key == "default_project_id")
+    )
+    existing_setting = result.scalar_one_or_none()
+    if existing_setting:
+        return  # Already seeded
+
+    result = await session.execute(
+        select(Project).where(Project.name == "General")
+    )
+    general = result.scalar_one_or_none()
+
+    if not general:
+        general = Project(
+            name="General",
+            description="Default project for unorganized content",
+            sort_order=0,
+        )
+        session.add(general)
+        await session.flush()
+
+    setting = Setting(key="default_project_id", value={"id": general.id})
+    session.add(setting)
+    await session.commit()
+
+
 async def init_db() -> None:
     """Initialize database tables and seed defaults."""
     from .models import Base
@@ -136,6 +168,7 @@ async def init_db() -> None:
     # Auto-seed defaults on startup
     async with async_session() as session:
         await seed_defaults(session)
+        await _seed_default_project(session)
 
 
 async def _run_migrations(conn) -> None:
