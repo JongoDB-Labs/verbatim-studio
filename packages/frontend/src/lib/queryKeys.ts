@@ -54,6 +54,7 @@ export const queryKeys = {
     list: (filters?: ProjectFilters) => ['projects', 'list', filters] as const,
     detail: (id: string) => ['projects', 'detail', id] as const,
     recordings: (id: string) => ['projects', id, 'recordings'] as const,
+    sections: (id: string) => ['projects', id, 'sections'] as const,
     analytics: (id: string) => ['projects', id, 'analytics'] as const,
   },
 

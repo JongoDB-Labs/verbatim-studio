@@ -23,7 +23,7 @@ export function ProjectHomePage({
   });
 
   const { data: sections } = useQuery({
-    queryKey: ['projects', projectId, 'sections'],
+    queryKey: queryKeys.projects.sections(projectId),
     queryFn: () => api.projects.getSections(projectId),
   });
 
@@ -126,7 +126,7 @@ export function ProjectHomePage({
       </div>
 
       {/* Empty State */}
-      {(sections?.recordings ?? 0) === 0 && (sections?.documents ?? 0) === 0 && (
+      {(sections?.recordings ?? 0) === 0 && (sections?.documents ?? 0) === 0 && (sections?.notes ?? 0) === 0 && (
         <div className="text-center py-12 text-zinc-500">
           <p className="text-lg mb-2">This project is empty</p>
           <p className="text-sm">Upload recordings or documents, or move existing content into this project.</p>
