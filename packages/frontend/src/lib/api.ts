@@ -1,3 +1,5 @@
+import { useProjectStore } from '@/stores/projectStore';
+
 // Backend API URL configuration
 // Priority:
 // 1. Electron app: use URL from main process via IPC (preload)
@@ -1536,6 +1538,11 @@ class ApiClient {
     if (token && !headers['Authorization']) {
       headers['Authorization'] = `Bearer ${token}`;
     }
+    // Inject active project header for backend scoping
+    const activeProject = useProjectStore.getState().activeProject;
+    if (activeProject) {
+      headers['X-Active-Project'] = activeProject.id;
+    }
     const response = await fetch(`${currentBaseUrl}${path}`, {
       ...options,
       headers,
@@ -2447,6 +2454,32 @@ class ApiClient {
     removeRecording: (projectId: string, recordingId: string) =>
       this.request<MessageResponse>(`/api/projects/${projectId}/recordings/${recordingId}`, {
         method: 'DELETE',
+      }),
+
+    getActiveProject: () =>
+      this.request<{ active_project_id: string | null }>('/api/projects/active/current'),
+
+    setActiveProject: (projectId: string | null) =>
+      this.request<{ active_project_id: string | null }>('/api/projects/active/current', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId }),
+      }),
+
+    archive: (id: string) =>
+      this.request<{ message: string; id: string }>(`/api/projects/${id}/archive`, { method: 'PATCH' }),
+
+    unarchive: (id: string) =>
+      this.request<{ message: string; id: string }>(`/api/projects/${id}/unarchive`, { method: 'PATCH' }),
+
+    getSections: (id: string) =>
+      this.request<{ recordings: number; documents: number; notes: number }>(`/api/projects/${id}/sections`),
+
+    moveItems: (id: string, data: { recording_ids: string[]; document_ids: string[] }) =>
+      this.request<{ message: string; id: string }>(`/api/projects/${id}/move-items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
       }),
   };
 
