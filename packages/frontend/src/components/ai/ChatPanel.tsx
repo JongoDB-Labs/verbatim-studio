@@ -30,6 +30,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [streamingWebSources, setStreamingWebSources] = useState<Array<{ title: string; url: string }>>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveTitle, setSaveTitle] = useState('');
@@ -46,6 +47,7 @@ export function ChatPanel({
     setMessages((prev) => [...prev, userMessage]);
     setIsStreaming(true);
     setStreamingContent('');
+    setStreamingWebSources([]);
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -91,6 +93,7 @@ export function ChatPanel({
         }
         if (token.web_sources) {
           currentWebSources = token.web_sources;
+          setStreamingWebSources(token.web_sources);
         }
         if (token.done) {
           const assistantMessage: ChatMessage = {
@@ -114,6 +117,7 @@ export function ChatPanel({
     } finally {
       setIsStreaming(false);
       setStreamingContent('');
+      setStreamingWebSources([]);
     }
   }, [messages, attached, setMessages, generalMode, webSearchEnabled, compressedMemory, setCompressedMemory]);
 
@@ -198,6 +202,7 @@ export function ChatPanel({
         messages={messages}
         isStreaming={isStreaming}
         streamingContent={streamingContent}
+        streamingWebSources={streamingWebSources}
       />
       <div className="relative">
         {showPicker && (

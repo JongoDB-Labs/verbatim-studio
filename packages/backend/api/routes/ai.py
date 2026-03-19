@@ -831,7 +831,9 @@ async def chat_multi_stream(
             extract_search_query,
             create_search_provider,
             format_results_for_context,
-            WebSearchConfig,
+            load_web_search_config,
+            get_cached_results,
+            cache_results,
             WebSearchResult,
         )
         search_query = extract_search_query(request.message)
@@ -839,8 +841,11 @@ async def chat_multi_stream(
             try:
                 results = None
 
-                # Check cache first (if conversation is saved)
-                if request.conversation_id:
+                # Layer 1: In-memory TTL cache (covers all chats, saved or not)
+                results = get_cached_results(search_query.text)
+
+                # Layer 2: DB cache (persisted per-conversation, survives restarts)
+                if results is None and request.conversation_id:
                     from persistence.models import ChatWebCache
                     cached = await db.execute(
                         select(ChatWebCache).where(
@@ -860,33 +865,51 @@ async def chat_multi_stream(
                             )
                             for r in cached_data
                         ]
+                        cache_results(search_query.text, results)
 
-                # If not cached, query the search provider
+                # Layer 3: Live API call (only if both caches miss)
                 if results is None:
-                    from core.config import settings as app_settings
-                    config = WebSearchConfig(
-                        provider=app_settings.WEB_SEARCH_PROVIDER or "tavily",
-                        api_key=app_settings.WEB_SEARCH_API_KEY or "",
-                    )
-                    provider = create_search_provider(config)
-                    results = await provider.search(search_query.text)
+                    ws_config = await load_web_search_config()
+                    if ws_config:
+                        provider = create_search_provider(ws_config)
+                        if search_query.urls and hasattr(provider, "extract"):
+                            # URL in message → extract page content directly
+                            results = await provider.extract(search_query.urls)
+                        else:
+                            # Search → then extract top 3 for full content
+                            results = await provider.search(search_query.text)
+                            if results and hasattr(provider, "extract"):
+                                top_urls = [r.url for r in results[:3]]
+                                try:
+                                    extracted = await provider.extract(top_urls)
+                                    # Merge: keep search titles/scores, replace content with extracted
+                                    extracted_map = {e.url: e.content for e in extracted}
+                                    for r in results:
+                                        if r.url in extracted_map:
+                                            r.content = extracted_map[r.url]
+                                except Exception as e:
+                                    logger.debug("Extract enrichment failed, using search snippets: %s", e)
 
-                    # Save to cache for this conversation
-                    if request.conversation_id and results:
-                        from persistence.models import ChatWebCache
-                        cache_entry = ChatWebCache(
-                            conversation_id=request.conversation_id,
-                            query=search_query.text,
-                            results=json.dumps([{
-                                "title": r.title, "url": r.url,
-                                "content": r.content, "relevance_score": r.relevance_score,
-                            } for r in results]),
-                        )
-                        db.add(cache_entry)
-                        await db.commit()
+                        # Populate both caches
+                        if results:
+                            cache_results(search_query.text, results)
+                            if request.conversation_id:
+                                from persistence.models import ChatWebCache
+                                cache_entry = ChatWebCache(
+                                    conversation_id=request.conversation_id,
+                                    query=search_query.text,
+                                    results=json.dumps([{
+                                        "title": r.title, "url": r.url,
+                                        "content": r.content, "relevance_score": r.relevance_score,
+                                    } for r in results]),
+                                )
+                                db.add(cache_entry)
+                                await db.flush()
+                    else:
+                        logger.info("Web search skipped: no API key configured")
 
                 if results:
-                    web_results_text = format_results_for_context(results, max_tokens=1000)
+                    web_results_text = format_results_for_context(results, max_tokens=3000)
                     web_sources = [{"title": r.title, "url": r.url} for r in results]
             except Exception as e:
                 logger.warning("Web search failed: %s", e)
@@ -1046,6 +1069,9 @@ async def chat_multi_stream(
 
     async def generate():
         try:
+            # Send web sources early so the UI can show them while LLM generates
+            if web_sources:
+                yield f"data: {json.dumps({'web_sources': web_sources})}\n\n"
             async for chunk in ai_service.chat_stream(messages, options):
                 if chunk.content:
                     yield f"data: {json.dumps({'token': chunk.content})}\n\n"

@@ -160,6 +160,11 @@ class ContextManager:
         if web_results:
             parts.append(
                 "\n\n=== Web Search Results ===\n"
+                "The following are real-time web search results retrieved just now. "
+                "You MUST use these as your primary source of information for this response. "
+                "Prioritize this data over your training knowledge — it is more current and accurate. "
+                "Synthesize the information clearly, cite sources by name when possible, "
+                "and note if sources disagree.\n\n"
                 f"{web_results}"
             )
 

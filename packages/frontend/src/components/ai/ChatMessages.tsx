@@ -11,9 +11,10 @@ interface ChatMessagesProps {
   messages: ChatMessage[];
   isStreaming: boolean;
   streamingContent: string;
+  streamingWebSources?: Array<{ title: string; url: string }>;
 }
 
-export function ChatMessages({ messages, isStreaming, streamingContent }: ChatMessagesProps) {
+export function ChatMessages({ messages, isStreaming, streamingContent, streamingWebSources }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -75,8 +76,53 @@ export function ChatMessages({ messages, isStreaming, streamingContent }: ChatMe
           </div>
         </div>
       ))}
-      {/* Thinking indicator - shows while waiting for response */}
-      {isStreaming && !streamingContent && (
+      {/* Web source cards - appear as soon as search completes, before tokens stream */}
+      {isStreaming && streamingWebSources && streamingWebSources.length > 0 && (
+        <div className="flex justify-start" aria-label="Sources found">
+          <div className="max-w-[90%]">
+            <div className="flex items-center gap-1.5 mb-2 text-xs text-gray-500 dark:text-gray-400">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span>{streamingContent ? 'Sources' : 'Searching...'}</span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {streamingWebSources.map((source, i) => {
+                let domain: string;
+                try {
+                  domain = new URL(source.url).hostname.replace('www.', '');
+                } catch {
+                  domain = source.url;
+                }
+                return (
+                  <a
+                    key={i}
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 w-36 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 p-2.5 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${domain}&sz=16`}
+                        alt=""
+                        className="w-4 h-4 rounded-sm"
+                        loading="lazy"
+                      />
+                      <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate">{domain}</span>
+                    </div>
+                    <p className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2 leading-snug">
+                      {source.title || domain}
+                    </p>
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Thinking indicator - shows while waiting for response (no sources yet) */}
+      {isStreaming && !streamingContent && (!streamingWebSources || streamingWebSources.length === 0) && (
         <div className="flex justify-start" aria-label="Max is thinking">
           <div className="rounded-lg px-4 py-3 bg-gray-100 dark:bg-gray-700" aria-live="polite">
             <div className="flex items-center gap-1">

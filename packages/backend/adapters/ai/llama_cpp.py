@@ -25,9 +25,9 @@ from core.interfaces import (
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache for singleton pattern with path-based invalidation
+# Module-level cache for singleton pattern with config-based invalidation
 _cached_service: "LlamaCppAIService | None" = None
-_cached_model_path: str | None = None
+_cached_config: tuple[str | None, int, int] | None = None
 
 
 def get_llama_service(
@@ -37,9 +37,9 @@ def get_llama_service(
 ) -> "LlamaCppAIService":
     """Get a cached LlamaCppAIService, creating or replacing as needed.
 
-    If the model_path differs from the cached service's path, the cache
-    is invalidated and a new service is created. This allows model switching
-    without restarting the server.
+    Invalidates the cache when model_path, n_ctx, or n_gpu_layers change.
+    This allows model switching and context size adjustments without
+    restarting the server.
 
     Args:
         model_path: Path to the GGUF model file
@@ -49,26 +49,28 @@ def get_llama_service(
     Returns:
         Cached or newly created LlamaCppAIService instance
     """
-    global _cached_service, _cached_model_path
+    global _cached_service, _cached_config
 
-    # If path changed, invalidate cache
-    if model_path != _cached_model_path:
+    new_config = (model_path, n_ctx, n_gpu_layers)
+
+    # Invalidate cache if any config parameter changed
+    if new_config != _cached_config:
         if _cached_service is not None:
             logger.info(
-                "Model path changed from %s to %s, invalidating cache",
-                _cached_model_path,
-                model_path,
+                "LLM config changed (%s → %s), reloading model",
+                _cached_config,
+                new_config,
             )
             # Release the old model
             if _cached_service._llm is not None:
                 del _cached_service._llm
                 _cached_service._llm = None
         _cached_service = None
-        _cached_model_path = model_path
+        _cached_config = new_config
 
     # Create new service if needed
     if _cached_service is None:
-        logger.info("Creating new LlamaCppAIService (model_path=%s)", model_path)
+        logger.info("Creating new LlamaCppAIService (model_path=%s, n_ctx=%d)", model_path, n_ctx)
         _cached_service = LlamaCppAIService(
             model_path=model_path,
             n_ctx=n_ctx,
@@ -86,7 +88,7 @@ def cleanup_llama_service() -> None:
     """
     import gc
 
-    global _cached_service, _cached_model_path
+    global _cached_service, _cached_config
 
     if _cached_service is not None:
         logger.info("Unloading llama.cpp model to free memory")
@@ -95,7 +97,7 @@ def cleanup_llama_service() -> None:
             _cached_service._llm = None
         del _cached_service
         _cached_service = None
-    _cached_model_path = None
+    _cached_config = None
 
     gc.collect()
 
@@ -127,6 +129,18 @@ class LlamaCppAIService(IAIService):
         self._n_gpu_layers = n_gpu_layers
         self._llm = None
         self._available: bool | None = None
+
+    def _reset_state(self) -> None:
+        """Force-clear all model state (KV cache + recurrent/SSM state).
+
+        Critical for hybrid Mamba-2 models (e.g. granite-4.0-h-tiny) where
+        llama-cpp-python's built-in prefix-match optimization leaves stale
+        recurrent state that causes ``llama_decode returned -1`` on the
+        second request.
+        """
+        if self._llm is not None:
+            self._llm._ctx.kv_cache_clear()
+            self._llm.n_tokens = 0
 
     def _ensure_loaded(self) -> None:
         """Ensure llama.cpp is loaded and model is ready."""
@@ -323,10 +337,24 @@ class LlamaCppAIService(IAIService):
         if options.response_format:
             kwargs["response_format"] = options.response_format
 
-        result = await asyncio.to_thread(
-            self._llm.create_chat_completion,
-            **kwargs,
-        )
+        # Force clean state before each call (prevents Mamba-2 state corruption)
+        self._reset_state()
+
+        try:
+            result = await asyncio.to_thread(
+                self._llm.create_chat_completion,
+                **kwargs,
+            )
+        except RuntimeError as e:
+            if "llama_decode" in str(e):
+                logger.warning("llama_decode failed, resetting state and retrying: %s", e)
+                self._reset_state()
+                result = await asyncio.to_thread(
+                    self._llm.create_chat_completion,
+                    **kwargs,
+                )
+            else:
+                raise
 
         content = result["choices"][0]["message"]["content"]
         usage = result.get("usage", {})
@@ -363,6 +391,9 @@ class LlamaCppAIService(IAIService):
         }
         if options.response_format:
             kwargs["response_format"] = options.response_format
+
+        # Force clean state before each call (prevents Mamba-2 state corruption)
+        self._reset_state()
 
         stream = await asyncio.to_thread(
             self._llm.create_chat_completion,

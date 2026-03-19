@@ -115,6 +115,7 @@ async def remove_highlight(
         )
 
     await db.delete(highlight)
+    await db.flush()
     logger.info("Removed highlight from segment %s", segment_id)
 
     return MessageResponse(message="Highlight removed successfully")

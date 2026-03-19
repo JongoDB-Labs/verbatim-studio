@@ -197,6 +197,7 @@ async def delete_comment(
         )
 
     await db.delete(comment)
+    await db.flush()
     logger.info("Deleted comment %s", comment_id)
 
     return MessageResponse(message="Comment deleted successfully")

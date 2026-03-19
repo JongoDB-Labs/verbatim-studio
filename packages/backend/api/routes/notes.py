@@ -211,5 +211,6 @@ async def delete_note(
         raise HTTPException(status_code=404, detail="Note not found")
 
     await db.delete(note)
+    await db.flush()
 
     return {"status": "deleted", "id": note_id}

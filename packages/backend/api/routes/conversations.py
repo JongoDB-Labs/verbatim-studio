@@ -284,6 +284,7 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     await db.delete(conv)
+    await db.flush()
     await broadcast("conversations", "deleted", conversation_id)
     return {"deleted": True}
 
