@@ -20,7 +20,7 @@ export function ProjectSelector({ collapsed }: ProjectSelectorProps) {
   });
 
   const { data: archivedData } = useQuery({
-    queryKey: queryKeys.projects.list({ search: '__archived__' }),
+    queryKey: queryKeys.projects.list({ includeArchived: true }),
     queryFn: () => api.projects.list({ include_archived: true }),
   });
 
@@ -38,14 +38,18 @@ export function ProjectSelector({ collapsed }: ProjectSelectorProps) {
   const handleSelect = async (project: { id: string; name: string; color?: string | null; icon?: string | null } | null) => {
     setActiveProject(project);
     setIsOpen(false);
-    // Persist to backend
-    await api.projects.setActiveProject(project?.id ?? null);
-    // Invalidate all scoped queries so they refetch with new scope
+    // Invalidate immediately — queries use the Zustand store for scope
     queryClient.invalidateQueries({ queryKey: queryKeys.recordings.all });
     queryClient.invalidateQueries({ queryKey: queryKeys.documents.all });
     queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all });
     queryClient.invalidateQueries({ queryKey: queryKeys.search.history });
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats });
+    // Persist to backend (fire-and-forget with error logging)
+    try {
+      await api.projects.setActiveProject(project?.id ?? null);
+    } catch (err) {
+      console.error('Failed to persist active project:', err);
+    }
   };
 
   const projects = (projectsData?.items ?? []).filter(p => !p.is_archived);

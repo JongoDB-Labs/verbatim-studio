@@ -25,6 +25,7 @@ export interface ProjectFilters {
   search?: string;
   projectTypeId?: string;
   tag?: string;
+  includeArchived?: boolean;
 }
 
 export interface DocumentFilters {
