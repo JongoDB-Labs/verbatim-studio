@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DataSyncProvider } from '@/hooks/useDataSync';
 import { api, getApiUrl, isElectron, onAuthRequired, type ApiInfo, type HealthStatus, type GlobalSearchResult, type SystemInfo, type PluginManifest } from '@/lib/api';
@@ -27,6 +27,7 @@ import type { ChatAttachment } from '@/components/ai/AttachmentPicker';
 import { ChatsPage } from '@/pages/chats/ChatsPage';
 import { OnboardingTour, WelcomeModal, TourToast, TOUR_STORAGE_KEYS } from '@/components/onboarding';
 import { UpdatePrompt, WhatsNewDialog } from '@/components/updates';
+import { useProjectStore } from '@/stores/projectStore';
 
 // Check if running on macOS in Electron (for title bar padding)
 const isMacOS = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
@@ -196,6 +197,24 @@ function AppContent() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('sidebar-collapsed') === 'true';
   });
+
+  // Active project (for clearing chat on switch)
+  const activeProject = useProjectStore(state => state.activeProject);
+  const prevProjectIdRef = useRef(activeProject?.id);
+
+  useEffect(() => {
+    const prevId = prevProjectIdRef.current;
+    const currId = activeProject?.id;
+    prevProjectIdRef.current = currId;
+    // Skip on initial mount
+    if (prevId === undefined && currId === undefined) return;
+    if (prevId === currId) return;
+    // Clear chat state to prevent context bleed between projects
+    setChatMessages([]);
+    setChatAttachments([]);
+    setChatCompressedMemory(null);
+    setIsChatOpen(false);
+  }, [activeProject?.id]);
 
   // Onboarding tour state
   const [showWelcomeModal, setShowWelcomeModal] = useState<boolean>(() => {
@@ -589,6 +608,7 @@ function AppContent() {
           {/* Sidebar */}
           <Sidebar
             currentTab={currentTab}
+            onNavigateToProject={handleNavigateToProjectDetail}
             onNavigate={(tab) => {
               if (tab === 'dashboard') handleNavigateToDashboard();
               else if (tab === 'recordings') handleNavigateToRecordings();

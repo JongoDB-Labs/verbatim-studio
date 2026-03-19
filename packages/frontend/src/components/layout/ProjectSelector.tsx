@@ -6,9 +6,10 @@ import { queryKeys } from '@/lib/queryKeys';
 
 interface ProjectSelectorProps {
   collapsed: boolean;
+  onNavigateToProject?: (projectId: string) => void;
 }
 
-export function ProjectSelector({ collapsed }: ProjectSelectorProps) {
+export function ProjectSelector({ collapsed, onNavigateToProject }: ProjectSelectorProps) {
   const { activeProject, setActiveProject } = useProjectStore();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -44,6 +45,10 @@ export function ProjectSelector({ collapsed }: ProjectSelectorProps) {
     queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all });
     queryClient.invalidateQueries({ queryKey: queryKeys.search.history });
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats });
+    // Navigate to project home when selecting a project
+    if (project) {
+      onNavigateToProject?.(project.id);
+    }
     // Persist to backend (fire-and-forget with error logging)
     try {
       await api.projects.setActiveProject(project?.id ?? null);
