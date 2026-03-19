@@ -11,15 +11,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.dependencies import get_active_project_id
 from core.config import settings
 from core.factory import get_factory
 from core.interfaces import ChatMessage, ChatOptions
 from core.model_catalog import MODEL_CATALOG
 from persistence.database import get_db
-from persistence.models import Document, Recording, Transcript, Segment
+from persistence.models import Document, Project, Recording, Segment, SegmentEmbedding, Transcript
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -753,6 +754,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 async def chat_multi_stream(
     request: MultiChatRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
 ) -> StreamingResponse:
     """Stream a chat response with multi-transcript context."""
     _ensure_active_model_loaded()
@@ -822,6 +824,48 @@ async def chat_multi_stream(
         label = chr(65 + label_index)
         context_parts.append(f"=== Uploaded File {label} ===\n{request.file_context}\n")
         label_index += 1
+
+    # Auto-inject project context via semantic search (when no manual attachments)
+    if active_project_id and not request.recording_ids and not request.document_ids:
+        try:
+            from services.embedding import embedding_service, bytes_to_embedding
+            if embedding_service.is_available():
+                query_embedding = await embedding_service.embed_query(request.message)
+
+                # Search segments in project recordings
+                seg_query = (
+                    select(SegmentEmbedding, Segment.text, Recording.title)
+                    .join(Segment, SegmentEmbedding.segment_id == Segment.id)
+                    .join(Transcript, Segment.transcript_id == Transcript.id)
+                    .join(Recording, Transcript.recording_id == Recording.id)
+                    .where(Recording.project_id == active_project_id)
+                )
+                seg_result = await db.execute(seg_query)
+                seg_rows = seg_result.all()
+
+                # Score and rank
+                import math
+                scored_segments = []
+                for seg_emb, seg_text, rec_title in seg_rows:
+                    emb = bytes_to_embedding(seg_emb.embedding)
+                    dot = sum(a * b for a, b in zip(query_embedding, emb))
+                    norm_a = math.sqrt(sum(a * a for a in query_embedding))
+                    norm_b = math.sqrt(sum(b * b for b in emb))
+                    score = dot / (norm_a * norm_b) if norm_a and norm_b else 0
+                    if score > 0.35:
+                        scored_segments.append((score, seg_text, rec_title))
+
+                scored_segments.sort(key=lambda x: x[0], reverse=True)
+
+                # Inject top matches as context
+                if scored_segments:
+                    auto_context_parts = []
+                    for score, text, title in scored_segments[:5]:
+                        auto_context_parts.append(f"[From '{title}']: {text}")
+                    project_auto_context = "\n\n=== Relevant content from this project ===\n" + "\n\n".join(auto_context_parts)
+                    context_parts.append(project_auto_context)
+        except Exception as e:
+            logger.warning("Project auto-context failed: %s", e)
 
     # --- Web search (if enabled and query detected) ---
     web_results_text = None
@@ -972,6 +1016,27 @@ async def chat_multi_stream(
     # Inject help context if help intent detected
     if is_help_intent(request.message):
         system_content += MAX_HELP_CONTEXT
+
+    # Project context injection
+    if active_project_id:
+        project_result = await db.execute(
+            select(Project).where(Project.id == active_project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        if project:
+            rec_count = await db.scalar(
+                select(func.count(Recording.id)).where(Recording.project_id == active_project_id)
+            ) or 0
+            doc_count = await db.scalar(
+                select(func.count(Document.id)).where(Document.project_id == active_project_id)
+            ) or 0
+
+            system_content += (
+                f"\n\nYou are currently working within the project '{project.name}'. "
+                f"This project contains {rec_count} recording(s) and {doc_count} document(s). "
+                "When answering questions, prioritize content from this project. "
+                "The user may ask you to search beyond this project — do so when explicitly requested."
+            )
 
     max_response_tokens = 1024
 
