@@ -182,3 +182,7 @@ async def _run_migrations(conn) -> None:
     # Add compressed_memory column to conversations table
     from migrations.add_conversation_compressed_memory import migrate as migrate_conversation_compressed_memory
     await conn.run_sync(lambda _: migrate_conversation_compressed_memory(db_path))
+
+    # Add workspace columns to projects and project_id to conversations
+    from migrations.add_project_workspace_columns import migrate as migrate_project_workspace
+    await conn.run_sync(lambda _: migrate_project_workspace(db_path))
