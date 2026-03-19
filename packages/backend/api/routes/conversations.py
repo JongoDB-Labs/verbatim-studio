@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +88,7 @@ class ConversationListResponse(BaseModel):
 async def list_conversations(
     db: Annotated[AsyncSession, Depends(get_db)],
     active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> ConversationListResponse:
     """List all saved conversations, most recent first."""
     # Get conversations with message count
@@ -102,7 +103,7 @@ async def list_conversations(
     )
 
     # Project scoping (from X-Active-Project header)
-    if active_project_id:
+    if active_project_id and not all_projects:
         query = query.where(Conversation.project_id == active_project_id)
 
     result = await db.execute(query)

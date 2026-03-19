@@ -268,6 +268,7 @@ async def list_documents(
     tag_ids: Annotated[str | None, Query(description="Comma-separated tag IDs to filter by")] = None,
     mime_type: Annotated[str | None, Query(description="Filter by MIME type")] = None,
     active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> DocumentListResponse:
     """List all documents with pagination and filtering."""
     query = select(Document)
@@ -292,8 +293,12 @@ async def list_documents(
                 )
             )
 
-    if project_id is not None:
+    # Project scoping: header takes precedence over query param
+    if active_project_id and not all_projects:
+        query = query.where(Document.project_id == active_project_id)
+    elif project_id:
         query = query.where(Document.project_id == project_id)
+
     if status_filter:
         query = query.where(Document.status == status_filter)
     if search and search.strip():
@@ -325,10 +330,6 @@ async def list_documents(
             query = query.where(Document.created_at <= to_date)
         except ValueError:
             pass
-
-    # Project scoping (from X-Active-Project header)
-    if active_project_id:
-        query = query.where(Document.project_id == active_project_id)
 
     # Tag filter — documents must have ALL specified tags
     if tag_ids and tag_ids.strip():

@@ -248,6 +248,7 @@ async def list_recordings(
     speaker: Annotated[str | None, Query(description="Filter by speaker name")] = None,
     template_id: Annotated[str | None, Query(description="Filter by template ID")] = None,
     active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> RecordingListResponse:
     """List all recordings with pagination and filtering.
 
@@ -299,9 +300,10 @@ async def list_recordings(
                 )
             )
 
-    # Apply filters
-    if project_id is not None:
-        # Filter by project using FK
+    # Project scoping: header takes precedence over query param
+    if active_project_id and not all_projects:
+        query = query.where(Recording.project_id == active_project_id)
+    elif project_id:
         query = query.where(Recording.project_id == project_id)
 
     if status is not None:
@@ -364,10 +366,6 @@ async def list_recordings(
     # Template filter
     if template_id is not None:
         query = query.where(Recording.template_id == template_id)
-
-    # Project scoping (from X-Active-Project header)
-    if active_project_id:
-        query = query.where(Recording.project_id == active_project_id)
 
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())

@@ -512,6 +512,7 @@ async def global_search(
     semantic: Annotated[bool, Query(description="Include semantic search results")] = True,
     save_history: Annotated[bool, Query(description="Save to search history")] = True,
     active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> GlobalSearchResponse:
     """Search across recordings, segments, documents, notes, and conversations.
 
@@ -541,7 +542,7 @@ async def global_search(
         .order_by(Recording.created_at.desc())
         .limit(keyword_limit)
     )
-    if active_project_id:
+    if active_project_id and not all_projects:
         recording_query = recording_query.where(Recording.project_id == active_project_id)
     recording_result = await db.execute(recording_query)
     recordings = recording_result.scalars().all()
@@ -576,7 +577,7 @@ async def global_search(
         .order_by(Recording.created_at.desc(), Segment.start_time)
         .limit(keyword_limit)
     )
-    if active_project_id:
+    if active_project_id and not all_projects:
         segment_query = segment_query.where(Recording.project_id == active_project_id)
     segment_result = await db.execute(segment_query)
     segments = segment_result.all()
@@ -615,7 +616,7 @@ async def global_search(
         .order_by(Document.created_at.desc(), DocumentEmbedding.chunk_index)
         .limit(keyword_limit)
     )
-    if active_project_id:
+    if active_project_id and not all_projects:
         document_query = document_query.where(Document.project_id == active_project_id)
     document_result = await db.execute(document_query)
     document_chunks = document_result.all()
@@ -655,7 +656,7 @@ async def global_search(
         .order_by(Document.created_at.desc())
         .limit(keyword_limit)
     )
-    if active_project_id:
+    if active_project_id and not all_projects:
         direct_doc_query = direct_doc_query.where(Document.project_id == active_project_id)
     direct_doc_result = await db.execute(direct_doc_query)
     direct_docs = direct_doc_result.scalars().all()
@@ -701,6 +702,16 @@ async def global_search(
         .order_by(Note.created_at.desc())
         .limit(keyword_limit)
     )
+    if active_project_id and not all_projects:
+        # Notes inherit project scope from their parent recording or document
+        note_query = note_query.where(
+            (Note.recording_id.in_(
+                select(Recording.id).where(Recording.project_id == active_project_id)
+            )) |
+            (Note.document_id.in_(
+                select(Document.id).where(Document.project_id == active_project_id)
+            ))
+        )
     note_result = await db.execute(note_query)
     notes = note_result.all()
 
@@ -741,7 +752,7 @@ async def global_search(
         .order_by(ConversationMessage.created_at.desc())
         .limit(keyword_limit)
     )
-    if active_project_id:
+    if active_project_id and not all_projects:
         conversation_query = conversation_query.where(Conversation.project_id == active_project_id)
     conversation_result = await db.execute(conversation_query)
     conversations = conversation_result.all()
@@ -789,7 +800,7 @@ async def global_search(
         .order_by(Conversation.updated_at.desc())
         .limit(keyword_limit)
     )
-    if active_project_id:
+    if active_project_id and not all_projects:
         conv_title_query = conv_title_query.where(Conversation.project_id == active_project_id)
     conv_title_result = await db.execute(conv_title_query)
     conv_titles = conv_title_result.scalars().all()
@@ -823,7 +834,7 @@ async def global_search(
             if remaining_slots > 0:
                 segment_semantic_results = await _semantic_search(
                     db, query_embedding, remaining_slots // 2 or 1, seen_ids,
-                    project_id=active_project_id,
+                    project_id=active_project_id if not all_projects else None,
                 )
                 results.extend(segment_semantic_results)
                 seen_ids.update(r.id for r in segment_semantic_results)
@@ -833,7 +844,7 @@ async def global_search(
             if remaining_slots > 0:
                 document_semantic_results = await _semantic_search_documents(
                     db, query_embedding, remaining_slots, seen_ids,
-                    project_id=active_project_id,
+                    project_id=active_project_id if not all_projects else None,
                 )
                 results.extend(document_semantic_results)
         except Exception as e:
