@@ -6,7 +6,7 @@ import { LoginPage } from '@/pages/auth/LoginPage';
 import { usePluginManifest, PluginManifestContext } from '@/hooks/usePluginManifest';
 import { RecordingsPage } from '@/pages/recordings/RecordingsPage';
 import { ProjectsPage } from '@/pages/projects/ProjectsPage';
-import { ProjectDetailPage } from '@/pages/projects/ProjectDetailPage';
+import { ProjectHomePage } from '@/pages/projects/ProjectHomePage';
 import { ProjectAnalyticsPage } from '@/pages/projects/ProjectAnalyticsPage';
 import { TranscriptPage } from '@/pages/transcript/TranscriptPage';
 import { SearchPage } from '@/pages/search/SearchPage';
@@ -272,9 +272,7 @@ function AppContent() {
     setNavigation({ type: 'project-detail', projectId });
   }, []);
 
-  const handleNavigateToProjectAnalytics = useCallback((projectId: string) => {
-    setNavigation({ type: 'project-analytics', projectId });
-  }, []);
+
 
   const handleNavigateToDocuments = useCallback(() => {
     setNavigation({ type: 'documents' });
@@ -651,11 +649,12 @@ function AppContent() {
                   <ProjectsPage onNavigateToProject={handleNavigateToProjectDetail} />
                 )}
                 {navigation.type === 'project-detail' && (
-                  <ProjectDetailPage
+                  <ProjectHomePage
                     projectId={navigation.projectId}
-                    onBack={handleNavigateToProjects}
+                    onNavigateToRecordings={handleNavigateToRecordings}
+                    onNavigateToDocuments={handleNavigateToDocuments}
                     onViewTranscript={handleViewTranscript}
-                    onNavigateToAnalytics={() => handleNavigateToProjectAnalytics(navigation.projectId)}
+                    onViewDocument={handleViewDocument}
                   />
                 )}
                 {navigation.type === 'project-analytics' && (
