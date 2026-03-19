@@ -1,5 +1,12 @@
 // packages/frontend/src/lib/queryKeys.ts
 
+import { useProjectStore } from '@/stores/projectStore';
+
+// Helper to get current active project ID for query keys
+function activeProjectScope(): string | undefined {
+  return useProjectStore.getState().activeProject?.id;
+}
+
 // Filter types for query keys
 export interface RecordingFilters {
   search?: string;
@@ -36,7 +43,7 @@ export const queryKeys = {
   // Recordings
   recordings: {
     all: ['recordings'] as const,
-    list: (filters?: RecordingFilters) => ['recordings', 'list', filters] as const,
+    list: (filters?: RecordingFilters) => ['recordings', 'list', { ...filters, _scope: activeProjectScope() }] as const,
     detail: (id: string) => ['recordings', 'detail', id] as const,
   },
 
@@ -52,7 +59,7 @@ export const queryKeys = {
   // Conversations (Chats)
   conversations: {
     all: ['conversations'] as const,
-    list: () => ['conversations', 'list'] as const,
+    list: () => ['conversations', 'list', { _scope: activeProjectScope() }] as const,
     detail: (id: string) => ['conversations', 'detail', id] as const,
   },
 
@@ -71,7 +78,7 @@ export const queryKeys = {
   documents: {
     all: ['documents'] as const,
     list: (filters?: DocumentFilters) =>
-      ['documents', 'list', filters] as const,
+      ['documents', 'list', { ...filters, _scope: activeProjectScope() }] as const,
     detail: (id: string) => ['documents', 'detail', id] as const,
   },
 
