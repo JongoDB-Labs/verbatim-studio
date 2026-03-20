@@ -4,6 +4,7 @@
  * Empty array = "All Projects" mode (no filter).
  */
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
 const STORAGE_KEY = 'verbatim-active-project';
 
@@ -78,8 +79,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
  * Useful for cache keys and dependency comparisons.
  */
 export function useSelectedProjectIds(): string[] {
-  return useProjectStore((state) =>
-    state.selectedProjects.map((p) => p.id).sort()
+  return useProjectStore(
+    useShallow((state) =>
+      state.selectedProjects.map((p) => p.id).sort()
+    )
   );
 }
 
