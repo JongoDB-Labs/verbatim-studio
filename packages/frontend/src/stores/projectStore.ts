@@ -20,10 +20,6 @@ interface ProjectStore {
   toggleProject: (project: ActiveProject) => void;
   clearProjects: () => void;
   setSelectedProjects: (projects: ActiveProject[]) => void;
-
-  // Backwards compatibility - TODO: Remove after Task 3 updates all consumers
-  activeProject: ActiveProject | null;
-  setActiveProject: (project: ActiveProject | null) => void;
 }
 
 function persistProjects(projects: ActiveProject[]) {
@@ -37,40 +33,24 @@ function persistProjects(projects: ActiveProject[]) {
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectedProjects: [],
 
-  // Backwards compatibility - derived from selectedProjects[0]
-  // TODO: Remove after Task 3 updates all consumers
-  activeProject: null,
-
   toggleProject: (project) => {
     const current = get().selectedProjects;
     const exists = current.some((p) => p.id === project.id);
     const next = exists
       ? current.filter((p) => p.id !== project.id)
       : [...current, project];
-    set({ selectedProjects: next, activeProject: next[0] ?? null });
+    set({ selectedProjects: next });
     persistProjects(next);
   },
 
   clearProjects: () => {
-    set({ selectedProjects: [], activeProject: null });
+    set({ selectedProjects: [] });
     localStorage.removeItem(STORAGE_KEY);
   },
 
   setSelectedProjects: (projects) => {
-    set({ selectedProjects: projects, activeProject: projects[0] ?? null });
+    set({ selectedProjects: projects });
     persistProjects(projects);
-  },
-
-  // Backwards compatibility shim - sets a single-element array
-  // TODO: Remove after Task 3 updates all consumers
-  setActiveProject: (project: ActiveProject | null) => {
-    if (project) {
-      set({ selectedProjects: [project], activeProject: project });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([project]));
-    } else {
-      set({ selectedProjects: [], activeProject: null });
-      localStorage.removeItem(STORAGE_KEY);
-    }
   },
 }));
 
@@ -105,7 +85,6 @@ if (stored) {
       if (valid.length > 0) {
         useProjectStore.setState({
           selectedProjects: valid,
-          activeProject: valid[0] ?? null,
         });
       } else {
         localStorage.removeItem(STORAGE_KEY);
@@ -120,7 +99,6 @@ if (stored) {
       const migrated = [parsed as ActiveProject];
       useProjectStore.setState({
         selectedProjects: migrated,
-        activeProject: migrated[0],
       });
       localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
     } else {

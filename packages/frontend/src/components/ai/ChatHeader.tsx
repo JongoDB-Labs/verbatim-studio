@@ -28,7 +28,7 @@ export function ChatHeader({
   webSearchEnabled = false,
   onToggleWebSearch,
 }: ChatHeaderProps) {
-  const { activeProject } = useProjectStore();
+  const { selectedProjects } = useProjectStore();
 
   return (
     <div className="border-b border-gray-200 dark:border-gray-700 px-4 py-3">
@@ -43,12 +43,15 @@ export function ChatHeader({
             <h2 className="font-semibold text-gray-900 dark:text-gray-100">Max</h2>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span>Scoped to:</span>
-              {activeProject ? (
+              {selectedProjects.length > 0 ? (
                 <span className="inline-flex items-center gap-1">
-                  {activeProject.color && (
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: activeProject.color }} />
+                  {selectedProjects[0].color && (
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: selectedProjects[0].color }} />
                   )}
-                  {activeProject.name}
+                  {selectedProjects[0].name}
+                  {selectedProjects.length > 1 && (
+                    <span className="text-gray-400"> +{selectedProjects.length - 1}</span>
+                  )}
                 </span>
               ) : (
                 <span>All Projects</span>

@@ -38,7 +38,7 @@ export function ChatPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [generalMode, setGeneralMode] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
-  const { activeProject } = useProjectStore();
+  const { selectedProjects } = useProjectStore();
 
   const handleSend = useCallback(async (message: string) => {
     const userMessage: ChatMessage = {
@@ -166,7 +166,7 @@ export function ChatPanel({
         title: saveTitle || undefined,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
         compressed_memory: compressedMemory,
-        project_id: activeProject?.id ?? undefined,
+        project_id: selectedProjects[0]?.id ?? undefined,
       });
       setShowSaveDialog(false);
       setSaveTitle('');
@@ -177,7 +177,7 @@ export function ChatPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [messages, saveTitle, isSaving, compressedMemory, activeProject]);
+  }, [messages, saveTitle, isSaving, compressedMemory, selectedProjects]);
 
   const handleViewHistory = useCallback(() => {
     onClose();

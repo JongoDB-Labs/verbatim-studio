@@ -113,7 +113,7 @@ const SETTINGS_ICON = (
   </svg>
 );
 
-export function Sidebar({ currentTab, onNavigate, onNavigateToProject, theme, onCycleTheme, version, health, collapsed, onCollapsedChange, isTourActive, pluginNavItems }: SidebarProps) {
+export function Sidebar({ currentTab, onNavigate, theme, onCycleTheme, version, health, collapsed, onCollapsedChange, isTourActive, pluginNavItems }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Force mobile sidebar open when tour is active (so tooltips can reference sidebar items)
@@ -242,7 +242,7 @@ export function Sidebar({ currentTab, onNavigate, onNavigateToProject, theme, on
         <nav className={`flex-1 px-3 py-4 space-y-1 ${collapsed ? 'md:overflow-visible overflow-y-auto' : 'overflow-y-auto'}`}>
           {/* Project Selector */}
           <div className="px-0 mb-2">
-            <ProjectSelector collapsed={collapsed} onNavigateToProject={onNavigateToProject} />
+            <ProjectSelector collapsed={collapsed} />
           </div>
 
           {NAV_ITEMS.map((item) => {

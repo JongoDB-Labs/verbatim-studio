@@ -198,13 +198,14 @@ function AppContent() {
     return localStorage.getItem('sidebar-collapsed') === 'true';
   });
 
-  // Active project (for clearing chat on switch)
-  const activeProject = useProjectStore(state => state.activeProject);
+  // Selected projects (for clearing chat on switch)
+  const selectedProjects = useProjectStore(state => state.selectedProjects);
+  const selectedProjectKey = selectedProjects.map(p => p.id).sort().join(',');
   const isInitialMountRef = useRef(true);
 
   useEffect(() => {
     // Skip first run — don't clear chat when the component mounts
-    // (activeProject may already be hydrated from localStorage)
+    // (selectedProjects may already be hydrated from localStorage)
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
       return;
@@ -214,7 +215,7 @@ function AppContent() {
     setChatAttachments([]);
     setChatCompressedMemory(null);
     setIsChatOpen(false);
-  }, [activeProject?.id]);
+  }, [selectedProjectKey]);
 
   // Onboarding tour state
   const [showWelcomeModal, setShowWelcomeModal] = useState<boolean>(() => {

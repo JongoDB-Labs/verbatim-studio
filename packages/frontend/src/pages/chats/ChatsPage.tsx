@@ -11,7 +11,7 @@ interface ChatsPageProps {
 }
 
 export function ChatsPage({ onLoadConversation, onOpenChat }: ChatsPageProps) {
-  const { activeProject } = useProjectStore();
+  const { selectedProjects } = useProjectStore();
   const { data: conversationsData, isLoading: loading, error: fetchError, refetch } = useConversations();
   const conversations = conversationsData?.items ?? [];
   const error = fetchError?.message;
@@ -66,12 +66,15 @@ export function ChatsPage({ onLoadConversation, onOpenChat }: ChatsPageProps) {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Saved Chats</h1>
-            {activeProject && (
+            {selectedProjects.length > 0 && (
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
-                {activeProject.color && (
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: activeProject.color }} />
+                {selectedProjects[0].color && (
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: selectedProjects[0].color }} />
                 )}
-                {activeProject.name}
+                {selectedProjects[0].name}
+                {selectedProjects.length > 1 && (
+                  <span className="text-zinc-400 dark:text-zinc-500">+{selectedProjects.length - 1} more</span>
+                )}
               </span>
             )}
           </div>
