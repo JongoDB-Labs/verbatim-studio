@@ -267,11 +267,16 @@ async def list_documents(
     date_to: Annotated[str | None, Query(description="Filter to date (ISO 8601)")] = None,
     tag_ids: Annotated[str | None, Query(description="Comma-separated tag IDs to filter by")] = None,
     mime_type: Annotated[str | None, Query(description="Filter by MIME type")] = None,
+    include_archived: Annotated[bool, Query(description="Include archived documents")] = False,
     active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
     all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> DocumentListResponse:
     """List all documents with pagination and filtering."""
     query = select(Document)
+
+    # Exclude archived documents by default
+    if not include_archived:
+        query = query.where(Document.is_archived == False)
 
     # Filter by active storage location (include unassigned docs for backward compat)
     active_location = await get_active_storage_location()
@@ -471,6 +476,80 @@ async def bulk_assign_documents(
     await db.commit()
     await broadcast("documents", "updated")
     return MessageResponse(message=f"Updated {len(docs)} document(s)")
+
+
+@router.get("/archived", response_model=DocumentListResponse)
+async def list_archived_documents(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: Annotated[int, Query(ge=1, description="Page number")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Items per page")] = 50,
+    search: Annotated[str | None, Query(description="Search by title or filename")] = None,
+    sort_by: Annotated[str, Query(description="Sort field (created_at, title, file_size_bytes)")] = "created_at",
+    sort_order: Annotated[str, Query(description="Sort order (asc, desc)")] = "desc",
+) -> DocumentListResponse:
+    """List archived documents for the Archive page."""
+    query = select(Document).where(Document.is_archived == True)
+
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Document.title.ilike(search_term),
+                Document.filename.ilike(search_term),
+            )
+        )
+
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Calculate pagination
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    offset = (page - 1) * page_size
+
+    # Apply sorting
+    sort_column = {
+        "created_at": Document.created_at,
+        "title": Document.title,
+        "file_size_bytes": Document.file_size_bytes,
+    }.get(sort_by, Document.created_at)
+
+    if sort_order == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
+    query = query.offset(offset).limit(page_size)
+    result = await db.execute(query)
+    docs = result.scalars().all()
+
+    # Batch-load tag IDs
+    doc_ids = [d.id for d in docs]
+    tag_map: dict[str, list[str]] = {did: [] for did in doc_ids}
+    if doc_ids:
+        tag_result = await db.execute(
+            select(DocumentTag.document_id, DocumentTag.tag_id).where(
+                DocumentTag.document_id.in_(doc_ids)
+            )
+        )
+        for row in tag_result:
+            tag_map[row.document_id].append(row.tag_id)
+
+    return DocumentListResponse(
+        items=[
+            _doc_to_response(
+                d,
+                tag_ids=tag_map.get(d.id, []),
+                project_ids=[d.project_id] if d.project_id else [],
+            )
+            for d in docs
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -874,3 +953,33 @@ async def get_document_content(
         return {"content": doc.extracted_text, "format": "text"}
     else:
         raise HTTPException(status_code=404, detail="No extracted content available")
+
+
+@router.patch("/{document_id}/archive", response_model=MessageResponse)
+async def archive_document(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    document_id: str,
+) -> MessageResponse:
+    """Archive a document (soft-hide from listing)."""
+    doc = await db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.is_archived = True
+    await db.commit()
+    await broadcast("documents", "updated", document_id)
+    return MessageResponse(message="Document archived", id=document_id)
+
+
+@router.patch("/{document_id}/unarchive", response_model=MessageResponse)
+async def unarchive_document(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    document_id: str,
+) -> MessageResponse:
+    """Unarchive a document."""
+    doc = await db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.is_archived = False
+    await db.commit()
+    await broadcast("documents", "updated", document_id)
+    return MessageResponse(message="Document unarchived", id=document_id)

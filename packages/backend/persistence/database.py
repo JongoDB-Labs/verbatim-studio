@@ -219,3 +219,7 @@ async def _run_migrations(conn) -> None:
     # Add workspace columns to projects and project_id to conversations
     from migrations.add_project_workspace_columns import migrate as migrate_project_workspace
     await conn.run_sync(lambda _: migrate_project_workspace(db_path))
+
+    # Add is_archived column to recordings and documents tables
+    from migrations.add_archive_columns import migrate as migrate_archive_columns
+    await conn.run_sync(lambda _: migrate_archive_columns(db_path))

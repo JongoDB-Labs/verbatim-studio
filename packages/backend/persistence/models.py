@@ -158,6 +158,7 @@ class Recording(Base):
     mime_type: Mapped[str | None] = mapped_column(String(100))
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
@@ -366,6 +367,7 @@ class Document(Base):
 
     # Processing state
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     error_message: Mapped[str | None] = mapped_column(Text)
 
     # Extracted content

@@ -247,6 +247,7 @@ async def list_recordings(
     tag_ids: Annotated[str | None, Query(description="Comma-separated tag IDs to filter by")] = None,
     speaker: Annotated[str | None, Query(description="Filter by speaker name")] = None,
     template_id: Annotated[str | None, Query(description="Filter by template ID")] = None,
+    include_archived: Annotated[bool, Query(description="Include archived recordings")] = False,
     active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
     all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> RecordingListResponse:
@@ -266,6 +267,7 @@ async def list_recordings(
         tag_ids: Optional comma-separated tag IDs to filter by.
         speaker: Optional speaker name to filter by.
         template_id: Optional template ID to filter by.
+        include_archived: Whether to include archived recordings (default: False).
 
     Returns:
         Paginated list of recordings.
@@ -274,6 +276,10 @@ async def list_recordings(
 
     # Build base query with template eager load
     query = select(Recording).options(selectinload(Recording.template))
+
+    # Exclude archived recordings by default
+    if not include_archived:
+        query = query.where(Recording.is_archived == False)
 
     # Filter by active storage location (also include live recordings
     # and recordings with no storage location assigned for backward compat)
@@ -394,6 +400,84 @@ async def list_recordings(
     recordings = result.scalars().all()
 
     # Batch-load tag IDs for all recordings
+    recording_ids = [r.id for r in recordings]
+    tag_map: dict[str, list[str]] = {rid: [] for rid in recording_ids}
+    if recording_ids:
+        tag_result = await db.execute(
+            select(RecordingTag.recording_id, RecordingTag.tag_id).where(
+                RecordingTag.recording_id.in_(recording_ids)
+            )
+        )
+        for row in tag_result:
+            tag_map[row.recording_id].append(row.tag_id)
+
+    return RecordingListResponse(
+        items=[
+            _recording_to_response(
+                r,
+                tag_ids=tag_map.get(r.id, []),
+                project_ids=[r.project_id] if r.project_id else [],
+                template=r.template,
+            )
+            for r in recordings
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/archived", response_model=RecordingListResponse)
+async def list_archived_recordings(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: Annotated[int, Query(ge=1, description="Page number")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Items per page")] = 50,
+    search: Annotated[str | None, Query(description="Search by title or filename")] = None,
+    sort_by: Annotated[str, Query(description="Sort field (created_at, title, duration)")] = "created_at",
+    sort_order: Annotated[str, Query(description="Sort order (asc, desc)")] = "desc",
+) -> RecordingListResponse:
+    """List archived recordings for the Archive page."""
+    from sqlalchemy import or_
+
+    query = select(Recording).options(selectinload(Recording.template))
+    query = query.where(Recording.is_archived == True)
+
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Recording.title.ilike(search_term),
+                Recording.file_name.ilike(search_term),
+            )
+        )
+
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Calculate pagination
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    offset = (page - 1) * page_size
+
+    # Apply sorting
+    sort_column = {
+        "created_at": Recording.created_at,
+        "title": Recording.title,
+        "duration": Recording.duration_seconds,
+    }.get(sort_by, Recording.created_at)
+
+    if sort_order == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
+    query = query.offset(offset).limit(page_size)
+    result = await db.execute(query)
+    recordings = result.scalars().all()
+
+    # Batch-load tag IDs
     recording_ids = [r.id for r in recordings]
     tag_map: dict[str, list[str]] = {rid: [] for rid in recording_ids}
     if recording_ids:
@@ -1278,3 +1362,35 @@ async def retry_recording(
         job_id=job_id,
         status="queued",
     )
+
+
+@router.patch("/{recording_id}/archive", response_model=MessageResponse)
+async def archive_recording(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    recording_id: str,
+) -> MessageResponse:
+    """Archive a recording (soft-hide from listing)."""
+    result = await db.execute(select(Recording).where(Recording.id == recording_id))
+    recording = result.scalar_one_or_none()
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    recording.is_archived = True
+    await db.commit()
+    await broadcast("recordings", "updated", recording_id)
+    return MessageResponse(message="Recording archived", id=recording_id)
+
+
+@router.patch("/{recording_id}/unarchive", response_model=MessageResponse)
+async def unarchive_recording(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    recording_id: str,
+) -> MessageResponse:
+    """Unarchive a recording."""
+    result = await db.execute(select(Recording).where(Recording.id == recording_id))
+    recording = result.scalar_one_or_none()
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    recording.is_archived = False
+    await db.commit()
+    await broadcast("recordings", "updated", recording_id)
+    return MessageResponse(message="Recording unarchived", id=recording_id)
