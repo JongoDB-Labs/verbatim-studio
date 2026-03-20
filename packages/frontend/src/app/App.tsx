@@ -200,15 +200,15 @@ function AppContent() {
 
   // Active project (for clearing chat on switch)
   const activeProject = useProjectStore(state => state.activeProject);
-  const prevProjectIdRef = useRef(activeProject?.id);
+  const isInitialMountRef = useRef(true);
 
   useEffect(() => {
-    const prevId = prevProjectIdRef.current;
-    const currId = activeProject?.id;
-    prevProjectIdRef.current = currId;
-    // Skip on initial mount
-    if (prevId === undefined && currId === undefined) return;
-    if (prevId === currId) return;
+    // Skip first run — don't clear chat when the component mounts
+    // (activeProject may already be hydrated from localStorage)
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      return;
+    }
     // Clear chat state to prevent context bleed between projects
     setChatMessages([]);
     setChatAttachments([]);
