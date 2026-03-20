@@ -300,11 +300,11 @@ async def list_recordings(
                 )
             )
 
-    # Project scoping: header takes precedence over query param
-    if active_project_id and not all_projects:
-        query = query.where(Recording.project_id == active_project_id)
-    elif project_id:
+    # Project scoping: explicit project_id param takes precedence over header
+    if project_id:
         query = query.where(Recording.project_id == project_id)
+    elif active_project_id and not all_projects:
+        query = query.where(Recording.project_id == active_project_id)
 
     if status is not None:
         query = query.where(Recording.status == status)

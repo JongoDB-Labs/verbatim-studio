@@ -293,11 +293,11 @@ async def list_documents(
                 )
             )
 
-    # Project scoping: header takes precedence over query param
-    if active_project_id and not all_projects:
-        query = query.where(Document.project_id == active_project_id)
-    elif project_id:
+    # Project scoping: explicit project_id param takes precedence over header
+    if project_id:
         query = query.where(Document.project_id == project_id)
+    elif active_project_id and not all_projects:
+        query = query.where(Document.project_id == active_project_id)
 
     if status_filter:
         query = query.where(Document.status == status_filter)
