@@ -1543,10 +1543,10 @@ class ApiClient {
     if (token && !headers['Authorization']) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    // Inject active project header for backend scoping
-    const activeProject = useProjectStore.getState().activeProject;
-    if (activeProject) {
-      headers['X-Active-Project'] = activeProject.id;
+    // Inject active project header for backend scoping (comma-separated IDs)
+    const selectedProjects = useProjectStore.getState().selectedProjects;
+    if (selectedProjects.length > 0) {
+      headers['X-Active-Project'] = selectedProjects.map(p => p.id).join(',');
     }
     const response = await fetch(`${currentBaseUrl}${path}`, {
       ...options,

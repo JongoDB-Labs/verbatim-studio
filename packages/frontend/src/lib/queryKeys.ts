@@ -2,9 +2,12 @@
 
 import { useProjectStore } from '@/stores/projectStore';
 
-// Helper to get current active project ID for query keys
-export function activeProjectScope(): string | undefined {
-  return useProjectStore.getState().activeProject?.id;
+// Helper to get sorted array of selected project IDs for query keys.
+// Empty array = all projects (no filter).
+export function activeProjectScope(): string[] {
+  return useProjectStore.getState().selectedProjects
+    .map(p => p.id)
+    .sort();
 }
 
 // Filter types for query keys
