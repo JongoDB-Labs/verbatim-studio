@@ -16,7 +16,7 @@ from persistence import get_db
 from persistence.models import Document, DocumentTag, Project, StorageLocation
 from services.storage import storage_service, get_active_storage_location
 from storage.factory import get_adapter
-from api.dependencies import get_active_project_id
+from api.dependencies import get_active_project_id, get_active_project_ids
 from api.routes.sync import broadcast
 from core.events import emit as emit_event
 
@@ -267,7 +267,7 @@ async def list_documents(
     date_to: Annotated[str | None, Query(description="Filter to date (ISO 8601)")] = None,
     tag_ids: Annotated[str | None, Query(description="Comma-separated tag IDs to filter by")] = None,
     mime_type: Annotated[str | None, Query(description="Filter by MIME type")] = None,
-    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
     all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> DocumentListResponse:
     """List all documents with pagination and filtering."""
@@ -296,8 +296,8 @@ async def list_documents(
     # Project scoping: explicit project_id param takes precedence over header
     if project_id:
         query = query.where(Document.project_id == project_id)
-    elif active_project_id and not all_projects:
-        query = query.where(Document.project_id == active_project_id)
+    elif active_project_ids and not all_projects:
+        query = query.where(Document.project_id.in_(active_project_ids))
 
     if status_filter:
         query = query.where(Document.status == status_filter)

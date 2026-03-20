@@ -2,11 +2,12 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.dependencies import get_active_project_ids
 from core.config import settings
 from persistence.database import get_db
 from persistence.models import Recording, Transcript, Segment, Project, Job, Document
@@ -67,8 +68,22 @@ class DashboardStats(BaseModel):
 @router.get("", response_model=DashboardStats)
 async def get_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
+    active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
+    project_ids: Annotated[str | None, Query(description="Comma-separated project IDs for scoped stats")] = None,
 ) -> DashboardStats:
-    """Get dashboard statistics."""
+    """Get dashboard statistics.
+
+    Optionally scoped to specific projects via the X-Active-Project header
+    or the project_ids query parameter. The explicit project_ids param
+    takes precedence over the header.
+    """
+
+    # Determine which project IDs to scope stats to
+    scope_project_ids: list[str] = []
+    if project_ids and project_ids.strip():
+        scope_project_ids = [pid.strip() for pid in project_ids.split(",") if pid.strip()]
+    elif active_project_ids:
+        scope_project_ids = active_project_ids
 
     # Build storage location filter (reused across queries)
     active_location = await get_active_storage_location()
@@ -97,6 +112,8 @@ async def get_stats(
     )
     if storage_filter is not None:
         recording_query = recording_query.where(storage_filter)
+    if scope_project_ids:
+        recording_query = recording_query.where(Recording.project_id.in_(scope_project_ids))
     recording_result = await db.execute(recording_query)
     recording_row = recording_result.one()
 
@@ -107,14 +124,23 @@ async def get_stats(
     ).group_by(Recording.status)
     if storage_filter is not None:
         status_query = status_query.where(storage_filter)
+    if scope_project_ids:
+        status_query = status_query.where(Recording.project_id.in_(scope_project_ids))
     status_result = await db.execute(status_query)
     status_counts = {row.status: row.count for row in status_result.all()}
 
-    # Get recording IDs for this storage location to filter transcripts/segments
+    # Get recording IDs for this storage location (and project scope) to filter transcripts/segments
+    rec_id_query = select(Recording.id)
+    has_rec_filter = False
     if storage_filter is not None:
-        rec_ids_result = await db.execute(
-            select(Recording.id).where(storage_filter)
-        )
+        rec_id_query = rec_id_query.where(storage_filter)
+        has_rec_filter = True
+    if scope_project_ids:
+        rec_id_query = rec_id_query.where(Recording.project_id.in_(scope_project_ids))
+        has_rec_filter = True
+
+    if has_rec_filter:
+        rec_ids_result = await db.execute(rec_id_query)
         recording_ids = [row[0] for row in rec_ids_result.all()]
     else:
         recording_ids = None
@@ -182,7 +208,10 @@ async def get_stats(
     running_count = job_counts.get("running", 0)
 
     # Document stats
-    document_count_result = await db.execute(select(func.count(Document.id)))
+    document_count_query = select(func.count(Document.id))
+    if scope_project_ids:
+        document_count_query = document_count_query.where(Document.project_id.in_(scope_project_ids))
+    document_count_result = await db.execute(document_count_query)
     document_count = document_count_result.scalar() or 0
 
     return DashboardStats(

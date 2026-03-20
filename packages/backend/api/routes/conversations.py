@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from api.dependencies import get_active_project_id
+from api.dependencies import get_active_project_id, get_active_project_ids
 from api.routes.sync import broadcast
 from persistence import get_db
 from persistence.models import Conversation, ConversationMessage
@@ -87,7 +87,7 @@ class ConversationListResponse(BaseModel):
 @router.get("", response_model=ConversationListResponse)
 async def list_conversations(
     db: Annotated[AsyncSession, Depends(get_db)],
-    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
     all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> ConversationListResponse:
     """List all saved conversations, most recent first."""
@@ -103,8 +103,8 @@ async def list_conversations(
     )
 
     # Project scoping (from X-Active-Project header)
-    if active_project_id and not all_projects:
-        query = query.where(Conversation.project_id == active_project_id)
+    if active_project_ids and not all_projects:
+        query = query.where(Conversation.project_id.in_(active_project_ids))
 
     result = await db.execute(query)
     rows = result.all()

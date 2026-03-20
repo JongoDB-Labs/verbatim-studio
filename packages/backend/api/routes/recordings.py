@@ -21,7 +21,7 @@ from persistence.models import Job, Project, Recording, RecordingTag, RecordingT
 from services.jobs import job_queue
 from services.storage import storage_service, get_storage_adapter, get_active_storage_location
 from storage.factory import get_adapter
-from api.dependencies import get_active_project_id
+from api.dependencies import get_active_project_id, get_active_project_ids
 from api.routes.sync import broadcast
 from core.events import emit as emit_event
 
@@ -247,7 +247,7 @@ async def list_recordings(
     tag_ids: Annotated[str | None, Query(description="Comma-separated tag IDs to filter by")] = None,
     speaker: Annotated[str | None, Query(description="Filter by speaker name")] = None,
     template_id: Annotated[str | None, Query(description="Filter by template ID")] = None,
-    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
     all_projects: Annotated[bool, Query(alias="all", description="Return all projects (ignore active project)")] = False,
 ) -> RecordingListResponse:
     """List all recordings with pagination and filtering.
@@ -303,8 +303,8 @@ async def list_recordings(
     # Project scoping: explicit project_id param takes precedence over header
     if project_id:
         query = query.where(Recording.project_id == project_id)
-    elif active_project_id and not all_projects:
-        query = query.where(Recording.project_id == active_project_id)
+    elif active_project_ids and not all_projects:
+        query = query.where(Recording.project_id.in_(active_project_ids))
 
     if status is not None:
         query = query.where(Recording.status == status)

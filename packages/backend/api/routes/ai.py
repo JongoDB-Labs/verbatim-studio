@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_active_project_id
+from api.dependencies import get_active_project_id, get_active_project_ids
 from core.config import settings
 from core.factory import get_factory
 from core.interfaces import ChatMessage, ChatOptions
@@ -754,7 +754,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 async def chat_multi_stream(
     request: MultiChatRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    active_project_id: Annotated[str | None, Depends(get_active_project_id)] = None,
+    active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
 ) -> StreamingResponse:
     """Stream a chat response with multi-transcript context."""
     _ensure_active_model_loaded()
@@ -827,7 +827,7 @@ async def chat_multi_stream(
 
     # Auto-inject project context via semantic search (when no manual attachments/files)
     # Note: only searches recording segments; document embeddings are a future enhancement
-    if active_project_id and not request.recording_ids and not request.document_ids and not request.file_context:
+    if active_project_ids and not request.recording_ids and not request.document_ids and not request.file_context:
         try:
             from services.embedding import embedding_service, bytes_to_embedding
             if embedding_service.is_available():
@@ -839,7 +839,7 @@ async def chat_multi_stream(
                     .join(Segment, SegmentEmbedding.segment_id == Segment.id)
                     .join(Transcript, Segment.transcript_id == Transcript.id)
                     .join(Recording, Transcript.recording_id == Recording.id)
-                    .where(Recording.project_id == active_project_id)
+                    .where(Recording.project_id.in_(active_project_ids))
                 )
                 seg_result = await db.execute(seg_query)
                 seg_rows = seg_result.all()
