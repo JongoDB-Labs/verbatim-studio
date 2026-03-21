@@ -880,96 +880,10 @@ async def chat_multi_stream(
         except Exception as e:
             logger.warning("Project auto-context failed: %s", e)
 
-    # --- Web search (if enabled and query detected) ---
+    # Web search is now handled by the web_search tool in the execution loop.
+    # The web_search_enabled flag controls whether the tool is available via exclude_tools.
     web_results_text = None
     web_sources = []
-    if request.web_search_enabled:
-        from services.web_search import (
-            extract_search_query,
-            create_search_provider,
-            format_results_for_context,
-            load_web_search_config,
-            get_cached_results,
-            cache_results,
-            WebSearchResult,
-        )
-        search_query = extract_search_query(request.message)
-        if search_query:
-            try:
-                results = None
-
-                # Layer 1: In-memory TTL cache (covers all chats, saved or not)
-                results = get_cached_results(search_query.text)
-
-                # Layer 2: DB cache (persisted per-conversation, survives restarts)
-                if results is None and request.conversation_id:
-                    from persistence.models import ChatWebCache
-                    cached = await db.execute(
-                        select(ChatWebCache).where(
-                            ChatWebCache.conversation_id == request.conversation_id,
-                            ChatWebCache.query == search_query.text,
-                        )
-                    )
-                    cached_result = cached.scalar_one_or_none()
-                    if cached_result:
-                        cached_data = json.loads(cached_result.results)
-                        results = [
-                            WebSearchResult(
-                                title=r["title"],
-                                url=r["url"],
-                                content=r["content"],
-                                relevance_score=r.get("relevance_score", 0.0),
-                            )
-                            for r in cached_data
-                        ]
-                        cache_results(search_query.text, results)
-
-                # Layer 3: Live API call (only if both caches miss)
-                if results is None:
-                    ws_config = await load_web_search_config()
-                    if ws_config:
-                        provider = create_search_provider(ws_config)
-                        if search_query.urls and hasattr(provider, "extract"):
-                            # URL in message → extract page content directly
-                            results = await provider.extract(search_query.urls)
-                        else:
-                            # Search → then extract top 3 for full content
-                            results = await provider.search(search_query.text)
-                            if results and hasattr(provider, "extract"):
-                                top_urls = [r.url for r in results[:3]]
-                                try:
-                                    extracted = await provider.extract(top_urls)
-                                    # Merge: keep search titles/scores, replace content with extracted
-                                    extracted_map = {e.url: e.content for e in extracted}
-                                    for r in results:
-                                        if r.url in extracted_map:
-                                            r.content = extracted_map[r.url]
-                                except Exception as e:
-                                    logger.debug("Extract enrichment failed, using search snippets: %s", e)
-
-                        # Populate both caches
-                        if results:
-                            cache_results(search_query.text, results)
-                            if request.conversation_id:
-                                from persistence.models import ChatWebCache
-                                cache_entry = ChatWebCache(
-                                    conversation_id=request.conversation_id,
-                                    query=search_query.text,
-                                    results=json.dumps([{
-                                        "title": r.title, "url": r.url,
-                                        "content": r.content, "relevance_score": r.relevance_score,
-                                    } for r in results]),
-                                )
-                                db.add(cache_entry)
-                                await db.flush()
-                    else:
-                        logger.info("Web search skipped: no API key configured")
-
-                if results:
-                    web_results_text = format_results_for_context(results, max_tokens=3000)
-                    web_sources = [{"title": r.title, "url": r.url} for r in results]
-            except Exception as e:
-                logger.warning("Web search failed: %s", e)
 
     # Detect if user is asking for help with the app
     def is_help_intent(message: str) -> bool:
