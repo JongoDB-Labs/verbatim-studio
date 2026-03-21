@@ -221,59 +221,6 @@ Guidelines:
 - If asked about something not in attached content, say so
 """
 
-# Help context injected when help-related keywords are detected
-MAX_HELP_CONTEXT = """
-Verbatim Studio Navigation:
-- Dashboard: Overview stats, recent items, quick actions, onboarding tour
-- Recordings: Upload audio/video, apply templates, transcribe, bulk operations
-- Projects: Organize recordings with custom project types and metadata
-- Documents: Upload PDFs/images, OCR text extraction, page-anchored notes
-- Chats: View and resume saved AI conversations
-- Live: Real-time microphone transcription (BETA)
-- Search: Keyword or semantic (AI-powered) search across all content
-- Files: Browse folder structure, move files between storage locations
-- Settings: Transcription, AI models, storage locations, backup/restore
-
-Core Features:
-- Recording Templates: Custom metadata fields (text, date, number, dropdown) for recordings
-- Project Types: Custom metadata schemas for projects
-- Tags: Color-coded labels for filtering recordings
-- Speakers: Auto-detected (diarization), can rename, merge, assign colors
-- Highlights: Color-code segments (yellow, green, blue, red, purple, orange)
-- Comments: Add notes to transcript segments
-- Notes: Anchor to timestamps (recordings) or pages (documents)
-- Semantic Search: AI-powered meaning-based search using embeddings
-- AI Analysis: Summarization, sentiment, entity extraction, action items
-
-Storage Options:
-- Local: File system storage
-- Network: SMB (Windows shares), NFS
-- Cloud (OAuth): Google Drive, OneDrive, Dropbox
-
-Common Tasks:
-- Transcribe: Recordings > Upload > (optional) Select template > Transcribe
-- Edit transcript: Click segment text to edit, speaker label to reassign
-- Highlight: Click highlight icon on segment, choose color
-- Merge speakers: In speakers panel, merge duplicates
-- Export: Transcript view > Export > TXT/SRT/VTT/DOCX/PDF
-- Semantic search: Search page > Enter query > Select "Semantic" match type
-- Cloud storage: Settings > Storage > Add > Select provider > Authenticate
-- Backup: Settings > Backup/Archive > Export (creates .vbz file)
-
-Keyboard Shortcuts (transcript view):
-- Space/K: Play/Pause
-- J/L: Skip back/forward 10s
-- Arrow keys: Skip 5s or jump segments
-- Shift+,/.: Skip 1s
-
-Troubleshooting:
-- Model not loading: Settings > AI/LLM > Download a model
-- Transcription failed: Try smaller model (tiny/base), check file format, switch to CPU
-- No speakers: Enable diarization in Settings > Transcription (needs HuggingFace token)
-- Cloud auth expired: Settings > Storage > Re-authenticate
-- Semantic search empty: Embeddings generate automatically, may take time
-"""
-
 
 class SummarizationResponse(BaseModel):
     """Response model for transcript summarization."""
@@ -880,11 +827,6 @@ async def chat_multi_stream(
         except Exception as e:
             logger.warning("Project auto-context failed: %s", e)
 
-    # Web search is now handled by the web_search tool in the execution loop.
-    # The web_search_enabled flag controls whether the tool is available via exclude_tools.
-    web_results_text = None
-    web_sources = []
-
     # Build system message
     system_content = MAX_SYSTEM_PROMPT_GENERAL if request.general_mode else MAX_SYSTEM_PROMPT
 
@@ -966,7 +908,7 @@ async def chat_multi_stream(
             system_tokens=count(system_content),
             user_message_tokens=count(request.message),
             memory_tokens=count(compressed_memory) if compressed_memory else 0,
-            web_result_tokens=count(web_results_text) if web_results_text else 0,
+            web_result_tokens=0,
             history_tokens=count(" ".join(m["content"] for m in recent_msgs)) if recent_msgs else 0,
             context_tokens=count(context_header + full_context),
         )
@@ -993,7 +935,7 @@ async def chat_multi_stream(
             system_tokens=count(system_content),
             user_message_tokens=count(request.message),
             memory_tokens=count(compressed_memory) if compressed_memory else 0,
-            web_result_tokens=count(web_results_text) if web_results_text else 0,
+            web_result_tokens=0,
             history_tokens=count(" ".join(m["content"] for m in recent_msgs)) if recent_msgs else 0,
             context_tokens=count(context_str),
         )
@@ -1004,7 +946,7 @@ async def chat_multi_stream(
     messages = ctx_mgr.build_messages(
         system_content=system_content,
         compressed_memory=compressed_memory,
-        web_results=web_results_text,
+        web_results=None,
         attached_context=context_str,
         recent_history=recent_msgs,
         user_message=request.message,
@@ -1044,14 +986,9 @@ async def chat_multi_stream(
 
     async def generate():
         try:
-            # Send web sources early if from pre-tool web search (backwards compat)
-            if web_sources:
-                yield f"data: {json.dumps({'web_sources': web_sources})}\n\n"
             async for event in executor.execute(messages, options, tool_ctx):
-                # Add compressed_memory to the done event
                 if event.get("done"):
                     event["compressed_memory"] = compressed_memory
-                    event["web_sources"] = web_sources
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             logger.exception("Multi-chat stream failed")
