@@ -721,13 +721,13 @@ class TestMessageFeedback:
         # Second call should include the tool result
         assert len(captured_messages) == 2
         second_call_msgs = captured_messages[1]
-        # Last message should be the tool_result injection
+        # Last message should be the tool_result injection (ChatMessage object)
         last_msg = second_call_msgs[-1]
-        assert last_msg["role"] == "user"
-        assert "<tool_result>" in last_msg["content"]
-        assert "The answer is 42." in last_msg["content"]
+        assert last_msg.role == "user"
+        assert "<tool_result>" in last_msg.content
+        assert "The answer is 42." in last_msg.content
 
         # Second-to-last should be assistant's original response
         assistant_msg = second_call_msgs[-2]
-        assert assistant_msg["role"] == "assistant"
-        assert "tool_call" in assistant_msg["content"]
+        assert assistant_msg.role == "assistant"
+        assert "tool_call" in assistant_msg.content

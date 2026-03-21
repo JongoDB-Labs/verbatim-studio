@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncGenerator
 
+from core.interfaces import ChatMessage
 from services.tool_registry import (
     Artifact,
     ToolCallParsed,
@@ -111,8 +112,8 @@ class ToolExecutor:
 
             # Feed tool result back to the LLM for the next iteration
             current_messages = list(messages) + [
-                {"role": "assistant", "content": full_response},
-                {"role": "user", "content": f"<tool_result>\n{tool_result.content}\n</tool_result>"},
+                ChatMessage(role="assistant", content=full_response),
+                ChatMessage(role="user", content=f"<tool_result>\n{tool_result.content}\n</tool_result>"),
             ]
 
     async def _run_tool(
