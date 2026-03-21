@@ -17,3 +17,7 @@ def register_all_tools(registry: ToolRegistry) -> None:
 
     from services.tools.help_tool import help_tool
     registry.register(help_tool)
+
+    from services.tools.document_tools import generate_document_tool, export_transcript_tool
+    registry.register(generate_document_tool)
+    registry.register(export_transcript_tool)

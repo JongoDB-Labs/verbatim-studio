@@ -1310,3 +1310,14 @@ Answer questions based on the content of this transcript. If the answer cannot b
     except Exception as e:
         logger.exception("Ask about transcript failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/generated/{filename}")
+async def serve_generated_document(filename: str):
+    """Serve a generated document for download."""
+    from fastapi.responses import FileResponse
+
+    filepath = Path(__file__).resolve().parent.parent.parent / "generated_documents" / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(str(filepath), filename=filename)
