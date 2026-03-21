@@ -21,3 +21,7 @@ def register_all_tools(registry: ToolRegistry) -> None:
     from services.tools.document_tools import generate_document_tool, export_transcript_tool
     registry.register(generate_document_tool)
     registry.register(export_transcript_tool)
+
+    from services.tools.analysis_tools import summarize_transcript_tool, quality_review_tool
+    registry.register(summarize_transcript_tool)
+    registry.register(quality_review_tool)
