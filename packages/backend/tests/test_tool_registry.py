@@ -147,3 +147,38 @@ class TestParseToolCall:
     def test_partial_opening_tag_not_matched(self):
         result = parse_tool_call("Here is a <tool_call without closing")
         assert result is None
+
+
+class TestPromptGeneration:
+    def test_generate_tools_prompt(self):
+        registry = ToolRegistry()
+        registry.register(ToolDef(
+            name="web_search",
+            description="Search the internet for current information. Use when the user asks about current events.",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+            handler=lambda a, c: None,
+        ))
+        registry.register(ToolDef(
+            name="system_status",
+            description="Check GPU, model, and storage health.",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda a, c: None,
+        ))
+        prompt = registry.generate_tools_prompt()
+        assert "<tool_call>" in prompt
+        assert "web_search" in prompt
+        assert "system_status" in prompt
+        assert "Search the internet" in prompt
+
+    def test_empty_registry_returns_empty(self):
+        registry = ToolRegistry()
+        prompt = registry.generate_tools_prompt()
+        assert prompt == ""
+
+    def test_filtered_tools_prompt(self):
+        registry = ToolRegistry()
+        registry.register(ToolDef(name="a", description="Tool A", parameters={}, handler=lambda a, c: None))
+        registry.register(ToolDef(name="b", description="Tool B", parameters={}, handler=lambda a, c: None))
+        prompt = registry.generate_tools_prompt(exclude=["b"])
+        assert "Tool A" in prompt
+        assert "Tool B" not in prompt

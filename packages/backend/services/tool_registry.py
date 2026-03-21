@@ -82,6 +82,40 @@ class ToolRegistry:
             return [t for t in self._tools.values() if t.name in names]
         return list(self._tools.values())
 
+    def generate_tools_prompt(self, *, exclude: list[str] | None = None) -> str:
+        """Generate the tools section for the system prompt.
+
+        Returns an empty string if no tools are registered (or all excluded).
+        """
+        tools = [t for t in self._tools.values() if not exclude or t.name not in exclude]
+        if not tools:
+            return ""
+
+        lines = [
+            "\n\n## Tools\n",
+            "You have access to the following tools. To use a tool, output a <tool_call> block.",
+            "You may include text before the block to explain what you're doing.",
+            "Wait for the result before continuing your response.\n",
+            "<tool_call>",
+            '{"tool": "tool_name", "args": {"param": "value"}}',
+            "</tool_call>\n",
+            "### Available Tools\n",
+        ]
+
+        for tool in tools:
+            param_hints = ""
+            props = tool.parameters.get("properties", {})
+            if props:
+                params = ", ".join(f"{k}: {v.get('type', 'any')}" for k, v in props.items())
+                param_hints = f"({params})"
+            lines.append(f"- **{tool.name}**{param_hints} — {tool.description}")
+
+        lines.append("\n### Guidelines")
+        lines.append("- Call ONE tool at a time. Wait for the result before deciding next steps.")
+        lines.append("- Always explain what you're doing before calling a tool.")
+
+        return "\n".join(lines)
+
 
 # ── Module-level singleton ────────────────────────────────────────────
 
