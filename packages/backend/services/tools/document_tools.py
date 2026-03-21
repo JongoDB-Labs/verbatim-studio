@@ -111,11 +111,14 @@ async def handle_export_transcript(args: dict, ctx: ToolContext) -> ToolResult:
     fmt = args.get("format", "txt").lower()
 
     from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
     from persistence.models import Transcript, Segment
 
-    # Verify transcript exists
+    # Verify transcript exists (eager-load recording for title)
     result = await ctx.db.execute(
-        select(Transcript).where(Transcript.id == transcript_id)
+        select(Transcript)
+        .where(Transcript.id == transcript_id)
+        .options(selectinload(Transcript.recording))
     )
     transcript = result.scalar_one_or_none()
     if not transcript:
