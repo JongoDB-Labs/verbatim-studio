@@ -885,64 +885,8 @@ async def chat_multi_stream(
     web_results_text = None
     web_sources = []
 
-    # Detect if user is asking for help with the app
-    def is_help_intent(message: str) -> bool:
-        """Detect if the user message is asking for help with Verbatim Studio."""
-        msg_lower = message.lower()
-
-        # Help-related phrases
-        help_phrases = [
-            "how do i", "how can i", "how to", "where is", "where do i", "where can i",
-            "what is", "what does", "what are", "can i", "can you help",
-            "help me", "help with", "show me", "tell me how", "guide", "tutorial",
-            "i can't find", "i don't know how", "having trouble", "not working",
-        ]
-
-        # App-specific terms (strong signal)
-        app_terms = [
-            # Navigation
-            "sidebar", "dashboard", "settings", "recordings", "projects", "documents",
-            "chats", "files", "browser", "navigation", "menu",
-            # Core features
-            "transcribe", "transcript", "transcription", "export", "import",
-            "upload", "download", "model", "whisper", "diarization",
-            "speaker", "segment", "highlight", "comment", "note",
-            # Organization
-            "project", "tag", "template", "recording template", "project type",
-            "metadata", "custom field",
-            # Search
-            "search", "semantic", "keyword", "embedding", "find",
-            # AI
-            "max", "chat", "assistant", "summarize", "analyze", "sentiment",
-            # Storage
-            "storage", "cloud", "google drive", "onedrive", "dropbox", "oauth",
-            "backup", "restore", "archive",
-            # Settings
-            "shortcut", "keyboard", "theme", "language", "huggingface",
-            # Live
-            "live", "microphone", "real-time", "realtime",
-            # Documents
-            "ocr", "pdf", "document",
-        ]
-
-        # Check for help phrases
-        has_help_phrase = any(phrase in msg_lower for phrase in help_phrases)
-
-        # Check for app terms
-        has_app_term = any(term in msg_lower for term in app_terms)
-
-        # If no content is attached and user asks a question, likely asking about app
-        no_attachments = not context_parts
-        is_question = "?" in message or has_help_phrase
-
-        return has_help_phrase or (has_app_term and is_question) or (no_attachments and is_question)
-
     # Build system message
     system_content = MAX_SYSTEM_PROMPT_GENERAL if request.general_mode else MAX_SYSTEM_PROMPT
-
-    # Inject help context if help intent detected
-    if is_help_intent(request.message):
-        system_content += MAX_HELP_CONTEXT
 
     # Project context injection
     if active_project_ids:
