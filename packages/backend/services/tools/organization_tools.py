@@ -12,6 +12,7 @@ import logging
 import uuid
 
 from sqlalchemy import select, func as sa_func
+from sqlalchemy.orm import selectinload
 
 from services.tool_registry import ToolContext, ToolDef, ToolResult
 
@@ -63,7 +64,7 @@ async def handle_tag_recordings(args: dict, ctx: ToolContext) -> ToolResult:
     if not tag_names:
         return ToolResult(content="No tag names provided.")
 
-    from persistence.models import Recording, Tag, RecordingTag
+    from persistence.models import Recording, Tag
 
     try:
         # Resolve or create tags
@@ -82,7 +83,9 @@ async def handle_tag_recordings(args: dict, ctx: ToolContext) -> ToolResult:
         tagged_count = 0
         for rec_id in recording_ids:
             result = await ctx.db.execute(
-                select(Recording).where(Recording.id == rec_id)
+                select(Recording)
+                .where(Recording.id == rec_id)
+                .options(selectinload(Recording.tags))
             )
             recording = result.scalar_one_or_none()
             if recording is None:
@@ -119,9 +122,14 @@ async def handle_get_recording_info(args: dict, ctx: ToolContext) -> ToolResult:
     try:
         if recording_id:
             # Get specific recording
-            result = await ctx.db.execute(
-                select(Recording).where(Recording.id == recording_id)
+            query = (
+                select(Recording)
+                .where(Recording.id == recording_id)
+                .options(selectinload(Recording.tags))
             )
+            if ctx.project_id:
+                query = query.where(Recording.project_id == ctx.project_id)
+            result = await ctx.db.execute(query)
             recording = result.scalar_one_or_none()
             if recording is None:
                 return ToolResult(content=f"Recording not found: {recording_id}")
