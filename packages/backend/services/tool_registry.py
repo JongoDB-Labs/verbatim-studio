@@ -7,7 +7,9 @@ parameter schema, and an async handler function.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -92,3 +94,47 @@ def get_registry() -> ToolRegistry:
     if _registry is None:
         _registry = ToolRegistry()
     return _registry
+
+
+# ── Tool-call parser ─────────────────────────────────────────────────
+
+
+@dataclass
+class ToolCallParsed:
+    """A parsed tool call from LLM output."""
+
+    tool_name: str
+    args: dict
+    prefix: str  # Text before the <tool_call> tag
+
+
+_TOOL_CALL_PATTERN = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+    re.DOTALL,
+)
+
+
+def parse_tool_call(text: str) -> ToolCallParsed | None:
+    """Parse a <tool_call> block from LLM output.
+
+    Returns None if no valid tool call is found.
+    """
+    match = _TOOL_CALL_PATTERN.search(text)
+    if not match:
+        return None
+
+    try:
+        data = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        logger.warning("Malformed JSON in tool call: %s", match.group(1)[:200])
+        return None
+
+    tool_name = data.get("tool")
+    if not tool_name:
+        logger.warning("Tool call missing 'tool' field: %s", data)
+        return None
+
+    prefix = text[: match.start()].strip()
+    args = data.get("args", {})
+
+    return ToolCallParsed(tool_name=tool_name, args=args, prefix=prefix)

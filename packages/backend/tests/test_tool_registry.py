@@ -98,3 +98,52 @@ class TestToolRegistry:
         filtered = registry.list_tools(names=["web"])
         assert len(filtered) == 1
         assert filtered[0].name == "web"
+
+
+from services.tool_registry import parse_tool_call, ToolCallParsed
+
+
+class TestParseToolCall:
+    def test_valid_tool_call(self):
+        text = 'Let me search.\n\n<tool_call>\n{"tool": "web_search", "args": {"query": "AI benchmarks"}}\n</tool_call>'
+        result = parse_tool_call(text)
+        assert result is not None
+        assert result.tool_name == "web_search"
+        assert result.args == {"query": "AI benchmarks"}
+        assert result.prefix == "Let me search."
+
+    def test_no_tool_call(self):
+        result = parse_tool_call("Just a normal response with no tools.")
+        assert result is None
+
+    def test_malformed_json(self):
+        text = '<tool_call>\n{not valid json}\n</tool_call>'
+        result = parse_tool_call(text)
+        assert result is None
+
+    def test_missing_tool_field(self):
+        text = '<tool_call>\n{"args": {"query": "test"}}\n</tool_call>'
+        result = parse_tool_call(text)
+        assert result is None
+
+    def test_prefix_preserved(self):
+        text = 'I will search for that information.\n\n<tool_call>\n{"tool": "search", "args": {}}\n</tool_call>'
+        result = parse_tool_call(text)
+        assert result is not None
+        assert "I will search" in result.prefix
+
+    def test_suffix_after_tool_call_ignored(self):
+        text = '<tool_call>\n{"tool": "search", "args": {}}\n</tool_call>\nExtra text after'
+        result = parse_tool_call(text)
+        assert result is not None
+        assert result.tool_name == "search"
+
+    def test_empty_args(self):
+        text = '<tool_call>\n{"tool": "system_status", "args": {}}\n</tool_call>'
+        result = parse_tool_call(text)
+        assert result is not None
+        assert result.args == {}
+
+    def test_partial_opening_tag_not_matched(self):
+        result = parse_tool_call("Here is a <tool_call without closing")
+        assert result is None
