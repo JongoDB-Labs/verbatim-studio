@@ -14,13 +14,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_active_project_id, get_active_project_ids
+from api.dependencies import get_active_project_ids
 from core.config import settings
 from core.factory import get_factory
 from core.interfaces import ChatMessage, ChatOptions
 from core.model_catalog import MODEL_CATALOG
 from persistence.database import get_db
-from persistence.models import Document, Project, Recording, Segment, SegmentEmbedding, Transcript
+from persistence.models import Document, Project, Recording, Segment, Transcript
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -825,49 +825,58 @@ async def chat_multi_stream(
         context_parts.append(f"=== Uploaded File {label} ===\n{request.file_context}\n")
         label_index += 1
 
-    # Auto-inject project context via semantic search (when no manual attachments/files)
-    # Note: only searches recording segments; document embeddings are a future enhancement
+    # Auto-inject project context (when no manual attachments/files)
+    # Loads all transcripts and documents from scoped project(s) directly
     if active_project_ids and not request.recording_ids and not request.document_ids and not request.file_context:
         try:
-            from services.embedding import embedding_service, bytes_to_embedding
-            if embedding_service.is_available():
-                query_embedding = await embedding_service.embed_query(request.message)
-
-                # Search segments in project recordings
-                seg_query = (
-                    select(SegmentEmbedding, Segment.text, Recording.title)
-                    .join(Segment, SegmentEmbedding.segment_id == Segment.id)
-                    .join(Transcript, Segment.transcript_id == Transcript.id)
-                    .join(Recording, Transcript.recording_id == Recording.id)
-                    .where(Recording.project_id.in_(active_project_ids))
+            # Load all recordings with transcripts from scoped projects
+            rec_query = (
+                select(Recording)
+                .where(
+                    Recording.project_id.in_(active_project_ids),
+                    Recording.is_archived == False,
                 )
-                seg_result = await db.execute(seg_query)
-                seg_rows = seg_result.all()
+            )
+            rec_result = await db.execute(rec_query)
+            project_recordings = rec_result.scalars().all()
 
-                if len(seg_rows) > 5000:
-                    logger.info("Project auto-context: skipping — %d embeddings exceeds limit", len(seg_rows))
-                else:
-                    # Score and rank
-                    import math
-                    scored_segments = []
-                    norm_a = math.sqrt(sum(a * a for a in query_embedding))
-                    for seg_emb, seg_text, rec_title in seg_rows:
-                        emb = bytes_to_embedding(seg_emb.embedding)
-                        dot = sum(a * b for a, b in zip(query_embedding, emb))
-                        norm_b = math.sqrt(sum(b * b for b in emb))
-                        score = dot / (norm_a * norm_b) if norm_a and norm_b else 0
-                        if score > 0.35:
-                            scored_segments.append((score, seg_text, rec_title))
+            for recording in project_recordings:
+                label = chr(65 + label_index)
+                try:
+                    transcript_result = await db.execute(
+                        select(Transcript).where(Transcript.recording_id == recording.id)
+                    )
+                    transcript = transcript_result.scalar_one_or_none()
+                    if not transcript:
+                        continue
+                    text = await get_transcript_text(db, transcript.id)
+                    context_parts.append(f"=== Transcript {label}: {recording.title} ===\n{text}\n")
+                    label_index += 1
+                except Exception as e:
+                    logger.warning("Auto-context: could not load transcript for recording %s: %s", recording.id, e)
 
-                    scored_segments.sort(key=lambda x: x[0], reverse=True)
+            # Load all documents from scoped projects
+            doc_query = (
+                select(Document)
+                .where(
+                    Document.project_id.in_(active_project_ids),
+                    Document.is_archived == False,
+                )
+            )
+            doc_result = await db.execute(doc_query)
+            project_documents = doc_result.scalars().all()
 
-                    # Inject top matches as context
-                    if scored_segments:
-                        auto_context_parts = []
-                        for score, text, title in scored_segments[:5]:
-                            auto_context_parts.append(f"[From '{title}']: {text}")
-                        project_auto_context = "\n\n=== Relevant content from this project ===\n" + "\n\n".join(auto_context_parts)
-                        context_parts.append(project_auto_context)
+            for doc in project_documents:
+                label = chr(65 + label_index)
+                if doc.extracted_text:
+                    context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_text}\n")
+                    label_index += 1
+                elif doc.extracted_markdown:
+                    context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_markdown}\n")
+                    label_index += 1
+
+            if label_index > 0:
+                logger.info("Project auto-context: loaded %d item(s) from %d project(s)", label_index, len(active_project_ids))
         except Exception as e:
             logger.warning("Project auto-context failed: %s", e)
 
@@ -1022,25 +1031,34 @@ async def chat_multi_stream(
         system_content += MAX_HELP_CONTEXT
 
     # Project context injection
-    if active_project_id:
+    if active_project_ids:
         project_result = await db.execute(
-            select(Project).where(Project.id == active_project_id)
+            select(Project).where(Project.id.in_(active_project_ids))
         )
-        project = project_result.scalar_one_or_none()
-        if project:
+        projects = project_result.scalars().all()
+        if projects:
             rec_count = await db.scalar(
-                select(func.count(Recording.id)).where(Recording.project_id == active_project_id)
+                select(func.count(Recording.id)).where(Recording.project_id.in_(active_project_ids))
             ) or 0
             doc_count = await db.scalar(
-                select(func.count(Document.id)).where(Document.project_id == active_project_id)
+                select(func.count(Document.id)).where(Document.project_id.in_(active_project_ids))
             ) or 0
 
-            system_content += (
-                f"\n\nYou are currently working within the project '{project.name}'. "
-                f"This project contains {rec_count} recording(s) and {doc_count} document(s). "
-                "When answering questions, prioritize content from this project. "
-                "The user may ask you to search beyond this project — do so when explicitly requested."
-            )
+            if len(projects) == 1:
+                system_content += (
+                    f"\n\nYou are currently working within the project '{projects[0].name}'. "
+                    f"This project contains {rec_count} recording(s) and {doc_count} document(s). "
+                    "When answering questions, prioritize content from this project. "
+                    "The user may ask you to search beyond this project — do so when explicitly requested."
+                )
+            else:
+                project_names = ", ".join(p.name for p in projects)
+                system_content += (
+                    f"\n\nYou are currently scoped to {len(projects)} projects: {project_names}. "
+                    f"These projects contain {rec_count} recording(s) and {doc_count} document(s) combined. "
+                    "When answering questions, prioritize content from these projects. "
+                    "The user may ask you to search beyond these projects — do so when explicitly requested."
+                )
 
     max_response_tokens = 1024
 

@@ -25,6 +25,7 @@ import { ChatPanel } from '@/components/ai/ChatPanel';
 import type { ChatMessage } from '@/components/ai/ChatMessages';
 import type { ChatAttachment } from '@/components/ai/AttachmentPicker';
 import { ChatsPage } from '@/pages/chats/ChatsPage';
+import { ArchivePage } from '@/pages/archive/ArchivePage';
 import { OnboardingTour, WelcomeModal, TourToast, TOUR_STORAGE_KEYS } from '@/components/onboarding';
 import { UpdatePrompt, WhatsNewDialog } from '@/components/updates';
 import { useProjectStore } from '@/stores/projectStore';
@@ -47,6 +48,7 @@ type NavigationState =
   | { type: 'document-viewer'; documentId: string }
   | { type: 'browser'; folderId?: string | null }
   | { type: 'chats' }
+  | { type: 'archive' }
   | { type: 'plugin'; pluginRoute: string };
 
 // Map navigation state to URL path
@@ -65,6 +67,7 @@ function navigationToPath(nav: NavigationState): string {
     case 'document-viewer': return `/documents/${nav.documentId}`;
     case 'browser': return nav.folderId ? `/browser/${nav.folderId}` : '/browser';
     case 'chats': return '/chats';
+    case 'archive': return '/archive';
     case 'plugin': return `/plugins${nav.pluginRoute}`;
   }
 }
@@ -81,6 +84,7 @@ function pathToNavigation(path: string): NavigationState {
   if (cleanPath === '/search') return { type: 'search' };
   if (cleanPath === '/settings') return { type: 'settings' };
   if (cleanPath === '/chats') return { type: 'chats' };
+  if (cleanPath === '/archive') return { type: 'archive' };
 
   // /recordings/:id -> transcript
   const recordingMatch = cleanPath.match(/^\/recordings\/([^/]+)$/);
@@ -310,6 +314,10 @@ function AppContent() {
     setNavigation({ type: 'chats' });
   }, []);
 
+  const handleNavigateToArchive = useCallback(() => {
+    setNavigation({ type: 'archive' });
+  }, []);
+
   // Map navigation types to sidebar tabs
   const currentTab = (() => {
     switch (navigation.type) {
@@ -325,10 +333,12 @@ function AppContent() {
         return 'browser';
       case 'chats':
         return 'chats';
+      case 'archive':
+        return 'archive';
       case 'plugin':
         return navigation.pluginRoute.replace(/^\//, '') as string;
       default:
-        return navigation.type as 'dashboard' | 'recordings' | 'projects' | 'live' | 'search' | 'settings' | 'documents' | 'browser' | 'chats';
+        return navigation.type as 'dashboard' | 'recordings' | 'projects' | 'live' | 'search' | 'settings' | 'documents' | 'browser' | 'chats' | 'archive';
     }
   })();
 
@@ -619,6 +629,7 @@ function AppContent() {
               else if (tab === 'documents') handleNavigateToDocuments();
               else if (tab === 'chats') handleNavigateToChats();
               else if (tab === 'browser') handleNavigateToBrowser();
+              else if (tab === 'archive') handleNavigateToArchive();
               else if (tab === 'settings') handleNavigateToSettings();
               else {
                 // Plugin nav item
@@ -708,6 +719,9 @@ function AppContent() {
                     onViewRecording={(id) => setNavigation({ type: 'transcript', recordingId: id })}
                     onViewDocument={(id) => setNavigation({ type: 'document-viewer', documentId: id })}
                   />
+                )}
+                {navigation.type === 'archive' && (
+                  <ArchivePage />
                 )}
                 {navigation.type === 'chats' && (
                   <ChatsPage

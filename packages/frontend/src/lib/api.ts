@@ -1744,6 +1744,21 @@ class ApiClient {
 
     getProperties: (id: string) =>
       this.request<FileProperties>(`/api/recordings/${id}/properties`),
+
+    archive: (id: string) =>
+      this.request<{ message: string }>(`/api/recordings/${id}/archive`, { method: 'PATCH' }),
+
+    unarchive: (id: string) =>
+      this.request<{ message: string }>(`/api/recordings/${id}/unarchive`, { method: 'PATCH' }),
+
+    listArchived: (params?: { search?: string; page?: number; page_size?: number }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.search) searchParams.set('search', params.search);
+      if (params?.page) searchParams.set('page', String(params.page));
+      if (params?.page_size) searchParams.set('page_size', String(params.page_size));
+      const query = searchParams.toString();
+      return this.request<RecordingListResponse>(`/api/recordings/archived${query ? `?${query}` : ''}`);
+    },
   };
 
   // Jobs
@@ -2141,10 +2156,15 @@ class ApiClient {
 
     chatMultiStream: (data: ChatMultiRequest): AsyncGenerator<ChatStreamToken> => {
       const baseUrl = this.baseUrl;
+      const selectedProjects = useProjectStore.getState().selectedProjects;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (selectedProjects.length > 0) {
+        headers['X-Active-Project'] = selectedProjects.map(p => p.id).join(',');
+      }
       async function* streamGenerator(): AsyncGenerator<ChatStreamToken> {
         const response = await fetch(`${baseUrl}/api/ai/chat/multi`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(data),
         });
 
@@ -2642,6 +2662,21 @@ class ApiClient {
 
     getProperties: (id: string) =>
       this.request<FileProperties>(`/api/documents/${id}/properties`),
+
+    archive: (id: string) =>
+      this.request<{ message: string }>(`/api/documents/${id}/archive`, { method: 'PATCH' }),
+
+    unarchive: (id: string) =>
+      this.request<{ message: string }>(`/api/documents/${id}/unarchive`, { method: 'PATCH' }),
+
+    listArchived: (params?: { search?: string; page?: number; page_size?: number }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.search) searchParams.set('search', params.search);
+      if (params?.page) searchParams.set('page', String(params.page));
+      if (params?.page_size) searchParams.set('page_size', String(params.page_size));
+      const query = searchParams.toString();
+      return this.request<DocumentListResponse>(`/api/documents/archived${query ? `?${query}` : ''}`);
+    },
   };
 
   // Notes

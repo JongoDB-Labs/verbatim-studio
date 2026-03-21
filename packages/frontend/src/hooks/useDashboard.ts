@@ -5,7 +5,7 @@ import { queryKeys } from '@/lib/queryKeys';
 
 export function useDashboardStats() {
   return useQuery({
-    queryKey: queryKeys.dashboard.stats,
+    queryKey: queryKeys.dashboard.scopedStats(),
     queryFn: () => api.stats.dashboard(),
     // Poll every 3 seconds when there are active processing jobs
     // This provides a fallback in case WebSocket broadcasts don't deliver

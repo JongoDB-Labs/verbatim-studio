@@ -59,6 +59,7 @@ class DocumentResponse(BaseModel):
     metadata: dict
     created_at: str
     updated_at: str
+    is_archived: bool = False
     # Extracted content (only included when requested or for single doc)
     extracted_text: str | None = None
     extracted_markdown: str | None = None
@@ -109,6 +110,7 @@ def _doc_to_response(
         error_message=doc.error_message,
         page_count=doc.page_count,
         metadata=doc.metadata_,
+        is_archived=doc.is_archived,
         created_at=doc.created_at.isoformat(),
         updated_at=doc.updated_at.isoformat(),
         extracted_text=doc.extracted_text if include_content else None,

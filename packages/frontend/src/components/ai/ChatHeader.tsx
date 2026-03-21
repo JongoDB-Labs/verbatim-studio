@@ -30,35 +30,27 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const { selectedProjects } = useProjectStore();
 
+  // Build scope label for the scope line
+  const scopeLabel = (() => {
+    const count = selectedProjects.length;
+    if (count === 0) return null;
+    if (count === 1) return selectedProjects[0].name;
+    if (count <= 3) {
+      const names = selectedProjects.map((p) => p.name).join(', ');
+      return names;
+    }
+    return `${count} projects`;
+  })();
+
+  const scopeTooltip =
+    selectedProjects.length >= 1
+      ? selectedProjects.map((p) => p.name).join(', ')
+      : undefined;
+
   return (
-    <div className="border-b border-gray-200 dark:border-gray-700 px-4 py-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-            <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="font-semibold text-gray-900 dark:text-gray-100">Max</h2>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span>Scoped to:</span>
-              {selectedProjects.length > 0 ? (
-                <span className="inline-flex items-center gap-1">
-                  {selectedProjects[0].color && (
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: selectedProjects[0].color }} />
-                  )}
-                  {selectedProjects[0].name}
-                  {selectedProjects.length > 1 && (
-                    <span className="text-gray-400"> +{selectedProjects.length - 1}</span>
-                  )}
-                </span>
-              ) : (
-                <span>All Projects</span>
-              )}
-            </div>
-          </div>
-        </div>
+    <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between px-4 py-3">
+        <h2 className="font-semibold text-gray-900 dark:text-gray-100">Max</h2>
         <div className="flex items-center gap-1">
           {/* Web search toggle */}
           {onToggleWebSearch && (
@@ -147,8 +139,23 @@ export function ChatHeader({
           </button>
         </div>
       </div>
+      {/* Scope line — only shown when projects are selected */}
+      {selectedProjects.length > 0 && (
+        <div
+          className="border-t border-gray-200 dark:border-gray-700 px-4 py-1.5 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-slate-400 overflow-hidden"
+          title={scopeTooltip}
+        >
+          {/* Pin icon */}
+          <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+          </svg>
+          <span className="truncate whitespace-nowrap">
+            Scoped to: {scopeLabel}
+          </span>
+        </div>
+      )}
       {attached.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 px-4 pb-2">
           {attached.map((a) => (
             <span
               key={a.id}

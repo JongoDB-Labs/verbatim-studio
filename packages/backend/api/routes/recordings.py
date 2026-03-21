@@ -150,6 +150,7 @@ class RecordingResponse(BaseModel):
     metadata: dict = Field(default_factory=dict)
     status: str
     tag_ids: list[str] = Field(default_factory=list)
+    is_archived: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -227,6 +228,7 @@ def _recording_to_response(
         metadata=recording.metadata_ or {},
         status=recording.status,
         tag_ids=tag_ids if tag_ids is not None else [],
+        is_archived=recording.is_archived,
         created_at=recording.created_at,
         updated_at=recording.updated_at,
     )

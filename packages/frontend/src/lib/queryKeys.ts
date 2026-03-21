@@ -49,6 +49,7 @@ export const queryKeys = {
     all: ['recordings'] as const,
     list: (filters?: RecordingFilters) => ['recordings', 'list', { ...filters, _scope: activeProjectScope() }] as const,
     detail: (id: string) => ['recordings', 'detail', id] as const,
+    archived: () => ['recordings', 'archived'] as const,
   },
 
   // Projects
@@ -70,7 +71,8 @@ export const queryKeys = {
 
   // Dashboard
   dashboard: {
-    stats: ['dashboard', 'stats'] as const,
+    stats: ['dashboard', 'stats'] as const, // prefix for invalidation
+    scopedStats: () => ['dashboard', 'stats', { _scope: activeProjectScope() }] as const,
   },
 
   // Search
@@ -85,6 +87,7 @@ export const queryKeys = {
     list: (filters?: DocumentFilters) =>
       ['documents', 'list', { ...filters, _scope: activeProjectScope() }] as const,
     detail: (id: string) => ['documents', 'detail', id] as const,
+    archived: () => ['documents', 'archived'] as const,
   },
 
   // Jobs (for progress tracking)
