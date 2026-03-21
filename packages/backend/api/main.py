@@ -173,6 +173,12 @@ async def lifespan(app: FastAPI):
     # Register plugin job handlers (async-safe during lifespan)
     _plugin_registry.apply_job_handlers(job_queue)
 
+    # Register Max AI tools
+    from services.tools import register_all_tools
+    from services.tool_registry import get_registry
+    register_all_tools(get_registry())
+    logger.info("Registered %d Max AI tools", len(get_registry().list_tools()))
+
     # Start file watcher for external file detection
     file_watcher = FileWatcherService(settings.MEDIA_DIR)
     file_watcher.start()

@@ -1154,16 +1154,47 @@ async def chat_multi_stream(
 
     options = ChatOptions(temperature=request.temperature, max_tokens=max_response_tokens)
 
+    # Build tool executor
+    from services.tool_registry import get_registry, ToolContext
+    from services.tool_executor import ToolExecutor
+
+    registry = get_registry()
+    tool_ctx = ToolContext(
+        project_id=active_project_ids[0] if active_project_ids else None,
+        conversation_id=request.conversation_id,
+        recording_ids=request.recording_ids,
+        document_ids=request.document_ids,
+        db=db,
+        ai_service=ai_service,
+    )
+
+    # Determine which tools are available for this request
+    exclude_tools = []
+    if not request.web_search_enabled:
+        exclude_tools.append("web_search")
+
+    # Inject tools into system prompt
+    tools_prompt = registry.generate_tools_prompt(exclude=exclude_tools)
+    if tools_prompt:
+        # Append tools section to the system message content
+        messages[0] = ChatMessage(
+            role="system",
+            content=messages[0].content + tools_prompt,
+        )
+
+    executor = ToolExecutor(registry)
+
     async def generate():
         try:
-            # Send web sources early so the UI can show them while LLM generates
+            # Send web sources early if from pre-tool web search (backwards compat)
             if web_sources:
                 yield f"data: {json.dumps({'web_sources': web_sources})}\n\n"
-            async for chunk in ai_service.chat_stream(messages, options):
-                if chunk.content:
-                    yield f"data: {json.dumps({'token': chunk.content})}\n\n"
-                if chunk.finish_reason:
-                    yield f"data: {json.dumps({'done': True, 'compressed_memory': compressed_memory, 'web_sources': web_sources})}\n\n"
+            async for event in executor.execute(messages, options, tool_ctx):
+                # Add compressed_memory to the done event
+                if event.get("done"):
+                    event["compressed_memory"] = compressed_memory
+                    event["web_sources"] = web_sources
+                yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             logger.exception("Multi-chat stream failed")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
