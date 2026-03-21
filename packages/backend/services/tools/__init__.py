@@ -7,3 +7,7 @@ def register_all_tools(registry: ToolRegistry) -> None:
     """Register all available tools with the registry."""
     from services.tools.web_search_tool import web_search_tool
     registry.register(web_search_tool)
+
+    from services.tools.search_tools import project_search_tool, global_search_tool
+    registry.register(project_search_tool)
+    registry.register(global_search_tool)
