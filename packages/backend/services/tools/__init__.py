@@ -29,3 +29,12 @@ def register_all_tools(registry: ToolRegistry) -> None:
     from services.tools.annotation_tools import highlight_segments_tool, add_note_tool
     registry.register(highlight_segments_tool)
     registry.register(add_note_tool)
+
+    from services.tools.organization_tools import (
+        create_project_tool, tag_recordings_tool,
+        get_recording_info_tool, system_status_tool,
+    )
+    registry.register(create_project_tool)
+    registry.register(tag_recordings_tool)
+    registry.register(get_recording_info_tool)
+    registry.register(system_status_tool)
