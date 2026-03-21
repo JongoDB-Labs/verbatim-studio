@@ -11,3 +11,6 @@ def register_all_tools(registry: ToolRegistry) -> None:
     from services.tools.search_tools import project_search_tool, global_search_tool
     registry.register(project_search_tool)
     registry.register(global_search_tool)
+
+    from services.tools.context_tool import context_tool
+    registry.register(context_tool)
