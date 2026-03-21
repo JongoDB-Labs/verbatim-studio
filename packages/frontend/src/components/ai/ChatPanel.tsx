@@ -32,6 +32,8 @@ export function ChatPanel({
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingWebSources, setStreamingWebSources] = useState<Array<{ title: string; url: string }>>([]);
+  const [toolActivities, setToolActivities] = useState<Array<{ name: string; args?: Record<string, unknown>; summary?: string; status: 'running' | 'complete' }>>([]);
+  const [streamingArtifacts, setStreamingArtifacts] = useState<Array<{ type: string; url: string; filename: string }>>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveTitle, setSaveTitle] = useState('');
@@ -50,6 +52,8 @@ export function ChatPanel({
     setIsStreaming(true);
     setStreamingContent('');
     setStreamingWebSources([]);
+    setToolActivities([]);
+    setStreamingArtifacts([]);
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -97,12 +101,36 @@ export function ChatPanel({
           currentWebSources = token.web_sources;
           setStreamingWebSources(token.web_sources);
         }
+        if (token.tool_call) {
+          setToolActivities((prev) => [
+            ...prev,
+            { name: token.tool_call!.name, args: token.tool_call!.args, status: 'running' as const },
+          ]);
+        }
+        if (token.tool_result) {
+          setToolActivities((prev) =>
+            prev.map((a) =>
+              a.name === token.tool_result!.name && a.status === 'running'
+                ? { ...a, summary: token.tool_result!.summary, status: 'complete' as const }
+                : a
+            )
+          );
+        }
+        if (token.artifacts) {
+          setStreamingArtifacts(token.artifacts);
+        }
         if (token.done) {
+          const finalArtifacts = token.artifacts || (streamingArtifacts.length > 0 ? streamingArtifacts : undefined);
+          const finalToolCalls = toolActivities.length > 0
+            ? toolActivities.map(a => ({ name: a.name, summary: a.summary || '' }))
+            : undefined;
           const assistantMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: 'assistant',
             content: fullContent,
             webSources: currentWebSources,
+            artifacts: finalArtifacts,
+            toolCalls: finalToolCalls,
           };
           setMessages((prev) => [...prev, assistantMessage]);
           setStreamingContent('');
@@ -120,6 +148,8 @@ export function ChatPanel({
       setIsStreaming(false);
       setStreamingContent('');
       setStreamingWebSources([]);
+      setToolActivities([]);
+      setStreamingArtifacts([]);
     }
   }, [messages, attached, setMessages, generalMode, webSearchEnabled, compressedMemory, setCompressedMemory]);
 
@@ -206,6 +236,7 @@ export function ChatPanel({
         isStreaming={isStreaming}
         streamingContent={streamingContent}
         streamingWebSources={streamingWebSources}
+        toolActivities={toolActivities}
       />
       <div className="relative">
         {showPicker && (

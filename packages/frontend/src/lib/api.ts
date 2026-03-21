@@ -763,6 +763,9 @@ export interface ChatStreamToken {
   web_sources?: Array<{ title: string; url: string }>;
   model?: string;
   error?: string;
+  tool_call?: { name: string; args: Record<string, unknown> };
+  tool_result?: { name: string; summary: string };
+  artifacts?: Array<{ type: string; url: string; filename: string }>;
 }
 
 export interface AIChatResponse {

@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react';
+import { ToolActivityCard, type ToolActivity } from './ToolActivityCard';
 
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   webSources?: Array<{ title: string; url: string }>;
+  artifacts?: Array<{ type: string; url: string; filename: string }>;
+  toolCalls?: Array<{ name: string; summary: string }>;
 }
 
 interface ChatMessagesProps {
@@ -12,9 +15,10 @@ interface ChatMessagesProps {
   isStreaming: boolean;
   streamingContent: string;
   streamingWebSources?: Array<{ title: string; url: string }>;
+  toolActivities?: ToolActivity[];
 }
 
-export function ChatMessages({ messages, isStreaming, streamingContent, streamingWebSources }: ChatMessagesProps) {
+export function ChatMessages({ messages, isStreaming, streamingContent, streamingWebSources, toolActivities }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -73,6 +77,23 @@ export function ChatMessages({ messages, isStreaming, streamingContent, streamin
                 </div>
               </div>
             )}
+            {msg.role === 'assistant' && msg.artifacts && msg.artifacts.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600 space-y-1.5">
+                {msg.artifacts.map((artifact, i) => (
+                  <a
+                    key={i}
+                    href={artifact.url}
+                    download={artifact.filename}
+                    className="flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:border-blue-400 transition-colors"
+                  >
+                    <svg className="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span>{artifact.filename}</span>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       ))}
@@ -118,6 +139,16 @@ export function ChatMessages({ messages, isStreaming, streamingContent, streamin
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+      {/* Tool activity cards - show what Max is doing */}
+      {isStreaming && toolActivities && toolActivities.length > 0 && (
+        <div className="flex justify-start" aria-label="Tool activity">
+          <div className="max-w-[90%] space-y-1.5">
+            {toolActivities.map((activity, i) => (
+              <ToolActivityCard key={`${activity.name}-${i}`} activity={activity} />
+            ))}
           </div>
         </div>
       )}
