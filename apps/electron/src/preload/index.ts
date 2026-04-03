@@ -93,6 +93,17 @@ try {
   setAutoUpdate: (enabled: boolean): Promise<void> => {
     return ipcRenderer.invoke('update:setAutoUpdate', enabled);
   },
+
+  // GitHub PAT for private repo updates
+  getGithubPat: (): Promise<{ pat: string }> => {
+    return ipcRenderer.invoke('update:getGithubPat');
+  },
+  setGithubPat: (pat: string): Promise<void> => {
+    return ipcRenderer.invoke('update:setGithubPat', pat);
+  },
+  testGithubPat: (pat: string): Promise<{ valid: boolean; error?: string }> => {
+    return ipcRenderer.invoke('update:testGithubPat', pat);
+  },
   });
   console.log('[Preload] contextBridge.exposeInMainWorld succeeded');
 } catch (err) {
@@ -136,6 +147,9 @@ declare global {
       whatsNewSeen: (version: string) => void;
       getUpdateSettings: () => Promise<{ autoUpdateEnabled: boolean }>;
       setAutoUpdate: (enabled: boolean) => Promise<void>;
+      getGithubPat: () => Promise<{ pat: string }>;
+      setGithubPat: (pat: string) => Promise<void>;
+      testGithubPat: (pat: string) => Promise<{ valid: boolean; error?: string }>;
     };
   }
 }

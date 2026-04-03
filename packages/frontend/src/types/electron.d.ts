@@ -38,6 +38,11 @@ interface ElectronAPI {
   whatsNewSeen: (version: string) => void;
   getUpdateSettings: () => Promise<{ autoUpdateEnabled: boolean }>;
   setAutoUpdate: (enabled: boolean) => Promise<void>;
+
+  // GitHub PAT for private repo updates
+  getGithubPat: () => Promise<{ pat: string }>;
+  setGithubPat: (pat: string) => Promise<void>;
+  testGithubPat: (pat: string) => Promise<{ valid: boolean; error?: string }>;
 }
 
 declare global {

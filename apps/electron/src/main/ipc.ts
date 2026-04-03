@@ -1,7 +1,7 @@
 import { ipcMain, app, BrowserWindow, dialog } from 'electron';
 import { backendManager } from './backend';
 import { checkForUpdates, startUpdate, markWhatsNewSeen } from './updater';
-import { getAutoUpdateEnabled, setAutoUpdateEnabled } from './update-store';
+import { getAutoUpdateEnabled, setAutoUpdateEnabled, getGithubPat, setGithubPat } from './update-store';
 import { captureScreenshot } from './screenshot';
 
 export function registerIpcHandlers(): void {
@@ -131,5 +131,56 @@ export function registerIpcHandlers(): void {
       return;
     }
     setAutoUpdateEnabled(enabled);
+  });
+
+  ipcMain.handle('update:getGithubPat', () => {
+    return { pat: getGithubPat() };
+  });
+
+  ipcMain.handle('update:setGithubPat', (_event, pat: string) => {
+    if (typeof pat !== 'string') {
+      console.error('[IPC] Invalid PAT value');
+      return;
+    }
+    setGithubPat(pat);
+  });
+
+  ipcMain.handle('update:testGithubPat', async (_event, pat: string) => {
+    const https = await import('https');
+    return new Promise<{ valid: boolean; error?: string }>((resolve) => {
+      const req = https.request(
+        {
+          hostname: 'api.github.com',
+          path: '/repos/JongoDB/verbatim-studio/releases?per_page=1',
+          method: 'GET',
+          headers: {
+            'User-Agent': `Verbatim Studio/${app.getVersion()}`,
+            Accept: 'application/vnd.github.v3+json',
+            Authorization: `token ${pat}`,
+          },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              resolve({ valid: true });
+            } else if (res.statusCode === 401) {
+              resolve({ valid: false, error: 'Invalid token' });
+            } else if (res.statusCode === 404) {
+              resolve({ valid: false, error: 'Token lacks repo scope' });
+            } else {
+              resolve({ valid: false, error: `GitHub returned ${res.statusCode}` });
+            }
+          });
+        },
+      );
+      req.on('error', (e: Error) => resolve({ valid: false, error: e.message }));
+      req.setTimeout(10000, () => {
+        req.destroy();
+        resolve({ valid: false, error: 'Connection timed out' });
+      });
+      req.end();
+    });
   });
 }

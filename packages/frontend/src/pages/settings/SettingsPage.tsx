@@ -351,6 +351,10 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true);
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
   const [updateCheckResult, setUpdateCheckResult] = useState<'none' | 'available' | null>(null);
+  const [githubPat, setGithubPat] = useState('');
+  const [showGithubPat, setShowGithubPat] = useState(false);
+  const [patTestResult, setPatTestResult] = useState<'valid' | 'invalid' | 'testing' | null>(null);
+  const [patTestError, setPatTestError] = useState('');
 
   // GPU acceleration state (Windows only)
   const [gpuStatus, setGpuStatus] = useState<GpuStatus | null>(null);
@@ -408,6 +412,9 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     if (window.electronAPI) {
       window.electronAPI.getUpdateSettings().then(({ autoUpdateEnabled }) => {
         setAutoUpdateEnabled(autoUpdateEnabled);
+      });
+      window.electronAPI.getGithubPat().then(({ pat }) => {
+        setGithubPat(pat);
       });
 
       const cleanupNotAvailable = window.electronAPI.onUpdateNotAvailable(() => {
@@ -4245,6 +4252,103 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
             </label>
+          </div>
+
+          {/* GitHub PAT for private repo access */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <div>
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">GitHub Access Token</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Required for auto-updates from the private repository.{' '}
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo&description=Verbatim+Studio+Updates"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 underline"
+                >
+                  Generate a token
+                </a>
+                {' '}with <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">repo</code> scope.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <div className="relative flex-1">
+                <input
+                  type={showGithubPat ? 'text' : 'password'}
+                  value={githubPat}
+                  onChange={(e) => {
+                    setGithubPat(e.target.value);
+                    setPatTestResult(null);
+                  }}
+                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                  className="w-full px-3 py-2 pr-10 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGithubPat(!showGithubPat)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title={showGithubPat ? 'Hide token' : 'Show token'}
+                >
+                  {showGithubPat ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" /></svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                  )}
+                </button>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!githubPat.trim()) return;
+                  setPatTestResult('testing');
+                  setPatTestError('');
+                  try {
+                    const result = await window.electronAPI!.testGithubPat(githubPat.trim());
+                    if (result.valid) {
+                      setPatTestResult('valid');
+                      await window.electronAPI!.setGithubPat(githubPat.trim());
+                    } else {
+                      setPatTestResult('invalid');
+                      setPatTestError(result.error || 'Invalid token');
+                    }
+                  } catch {
+                    setPatTestResult('invalid');
+                    setPatTestError('Connection failed');
+                  }
+                }}
+                disabled={!githubPat.trim() || patTestResult === 'testing'}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {patTestResult === 'testing' ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Testing...
+                  </>
+                ) : 'Test & Save'}
+              </button>
+              {githubPat.trim() && (
+                <button
+                  onClick={async () => {
+                    setGithubPat('');
+                    setPatTestResult(null);
+                    setPatTestError('');
+                    await window.electronAPI!.setGithubPat('');
+                  }}
+                  className="px-2 py-2 text-sm text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                  title="Clear token"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
+            </div>
+            {patTestResult === 'valid' && (
+              <p className="text-xs text-green-600 dark:text-green-400 mt-1.5">Token verified and saved. Updates will now work from the private repository.</p>
+            )}
+            {patTestResult === 'invalid' && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">Token invalid: {patTestError}. Make sure it has the <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">repo</code> scope.</p>
+            )}
           </div>
 
           {/* Check for updates button */}

@@ -4,6 +4,7 @@ interface UpdateStoreSchema {
   autoUpdateEnabled: boolean;
   lastUpdateCheck: number;
   lastSeenVersion: string;
+  githubPat: string;
 }
 
 export const updateStore = new Store<UpdateStoreSchema>({
@@ -12,6 +13,7 @@ export const updateStore = new Store<UpdateStoreSchema>({
     autoUpdateEnabled: true,
     lastUpdateCheck: 0,
     lastSeenVersion: '',
+    githubPat: '',
   },
 });
 
@@ -37,4 +39,12 @@ export function getLastSeenVersion(): string {
 
 export function setLastSeenVersion(version: string): void {
   updateStore.set('lastSeenVersion', version);
+}
+
+export function getGithubPat(): string {
+  return updateStore.get('githubPat');
+}
+
+export function setGithubPat(pat: string): void {
+  updateStore.set('githubPat', pat);
 }

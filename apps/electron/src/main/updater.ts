@@ -11,6 +11,7 @@ import {
   setLastUpdateCheck,
   getLastSeenVersion,
   setLastSeenVersion,
+  getGithubPat,
 } from './update-store';
 import { writeUpdaterScript, parseVolumePath, UPDATE_DIR } from './update-script';
 
@@ -111,14 +112,22 @@ function fetchGitHubReleases(): Promise<GitHubRelease[]> {
   return new Promise((resolve, reject) => {
     const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 
+    const headers: Record<string, string> = {
+      'User-Agent': `${APP_NAME}/${app.getVersion()}`,
+      Accept: 'application/vnd.github.v3+json',
+    };
+
+    // Add PAT auth if configured (required for private repos)
+    const pat = getGithubPat();
+    if (pat) {
+      headers['Authorization'] = `token ${pat}`;
+    }
+
     const options = {
       hostname: 'api.github.com',
       path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
       method: 'GET',
-      headers: {
-        'User-Agent': `${APP_NAME}/${app.getVersion()}`,
-        Accept: 'application/vnd.github.v3+json',
-      },
+      headers,
     };
 
     const req = https.request(options, (res) => {
