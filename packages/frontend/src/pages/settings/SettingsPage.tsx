@@ -4257,9 +4257,9 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
           {/* GitHub PAT for private repo access */}
           <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
             <div>
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">GitHub Access Token</p>
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">GitHub Access Token (Optional)</p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Required for auto-updates from the private repository.{' '}
+                Only needed for pre-release builds from the development repository. Stable updates work without a token.{' '}
                 <a
                   href="https://github.com/settings/tokens/new?scopes=repo&description=Verbatim+Studio+Updates"
                   target="_blank"

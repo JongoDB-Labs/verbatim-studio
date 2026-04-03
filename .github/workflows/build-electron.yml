@@ -533,7 +533,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Release (with generated notes)
+      - name: Create Release in source repo (with generated notes)
         if: steps.existing.outputs.has_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -542,10 +542,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create Release (preserve existing notes)
+      - name: Create Release in source repo (preserve existing notes)
         if: steps.existing.outputs.has_notes == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish release to public repo
+        if: env.HAS_RELEASES_TOKEN == 'true'
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # Get release notes (from file or from source repo)
+          if [ -f release-notes.md ]; then
+            NOTES_FILE="release-notes.md"
+          else
+            gh release view "$TAG" --json body -q '.body' > /tmp/release-notes.md 2>/dev/null || echo "Release $TAG" > /tmp/release-notes.md
+            NOTES_FILE="/tmp/release-notes.md"
+          fi
+
+          # Create release in public repo
+          gh release create "$TAG" \
+            --repo JongoDB/verbatim-studio-releases \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            artifacts/**/* 2>/dev/null || \
+          gh release upload "$TAG" \
+            --repo JongoDB/verbatim-studio-releases \
+            --clobber \
+            artifacts/**/*
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          HAS_RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN != '' }}

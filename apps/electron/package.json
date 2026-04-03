@@ -146,7 +146,7 @@
     "publish": {
       "provider": "github",
       "owner": "JongoDB",
-      "repo": "verbatim-studio"
+      "repo": "verbatim-studio-releases"
     }
   }
 }

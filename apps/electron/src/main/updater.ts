@@ -19,7 +19,8 @@ const execFileAsync = promisify(execFile);
 
 // Constants
 const GITHUB_OWNER = 'JongoDB';
-const GITHUB_REPO = 'verbatim-studio';
+const GITHUB_REPO_PUBLIC = 'verbatim-studio-releases'; // Public repo for updates (no auth needed)
+const GITHUB_REPO_PRIVATE = 'verbatim-studio';          // Private repo (requires PAT)
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const APP_NAME = 'Verbatim Studio';
 
@@ -117,15 +118,17 @@ function fetchGitHubReleases(): Promise<GitHubRelease[]> {
       Accept: 'application/vnd.github.v3+json',
     };
 
-    // Add PAT auth if configured (required for private repos)
+    // Use private repo with PAT if configured, otherwise public releases repo
     const pat = getGithubPat();
+    let repo = GITHUB_REPO_PUBLIC;
     if (pat) {
       headers['Authorization'] = `token ${pat}`;
+      repo = GITHUB_REPO_PRIVATE;
     }
 
     const options = {
       hostname: 'api.github.com',
-      path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
+      path: `/repos/${GITHUB_OWNER}/${repo}/releases`,
       method: 'GET',
       headers,
     };
@@ -445,7 +448,7 @@ export async function checkForUpdates(manual = false): Promise<void> {
 export async function startUpdate(downloadUrl: string, version: string): Promise<void> {
   console.log(`[Updater] Starting update to ${version}`);
 
-  const fallbackUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tag/v${version}`;
+  const fallbackUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO_PUBLIC}/releases/tag/v${version}`;
 
   try {
     // Create temp directory
