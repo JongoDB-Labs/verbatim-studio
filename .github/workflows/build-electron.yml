@@ -15,7 +15,114 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # For tag pushes: trigger the build in the public releases repo
+  trigger-public-build:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for release notes generation)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+
+          format_bullet() {
+            local msg="$1"
+            local desc=$(echo "$msg" | sed 's/^[a-z]*\(([^)]*)\)\{0,1\}: //')
+            local first=$(echo "${desc:0:1}" | tr '[:lower:]' '[:upper:]')
+            local rest="${desc:1}"
+            echo "- **${first}${rest}**"
+          }
+
+          FEATURES=""
+          FIXES=""
+          IMPROVEMENTS=""
+
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            MSG="${line#* }"
+            case "$MSG" in
+              *"bump version"*|*"release v"*) continue ;;
+            esac
+            CLEAN=$(echo "$MSG" | sed 's/^feat([^)]*): /feat: /; s/^fix([^)]*): /fix: /; s/^chore([^)]*): /chore: /; s/^perf([^)]*): /perf: /')
+            case "$CLEAN" in
+              feat:*|feat\(*) FEATURES="${FEATURES}$(format_bullet "$MSG")"$'\n' ;;
+              fix:*)           FIXES="${FIXES}$(format_bullet "$MSG")"$'\n' ;;
+              perf:*|refactor:*) IMPROVEMENTS="${IMPROVEMENTS}$(format_bullet "$MSG")"$'\n' ;;
+            esac
+          done <<< "$(git log --oneline "$RANGE" -- . ':!docs/' ':!*.md')"
+
+          BODY="## What's New in ${TAG}"$'\n'
+          if [ -n "$FEATURES" ]; then
+            BODY="${BODY}"$'\n'"### ✨ New Features"$'\n'"${FEATURES}"
+          fi
+          if [ -n "$FIXES" ]; then
+            BODY="${BODY}"$'\n'"### 🐛 Bug Fixes"$'\n'"${FIXES}"
+          fi
+          if [ -n "$IMPROVEMENTS" ]; then
+            BODY="${BODY}"$'\n'"### 🔧 Improvements"$'\n'"${IMPROVEMENTS}"
+          fi
+          if [ -z "$FEATURES" ] && [ -z "$FIXES" ] && [ -z "$IMPROVEMENTS" ]; then
+            BODY="${BODY}"$'\n'"### 🔧 Improvements"$'\n'"- **Minor updates and refinements**"$'\n'
+          fi
+          BODY="${BODY}"$'\n'"**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"$'\n'
+
+          # Escape for JSON
+          NOTES_JSON=$(echo "$BODY" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+          echo "notes_json=$NOTES_JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing manual release notes
+        id: existing
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          EXISTING_BODY=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
+          if [ -n "$EXISTING_BODY" ] && ! echo "$EXISTING_BODY" | grep -q "Minor updates and refinements"; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+            # Use existing manual notes instead
+            NOTES_JSON=$(echo "$EXISTING_BODY" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+            echo "notes_json=$NOTES_JSON" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger build in public releases repo
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          SHA="${GITHUB_SHA}"
+
+          # Use manual notes if they exist, otherwise generated notes
+          if [ "${{ steps.existing.outputs.has_notes }}" = "true" ]; then
+            NOTES=${{ steps.existing.outputs.notes_json }}
+          else
+            NOTES=${{ steps.notes.outputs.notes_json }}
+          fi
+
+          gh workflow run build-electron.yml \
+            --repo JongoDB/verbatim-studio-releases \
+            -f tag="$TAG" \
+            -f sha="$SHA" \
+            -f release_notes="$NOTES"
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+
+  # For PRs: validate the build still works (no artifacts uploaded)
+  validate:
+    if: "!startsWith(github.ref, 'refs/tags/')"
     strategy:
       fail-fast: false
       matrix:
@@ -43,537 +150,11 @@ jobs:
         with:
           version: 9
 
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install CUDA Toolkit
-        if: matrix.platform == 'win32'
-        uses: Jimver/cuda-toolkit@v0.2.30
-        id: cuda-toolkit
-        with:
-          cuda: '12.6.3'
-          method: 'network'
-          sub-packages: '["cudart", "cublas"]'
-
-      # Cache Python standalone + dependencies to speed up builds
-      - name: Cache Python environment
-        uses: actions/cache@v4
-        id: python-cache
-        with:
-          path: build/python-standalone
-          key: ${{ runner.os }}-${{ matrix.arch }}-python-ml-v5-${{ hashFiles('scripts/requirements-core.txt', 'scripts/requirements-ml.txt', 'scripts/requirements-ml-windows.txt', 'scripts/install-bundled-deps.sh') }}
-
       - name: Install dependencies
         run: pnpm install
-
-      - name: Download Python standalone
-        if: steps.python-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: ./scripts/download-python-standalone.sh ${{ matrix.arch }}
-
-      - name: Install Python dependencies (core + ML)
-        if: steps.python-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          echo "Installing all Python dependencies (this may take a while)..."
-          ./scripts/install-bundled-deps.sh
-        env:
-          # Increase pip timeout for large packages
-          PIP_DEFAULT_TIMEOUT: 300
-
-      - name: Verify Python dependencies (strict version check)
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "win32" ]; then
-            PYTHON_BIN="build/python-standalone/python-windows-x64/python.exe"
-            SITE_PACKAGES="build/python-standalone/python-windows-x64/Lib/site-packages"
-          else
-            PYTHON_BIN="build/python-standalone/python-macos-arm64/bin/python3"
-            SITE_PACKAGES="build/python-standalone/python-macos-arm64/lib/python3.12/site-packages"
-          fi
-          echo "=== Installed ML packages ==="
-          "$PYTHON_BIN" -m pip list --path "$SITE_PACKAGES" | grep -E "torch|whisper|pyannote|mlx|transformers|huggingface|sentence|numpy" || true
-          echo ""
-          echo "=== STRICT Version Verification ==="
-
-          PACKAGE_LIST=$("$PYTHON_BIN" -m pip list --path "$SITE_PACKAGES" --format=freeze 2>/dev/null)
-          FAILED=0
-
-          check_installed() {
-            local pkg=$1
-            local pattern=$(echo "$pkg" | sed 's/-/_/g; s/\./_/g')
-            local version=$(echo "$PACKAGE_LIST" | grep -i "^${pattern}==" | cut -d'=' -f3 | head -1)
-            if [ -z "$version" ]; then
-              version=$(echo "$PACKAGE_LIST" | grep -i "^${pkg}==" | cut -d'=' -f3 | head -1)
-            fi
-            if [ -n "$version" ]; then
-              echo "✓ $pkg: $version"
-            else
-              echo "✗ $pkg: NOT_INSTALLED"
-              return 1
-            fi
-          }
-
-          check_version() {
-            local pkg=$1
-            local expected=$2
-            local actual=$(echo "$PACKAGE_LIST" | grep -i "^${pkg}==" | cut -d'=' -f3 | head -1)
-            if [ -z "$actual" ]; then
-              local pkg_underscore=$(echo "$pkg" | sed 's/-/_/g; s/\./_/g')
-              actual=$(echo "$PACKAGE_LIST" | grep -i "^${pkg_underscore}==" | cut -d'=' -f3 | head -1)
-            fi
-            if [ -z "$actual" ]; then actual="NOT_INSTALLED"; fi
-            if [ "$actual" = "$expected" ]; then
-              echo "✓ $pkg: $actual"
-            else
-              echo "✗ $pkg: $actual (expected $expected)"
-              return 1
-            fi
-          }
-
-          # Core document processing packages
-          check_installed "PyMuPDF" || FAILED=1
-          check_installed "python-docx" || FAILED=1
-          check_installed "openpyxl" || FAILED=1
-          check_installed "python-pptx" || FAILED=1
-
-          # ML packages (verify exact versions)
-          check_version "torch" "2.8.0" || FAILED=1
-          check_version "torchaudio" "2.8.0" || FAILED=1
-          check_version "huggingface-hub" "0.36.1" || FAILED=1
-          check_version "transformers" "4.48.0" || FAILED=1
-          check_version "numpy" "2.0.2" || FAILED=1
-          check_version "whisperx" "3.3.4" || FAILED=1
-
-          # pyannote — bundled on all platforms
-          check_version "pyannote.audio" "3.3.2" || FAILED=1
-          check_version "pyannote.core" "5.0.0" || FAILED=1
-          check_version "pyannote.database" "5.1.3" || FAILED=1
-          check_version "pyannote.pipeline" "3.0.1" || FAILED=1
-          check_version "pyannote.metrics" "3.2.1" || FAILED=1
-
-          # Platform-specific checks
-          if [ "${{ matrix.platform }}" = "darwin" ]; then
-            check_version "mlx-whisper" "0.4.3" || FAILED=1
-          fi
-
-          echo ""
-          if [ $FAILED -eq 1 ]; then
-            echo "=== BUILD FAILED: Version mismatch detected! ==="
-            echo "The installed package versions do not match the required versions."
-            echo "This will cause runtime errors. Check pip dependency resolution."
-            exit 1
-          fi
-          echo "=== All versions verified ✓ ==="
-
-      # Cache whisper models to avoid re-downloading every build (~145MB for whisper-base)
-      - name: Cache Whisper models
-        uses: actions/cache@v4
-        id: whisper-cache
-        with:
-          path: build/resources/whisper-models
-          key: whisper-models-v3-${{ runner.os }}-${{ hashFiles('scripts/prepare-whisper-models.sh', 'scripts/prepare-whisper-models-windows.sh') }}
-
-      - name: Prepare Whisper models for bundling
-        if: matrix.platform == 'darwin' && steps.whisper-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          echo "Downloading Whisper models for offline transcription..."
-          ./scripts/prepare-whisper-models.sh
-        env:
-          HF_HUB_DISABLE_PROGRESS_BARS: 1
-
-      - name: Prepare Whisper models for bundling (Windows)
-        if: matrix.platform == 'win32' && steps.whisper-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          echo "Downloading CTranslate2 Whisper models..."
-          ./scripts/prepare-whisper-models-windows.sh
-        env:
-          HF_HUB_DISABLE_PROGRESS_BARS: 1
-
-      - name: Verify Whisper models are present
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "win32" ]; then
-            WHISPER_DIR="build/resources/whisper-models/huggingface/hub/models--Systran--faster-whisper-base"
-          else
-            WHISPER_DIR="build/resources/whisper-models/huggingface/hub/models--mlx-community--whisper-base-mlx"
-          fi
-          if [ ! -d "$WHISPER_DIR" ]; then
-            echo "ERROR: Whisper models directory not found at $WHISPER_DIR"
-            echo "Contents of build/resources/whisper-models:"
-            find build/resources/whisper-models -type f 2>/dev/null | head -20 || echo "(empty)"
-            exit 1
-          fi
-          SNAPSHOTS_DIR="$WHISPER_DIR/snapshots"
-          if [ ! -d "$SNAPSHOTS_DIR" ] || [ -z "$(ls -A $SNAPSHOTS_DIR 2>/dev/null)" ]; then
-            echo "ERROR: Whisper model snapshots directory is empty or missing"
-            exit 1
-          fi
-          echo "Whisper models verified:"
-          du -sh "$WHISPER_DIR"
-          ls -la "$SNAPSHOTS_DIR"
-
-      # Cache embedding models to avoid re-downloading every build (~550MB for nomic-embed-text)
-      - name: Cache Embedding models
-        uses: actions/cache@v4
-        id: embedding-cache
-        with:
-          path: build/resources/embedding-models
-          key: embedding-models-v2-${{ runner.os }}-${{ hashFiles('scripts/prepare-embedding-models.sh') }}
-
-      - name: Prepare Embedding models for bundling
-        if: steps.embedding-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          echo "Downloading embedding model for semantic search..."
-          ./scripts/prepare-embedding-models.sh
-        env:
-          HF_HUB_DISABLE_PROGRESS_BARS: 1
-
-      - name: Verify Embedding models are present
-        shell: bash
-        run: |
-          EMBED_DIR="build/resources/embedding-models/huggingface/hub/models--nomic-ai--nomic-embed-text-v1.5"
-          if [ ! -d "$EMBED_DIR" ]; then
-            echo "ERROR: Embedding model directory not found at $EMBED_DIR"
-            exit 1
-          fi
-          SNAPSHOTS_DIR="$EMBED_DIR/snapshots"
-          if [ ! -d "$SNAPSHOTS_DIR" ] || [ -z "$(ls -A $SNAPSHOTS_DIR 2>/dev/null)" ]; then
-            echo "ERROR: Embedding model snapshots directory is empty or missing"
-            exit 1
-          fi
-          echo "Embedding model verified:"
-          du -sh "$EMBED_DIR"
-
-      # Cache FFmpeg binaries to avoid re-downloading every build (~50MB)
-      - name: Cache FFmpeg
-        uses: actions/cache@v4
-        id: ffmpeg-cache
-        with:
-          path: build/resources/ffmpeg
-          key: ffmpeg-v1-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/download-ffmpeg.sh') }}
-
-      - name: Prepare Electron resources
-        shell: bash
-        run: ./scripts/prepare-electron-resources.sh
-
-      - name: Bundle CUDA runtime libraries
-        if: matrix.platform == 'win32'
-        shell: bash
-        run: ./scripts/bundle-cuda-libs.sh
-
-      - name: Strip Python environment (reduce bundle size)
-        if: matrix.platform == 'win32'
-        shell: bash
-        run: |
-          SITE_PACKAGES="build/python-standalone/python-windows-x64/Lib/site-packages"
-          echo "=== Before cleanup ==="
-          du -sh "$SITE_PACKAGES" || true
-
-          # ---------------------------------------------------------------
-          # 1. Remove torchvision entirely (~500MB-1GB)
-          #    Only needed by optional OCR feature, which installs on-demand
-          # ---------------------------------------------------------------
-          rm -rf "$SITE_PACKAGES/torchvision"
-          rm -rf "$SITE_PACKAGES/torchvision-"*.dist-info
-
-          # ---------------------------------------------------------------
-          # 2. Remove nvidia-* pip packages
-          #    CUDA DLLs are now in build/resources/cuda/ via bundle-cuda-libs.sh
-          #    No need to keep full nvidia packages in Python env
-          # ---------------------------------------------------------------
-          rm -rf "$SITE_PACKAGES/nvidia"
-          rm -rf "$SITE_PACKAGES/nvidia_"*.dist-info
-
-          # ---------------------------------------------------------------
-          # 3. Strip speechbrain/lightning bloat from pyannote dependency tree
-          # ---------------------------------------------------------------
-          rm -rf "$SITE_PACKAGES/speechbrain/tests"
-          rm -rf "$SITE_PACKAGES/speechbrain/recipes"
-          rm -rf "$SITE_PACKAGES/speechbrain/templates"
-          rm -rf "$SITE_PACKAGES/speechbrain/benchmarks"
-          rm -rf "$SITE_PACKAGES/lightning/fabric/test_utilities"
-          rm -rf "$SITE_PACKAGES/lightning/pytorch/test_utilities"
-          rm -rf "$SITE_PACKAGES/pytorch_lightning/demos"
-
-          # ---------------------------------------------------------------
-          # 4. Remove PyTorch development/build files
-          # ---------------------------------------------------------------
-          rm -rf "$SITE_PACKAGES/torch/include"
-          rm -rf "$SITE_PACKAGES/torch/share"
-          rm -rf "$SITE_PACKAGES/torch/lib/cmake"
-          find "$SITE_PACKAGES/torch" -name "*.lib" -delete 2>/dev/null || true
-          find "$SITE_PACKAGES/torch" -name "*.pdb" -delete 2>/dev/null || true
-
-          # ---------------------------------------------------------------
-          # 5. Remove PyTorch test scripts only
-          # ---------------------------------------------------------------
-          rm -rf "$SITE_PACKAGES/torch/test"
-
-          # ---------------------------------------------------------------
-          # 6. General cleanup
-          # ---------------------------------------------------------------
-          find "$SITE_PACKAGES" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-
-          echo "=== After cleanup ==="
-          du -sh "$SITE_PACKAGES" || true
-          echo "=== Largest remaining directories ==="
-          du -sh "$SITE_PACKAGES"/torch/lib 2>/dev/null || true
-          du -sh "$SITE_PACKAGES"/torch 2>/dev/null || true
-          du -sh "$SITE_PACKAGES"/torchaudio 2>/dev/null || true
-
-      - name: Verify imports after stripping
-        if: matrix.platform == 'win32'
-        shell: bash
-        run: |
-          PYTHON_BIN="build/python-standalone/python-windows-x64/python.exe"
-          SITE_PACKAGES="build/python-standalone/python-windows-x64/Lib/site-packages"
-          echo "=== Verifying imports after strip ==="
-          "$PYTHON_BIN" -c "
-          import torch
-          print('PyTorch version:', torch.__version__)
-          import torchaudio
-          print('torchaudio version:', torchaudio.__version__)
-          import ctranslate2
-          print('CTranslate2 version:', ctranslate2.__version__)
-          print('CTranslate2 CUDA devices:', ctranslate2.get_cuda_device_count())
-          import pyannote.audio
-          print('pyannote.audio version:', pyannote.audio.__version__)
-          import speechbrain
-          print('speechbrain version:', speechbrain.__version__)
-          print('All imports OK')
-          "
-
-      - name: Bundle Size Check
-        if: matrix.platform == 'win32'
-        shell: bash
-        run: |
-          RESOURCES_DIR="build/resources"
-          if [ -d "$RESOURCES_DIR" ]; then
-            SIZE_MB=$(du -sm "$RESOURCES_DIR" | cut -f1)
-            echo "Resources directory size: ${SIZE_MB}MB"
-            if [ "$SIZE_MB" -gt 1800 ]; then
-              echo "::warning::Resources size ${SIZE_MB}MB exceeds 1800MB safety threshold for NSIS 2GB limit"
-            else
-              echo "Resources size ${SIZE_MB}MB is within 1800MB safety threshold"
-            fi
-          else
-            echo "Resources directory not found (may not be assembled yet)"
-          fi
-
-      - name: Update version from git tag
-        shell: bash
-        run: ./scripts/update-version.sh
 
       - name: Build frontend
         run: pnpm --filter @verbatim/frontend build:ci
 
       - name: Build Electron
         run: pnpm --filter @verbatim/electron build
-
-      - name: Package Electron app (full installer)
-        run: |
-          if [ "${{ matrix.platform }}" = "darwin" ]; then
-            # Skip signing on macOS (add CSC_LINK secret to enable)
-            pnpm --filter @verbatim/electron exec electron-builder --publish never --config.mac.identity=null
-          else
-            pnpm --filter @verbatim/electron exec electron-builder --publish never
-          fi
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code signing (when secrets are set)
-          CSC_LINK: ${{ secrets.MAC_CERTS }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows code signing
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-
-      - name: Package Electron app (update - no models)
-        run: |
-          if [ "${{ matrix.platform }}" = "darwin" ]; then
-            pnpm --filter @verbatim/electron exec electron-builder --publish never --config electron-builder-update.yml --config.mac.identity=null
-          else
-            pnpm --filter @verbatim/electron exec electron-builder --publish never --config electron-builder-update.yml
-          fi
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.MAC_CERTS }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: verbatim-studio-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
-            dist/*.dmg
-            dist/*.exe
-            dist-update/*.dmg
-            dist-update/*.exe
-          if-no-files-found: error
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check for existing release notes
-        id: existing
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          # Check if a release already exists with manually-written notes
-          EXISTING_BODY=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
-          if [ -n "$EXISTING_BODY" ] && ! echo "$EXISTING_BODY" | grep -q "Minor updates and refinements"; then
-            echo "has_notes=true" >> "$GITHUB_OUTPUT"
-            echo "Release $TAG already has manual notes — preserving them"
-          else
-            echo "has_notes=false" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate release notes
-        if: steps.existing.outputs.has_notes != 'true'
-        id: notes
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1)
-          if [ -z "$PREV_TAG" ]; then
-            RANGE="HEAD"
-          else
-            RANGE="${PREV_TAG}..HEAD"
-          fi
-
-          # Format a commit message as "- **Label** — Description"
-          format_bullet() {
-            local msg="$1"
-            # Extract description after "type: " or "type(scope): "
-            local desc=$(echo "$msg" | sed 's/^[a-z]*\(([^)]*)\)\{0,1\}: //')
-            # Capitalize first letter
-            local first=$(echo "${desc:0:1}" | tr '[:lower:]' '[:upper:]')
-            local rest="${desc:1}"
-            echo "- **${first}${rest}**"
-          }
-
-          FEATURES=""
-          FIXES=""
-          IMPROVEMENTS=""
-
-          while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            MSG="${line#* }"
-            # Skip version bump commits
-            case "$MSG" in
-              *"bump version"*|*"release v"*) continue ;;
-            esac
-            # Normalize for categorization
-            CLEAN=$(echo "$MSG" | sed 's/^feat([^)]*): /feat: /; s/^fix([^)]*): /fix: /; s/^chore([^)]*): /chore: /; s/^perf([^)]*): /perf: /')
-
-            case "$CLEAN" in
-              feat:*|feat\(*) FEATURES="${FEATURES}$(format_bullet "$MSG")"$'\n' ;;
-              fix:*)           FIXES="${FIXES}$(format_bullet "$MSG")"$'\n' ;;
-              perf:*|refactor:*) IMPROVEMENTS="${IMPROVEMENTS}$(format_bullet "$MSG")"$'\n' ;;
-            esac
-          done <<< "$(git log --oneline "$RANGE" -- . ':!docs/' ':!*.md')"
-
-          BODY="## What's New in ${TAG}"$'\n'
-
-          if [ -n "$FEATURES" ]; then
-            BODY="${BODY}"$'\n'"### ✨ New Features"$'\n'"${FEATURES}"
-          fi
-          if [ -n "$FIXES" ]; then
-            BODY="${BODY}"$'\n'"### 🐛 Bug Fixes"$'\n'"${FIXES}"
-          fi
-          if [ -n "$IMPROVEMENTS" ]; then
-            BODY="${BODY}"$'\n'"### 🔧 Improvements"$'\n'"${IMPROVEMENTS}"
-          fi
-
-          if [ -z "$FEATURES" ] && [ -z "$FIXES" ] && [ -z "$IMPROVEMENTS" ]; then
-            BODY="${BODY}"$'\n'"### 🔧 Improvements"$'\n'"- **Minor updates and refinements**"$'\n'
-          fi
-
-          BODY="${BODY}"$'\n'"**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"$'\n'
-
-          echo "$BODY" > release-notes.md
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create Release in source repo (with generated notes)
-        if: steps.existing.outputs.has_notes != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          body_path: release-notes.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create Release in source repo (preserve existing notes)
-        if: steps.existing.outputs.has_notes == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish release to public repo
-        if: env.HAS_RELEASES_TOKEN == 'true'
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-
-          # Get release notes (from file or from source repo)
-          if [ -f release-notes.md ]; then
-            NOTES_FILE="release-notes.md"
-          else
-            gh release view "$TAG" --json body -q '.body' > /tmp/release-notes.md 2>/dev/null || echo "Release $TAG" > /tmp/release-notes.md
-            NOTES_FILE="/tmp/release-notes.md"
-          fi
-
-          # Create release in public repo
-          gh release create "$TAG" \
-            --repo JongoDB/verbatim-studio-releases \
-            --title "$TAG" \
-            --notes-file "$NOTES_FILE" \
-            artifacts/**/* 2>/dev/null || \
-          gh release upload "$TAG" \
-            --repo JongoDB/verbatim-studio-releases \
-            --clobber \
-            artifacts/**/*
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          HAS_RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN != '' }}
