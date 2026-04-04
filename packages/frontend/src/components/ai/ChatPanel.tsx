@@ -5,6 +5,7 @@ import { ChatHeader } from './ChatHeader';
 import { ChatMessages, type ChatMessage } from './ChatMessages';
 import { ChatInput } from './ChatInput';
 import { AttachmentPicker, type ChatAttachment } from './AttachmentPicker';
+import { VoiceChatPanel } from './VoiceChatPanel';
 
 interface ChatPanelProps {
   isOpen: boolean;
@@ -40,6 +41,7 @@ export function ChatPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [generalMode, setGeneralMode] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const { selectedProjects } = useProjectStore();
 
   const handleSend = useCallback(async (message: string) => {
@@ -230,30 +232,38 @@ export function ChatPanel({
         onToggleGeneralMode={() => setGeneralMode((prev) => !prev)}
         webSearchEnabled={webSearchEnabled}
         onToggleWebSearch={() => setWebSearchEnabled((prev) => !prev)}
+        voiceActive={voiceMode}
+        onToggleVoice={() => setVoiceMode((prev) => !prev)}
       />
-      <ChatMessages
-        messages={messages}
-        isStreaming={isStreaming}
-        streamingContent={streamingContent}
-        streamingWebSources={streamingWebSources}
-        toolActivities={toolActivities}
-      />
-      <div className="relative">
-        {showPicker && (
-          <AttachmentPicker
-            attached={attached}
-            onAttach={handleAttach}
-            onDetach={handleDetach}
-            onClose={() => setShowPicker(false)}
+      {voiceMode ? (
+        <VoiceChatPanel onClose={() => setVoiceMode(false)} />
+      ) : (
+        <>
+          <ChatMessages
+            messages={messages}
+            isStreaming={isStreaming}
+            streamingContent={streamingContent}
+            streamingWebSources={streamingWebSources}
+            toolActivities={toolActivities}
           />
-        )}
-        <ChatInput
-          onSend={handleSend}
-          onAttachClick={() => setShowPicker(!showPicker)}
-          disabled={isStreaming}
-          attachedCount={attached.length}
-        />
-      </div>
+          <div className="relative">
+            {showPicker && (
+              <AttachmentPicker
+                attached={attached}
+                onAttach={handleAttach}
+                onDetach={handleDetach}
+                onClose={() => setShowPicker(false)}
+              />
+            )}
+            <ChatInput
+              onSend={handleSend}
+              onAttachClick={() => setShowPicker(!showPicker)}
+              disabled={isStreaming}
+              attachedCount={attached.length}
+            />
+          </div>
+        </>
+      )}
 
       {/* Save Dialog */}
       {showSaveDialog && (

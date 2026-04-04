@@ -1,5 +1,6 @@
 import { ipcMain, app, BrowserWindow, dialog } from 'electron';
 import { backendManager } from './backend';
+import { livekitManager } from './livekit';
 import { checkForUpdates, startUpdate, markWhatsNewSeen } from './updater';
 import { getAutoUpdateEnabled, setAutoUpdateEnabled, getGithubPat, setGithubPat } from './update-store';
 import { captureScreenshot } from './screenshot';
@@ -23,6 +24,12 @@ export function registerIpcHandlers(): void {
   // API Port - returns just the port number
   ipcMain.handle('api:getPort', () => {
     return backendManager.port;
+  });
+
+  // LiveKit URL - returns the WebSocket URL for the voice assistant
+  ipcMain.handle('get-livekit-url', () => {
+    if (!livekitManager.isRunning()) return null;
+    return livekitManager.getUrl();
   });
 
   // Connection mode - for future enterprise support

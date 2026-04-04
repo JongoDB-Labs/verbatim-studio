@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog } from 'electron';
 import path from 'path';
 import { createMainWindow, navigateToPath } from './windows';
 import { backendManager } from './backend';
+import { livekitManager } from './livekit';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 import { migrateResourcesToUserData } from './resource-migration';
@@ -111,6 +112,14 @@ async function bootstrap(): Promise<void> {
     console.log('[Main] Backend started successfully, port:', backendManager.port);
     console.log('[Main] Backend API URL:', backendManager.getApiUrl());
 
+    // Start LiveKit server (optional — voice assistant won't be available without it)
+    try {
+      await livekitManager.start();
+      console.log('[Main] LiveKit started, URL:', livekitManager.getUrl());
+    } catch (error) {
+      console.warn('[Main] LiveKit not available (voice assistant disabled):', error instanceof Error ? error.message : String(error));
+    }
+
     // Double-check app is ready before creating window (should always be true here)
     if (!app.isReady()) {
       console.error('[Main] App not ready after backend start! Waiting...');
@@ -187,6 +196,11 @@ app.on('before-quit', async (event) => {
   isQuitting = true;
 
   console.log('[Main] Shutting down...');
+  try {
+    await livekitManager.stop();
+  } catch (error) {
+    console.error('[Main] Error stopping LiveKit:', error);
+  }
   try {
     await backendManager.stop();
   } catch (error) {
@@ -273,8 +287,16 @@ backendManager.on('exit', (code: number | null) => {
   }
 });
 
-// Safety net: ensure backend stops on process exit
+// Safety net: ensure backend and LiveKit stop on process exit
 process.on('exit', () => {
+  if (livekitManager.isRunning()) {
+    console.log('[Main] Process exiting, force-stopping LiveKit');
+    try {
+      livekitManager.forceKill();
+    } catch {
+      // Ignore errors during cleanup
+    }
+  }
   if (backendManager.isRunning()) {
     console.log('[Main] Process exiting, force-stopping backend');
     try {
@@ -288,6 +310,11 @@ process.on('exit', () => {
 // Handle uncaught exceptions
 process.on('uncaughtException', async (error) => {
   console.error('[Main] Uncaught exception:', error);
+  try {
+    await livekitManager.stop();
+  } catch {
+    // Ignore cleanup errors
+  }
   try {
     await backendManager.stop();
   } catch {

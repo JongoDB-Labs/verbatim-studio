@@ -13,6 +13,8 @@ interface ChatHeaderProps {
   onToggleGeneralMode?: () => void;
   webSearchEnabled?: boolean;
   onToggleWebSearch?: () => void;
+  voiceActive?: boolean;
+  onToggleVoice?: () => void;
 }
 
 export function ChatHeader({
@@ -27,6 +29,8 @@ export function ChatHeader({
   onToggleGeneralMode,
   webSearchEnabled = false,
   onToggleWebSearch,
+  voiceActive = false,
+  onToggleVoice,
 }: ChatHeaderProps) {
   const { selectedProjects } = useProjectStore();
 
@@ -66,6 +70,23 @@ export function ChatHeader({
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </button>
+          )}
+          {/* Voice mode toggle */}
+          {onToggleVoice && (
+            <button
+              onClick={onToggleVoice}
+              className={`min-w-touch min-h-touch flex items-center justify-center rounded transition-colors ${
+                voiceActive
+                  ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30'
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+              aria-label={voiceActive ? 'Switch to text chat' : 'Switch to voice chat'}
+              title={voiceActive ? 'Voice mode on' : 'Voice mode off'}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
               </svg>
             </button>
           )}

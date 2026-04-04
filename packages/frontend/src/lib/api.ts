@@ -3032,6 +3032,15 @@ class ApiClient {
     manifest: () =>
       this.request<PluginManifest>('/api/plugins/manifest'),
   };
+
+  // Voice
+  voice = {
+    createSession: () =>
+      this.request<{ token: string; url: string; room_name: string }>(
+        '/api/voice/sessions',
+        { method: 'POST' },
+      ),
+  };
 }
 
 export const api = new ApiClient();

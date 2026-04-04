@@ -56,6 +56,9 @@ from .auth import (
     Role,
     User,
 )
+from .tts import (
+    ITTSService,
+)
 
 __all__ = [
     # Database interfaces
@@ -105,4 +108,6 @@ __all__ = [
     "AuthToken",
     "LoginCredentials",
     "RegistrationData",
+    # TTS
+    "ITTSService",
 ]
