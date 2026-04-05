@@ -222,6 +222,23 @@ Guidelines:
 """
 
 
+class ExtractEntitiesRequest(BaseModel):
+    """Request model for entity extraction."""
+
+    transcript_id: str
+    template: str = "meeting"
+    custom_prompt: str | None = None
+
+
+class ExtractEntitiesResponse(BaseModel):
+    """Response model for entity extraction."""
+
+    entities: list[dict]
+    grounded_count: int
+    total_count: int
+    template_used: str
+
+
 class SummarizationResponse(BaseModel):
     """Response model for transcript summarization."""
 
@@ -1097,6 +1114,51 @@ async def analyze_transcript(
     except Exception as e:
         logger.exception("Analysis failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/extract-entities", response_model=ExtractEntitiesResponse)
+async def extract_entities(
+    request: ExtractEntitiesRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ExtractEntitiesResponse:
+    """Extract structured entities from a transcript using a domain template."""
+    from services.entity_extraction import extract_entities_from_transcript
+
+    try:
+        entities = await extract_entities_from_transcript(
+            db, request.transcript_id, request.template, request.custom_prompt
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Entity extraction failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    grounded_count = sum(1 for ent in entities if ent.get("grounded"))
+
+    return ExtractEntitiesResponse(
+        entities=entities,
+        grounded_count=grounded_count,
+        total_count=len(entities),
+        template_used=request.template,
+    )
+
+
+@router.get("/extraction-templates")
+async def get_extraction_templates() -> list[dict]:
+    """List available entity extraction templates."""
+    from services.extraction_templates import list_templates, get_template
+
+    names = list_templates()
+    result = []
+    for name in names:
+        tmpl = get_template(name)
+        if tmpl:
+            result.append({
+                "name": name,
+                "prompt": tmpl["prompt"],
+            })
+    return result
 
 
 class ExtractTextResponse(BaseModel):

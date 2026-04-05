@@ -5,6 +5,7 @@ import { EditableSegment } from '@/components/transcript/EditableSegment';
 import { ExportButton } from '@/components/transcript/ExportButton';
 import { SpeakerPanel } from '@/components/transcript/SpeakerPanel';
 import { AIAnalysisPanel } from '@/components/ai/AIAnalysisPanel';
+import { EntityPanel } from '@/components/entities/EntityPanel';
 import { BulkHighlightToolbar } from '@/components/transcript/BulkHighlightToolbar';
 import { TranscriptSearch, highlightSearchMatches } from '@/components/transcript/TranscriptSearch';
 import { QualityReviewButton } from '@/components/transcript/QualityReviewButton';
@@ -394,6 +395,14 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
     }
   }, []);
 
+  const handleScrollToSegmentById = useCallback((segmentId: string) => {
+    if (!transcript) return;
+    const idx = transcript.segments.findIndex(s => s.id === segmentId);
+    if (idx >= 0) {
+      handleScrollToSegment(idx);
+    }
+  }, [transcript, handleScrollToSegment]);
+
   const handleCloseSearch = useCallback(() => {
     setShowSearch(false);
     setSearchMatches([]);
@@ -764,6 +773,9 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
 
       {/* AI Analysis Panel */}
       <AIAnalysisPanel transcriptId={transcript.id} existingSummary={transcript.ai_summary} onSummaryComplete={loadData} />
+
+      {/* Entity Extraction Panel */}
+      <EntityPanel transcriptId={transcript.id} onScrollToSegment={handleScrollToSegmentById} />
 
       {/* Quality Review Panel */}
       {qualityReviewRecord && (

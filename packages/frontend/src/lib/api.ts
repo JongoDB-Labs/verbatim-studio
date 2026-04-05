@@ -788,6 +788,29 @@ export interface AnalysisResponse {
 
 export type AnalysisType = 'sentiment' | 'topics' | 'entities' | 'questions' | 'action_items';
 
+// Entity Extraction Types
+export interface ExtractionEntity {
+  entity_type: string;
+  text: string;
+  attributes: Record<string, string>;
+  grounded: boolean;
+  timestamp: number | null;
+  segment_ids: string[];
+}
+
+export interface ExtractionResult {
+  entities: ExtractionEntity[];
+  grounded_count: number;
+  total_count: number;
+  template_used: string;
+}
+
+export interface ExtractionTemplate {
+  id: string;
+  label: string;
+  prompt: string;
+}
+
 // AI Model Management Types
 export interface AIModel {
   id: string;
@@ -2203,6 +2226,15 @@ class ApiClient {
       }
       return streamGenerator();
     },
+
+    extractEntities: (data: { transcript_id: string; template?: string; custom_prompt?: string }) =>
+      this.request<ExtractionResult>('/api/ai/extract-entities', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
+    extractionTemplates: () =>
+      this.request<ExtractionTemplate[]>('/api/ai/extraction-templates'),
 
     extractText: async (file: File): Promise<{ text: string; format: string; page_count: number | null }> => {
       const formData = new FormData();
