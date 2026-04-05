@@ -151,20 +151,22 @@ def chunk_text(
         end = min(start + chunk_size, len(text))
 
         # If we're not at the very end, try to break at a newline
+        # Only search the last 20% of the chunk to avoid pulling back too far
         if end < len(text):
-            # Look backwards from `end` for a newline to avoid splitting mid-sentence
-            newline_pos = text.rfind("\n", start, end)
+            search_start = max(start, end - (chunk_size // 5))
+            newline_pos = text.rfind("\n", search_start, end)
             if newline_pos > start:
-                end = newline_pos + 1  # include the newline
+                end = newline_pos + 1
 
         chunk_text_str = text[start:end]
         chunks.append(
             TextChunk(text=chunk_text_str, char_start=start, char_end=end)
         )
 
-        # Advance by (chunk length - overlap), but at least 1 char to avoid infinite loop
-        step = max(end - start - overlap, 1)
-        next_start = start + step
+        # Advance past the overlap
+        next_start = end - overlap
+        if next_start <= start:
+            next_start = end  # no overlap possible, just advance
         if next_start >= len(text):
             break
         start = next_start
