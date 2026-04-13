@@ -167,13 +167,14 @@ class GraniteLLMAdapter:
     def __init__(self, ai_service: IAIService) -> None:
         self._ai_service = ai_service
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
+    async def chat(self, messages: list[dict[str, str]], max_retries: int = 2) -> str:
         """Send a chat request and return the response text.
 
-        Converts plain dicts to ChatMessage objects for the underlying service.
+        Retries on llama_decode errors (state corruption from concurrent access).
 
         Args:
             messages: List of {"role": ..., "content": ...} dicts.
+            max_retries: Number of retries on transient errors.
 
         Returns:
             Response text from the LLM.
@@ -185,8 +186,17 @@ class GraniteLLMAdapter:
             for m in messages
         ]
         options = ChatOptions(temperature=0.7, max_tokens=512)
-        response = await self._ai_service.chat(chat_messages, options)
-        return response.content
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._ai_service.chat(chat_messages, options)
+                return response.content
+            except RuntimeError as e:
+                if "llama_decode" in str(e) and attempt < max_retries:
+                    logger.warning("LLM state error, retrying (attempt %d)...", attempt + 1)
+                    await asyncio.sleep(0.5)
+                    continue
+                raise
 
     async def chat_stream(self, messages: list[dict[str, str]]):
         """Stream a chat response, yielding content chunks.
@@ -810,9 +820,9 @@ async def connect_agent_to_room(
 
         # Buffer for accumulating user audio
         audio_buffer = bytearray()
-        SILENCE_THRESHOLD = 1200  # int16 amplitude RMS threshold (high to ignore ambient noise)
+        SILENCE_THRESHOLD = 500  # int16 amplitude RMS threshold
         SILENCE_DURATION_MS = 700  # ms of silence before processing
-        MIN_AUDIO_MS = 1500  # minimum 1.5s of audio — skip short noise bursts
+        MIN_AUDIO_MS = 1200  # minimum audio to process
         speaking_state = {"active": False, "cooldown_until": 0.0}  # echo suppression
 
         @room.on("track_subscribed")
@@ -841,10 +851,9 @@ async def connect_agent_to_room(
             is_speaking = False
             silence_frames = 0
 
-            # Pre-buffer: keep last 500ms of audio so speech start isn't clipped
-            PRE_BUFFER_MS = 500
-            pre_buffer_bytes = int(PRE_BUFFER_MS * frames_per_ms * 2)  # 2 bytes per sample
-            pre_buffer = deque(maxlen=pre_buffer_bytes // 320)  # ~320 bytes per 10ms frame
+            # Pre-buffer: keep last 2 seconds of audio so speech start isn't clipped
+            PRE_BUFFER_MS = 2000
+            pre_buffer: deque = deque()
 
             async for event in stream:
                 if not connected.is_set():
@@ -865,12 +874,13 @@ async def connect_agent_to_room(
 
                 if rms >= SILENCE_THRESHOLD:
                     if not is_speaking:
-                        # Speech started — flush pre-buffer into audio_buffer
                         is_speaking = True
-                        for prebuf_chunk in pre_buffer:
-                            audio_buffer.extend(prebuf_chunk)
+                        cutoff_time = _time.monotonic() - 0.3
+                        for ts, prebuf_chunk in pre_buffer:
+                            if ts >= cutoff_time:
+                                audio_buffer.extend(prebuf_chunk)
                         pre_buffer.clear()
-                        logger.debug("Speech detected (RMS=%d)", int(rms))
+                        logger.info("Speech started (RMS=%d, threshold=%d)", int(rms), SILENCE_THRESHOLD)
 
                     audio_buffer.extend(frame_data)
                     silence_frames = 0
@@ -880,8 +890,12 @@ async def connect_agent_to_room(
                         audio_buffer.extend(frame_data)
                         silence_frames += frame.samples_per_channel
                     else:
-                        # Not speaking — add to pre-buffer ring
-                        pre_buffer.append(frame_data)
+                        # Not speaking — add to pre-buffer with timestamp
+                        pre_buffer.append((_time.monotonic(), frame_data))
+                        # Evict frames older than PRE_BUFFER_MS
+                        cutoff = _time.monotonic() - (PRE_BUFFER_MS / 1000.0)
+                        while pre_buffer and pre_buffer[0][0] < cutoff:
+                            pre_buffer.popleft()
 
                 # Check if speech ended (enough silence after speech)
                 silence_ms = silence_frames / frames_per_ms
@@ -915,7 +929,7 @@ async def connect_agent_to_room(
                         )
 
                         speaking_state["active"] = False
-                        speaking_state["cooldown_until"] = _time.monotonic() + 2.0
+                        speaking_state["cooldown_until"] = _time.monotonic() + 0.5
                         audio_buffer.clear()
                         silence_frames = 0
                     except Exception:
