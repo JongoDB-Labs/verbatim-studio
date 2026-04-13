@@ -390,6 +390,7 @@ class VerbatimVoiceAgent:
         self._conversation: list[dict[str, str]] = [
             {"role": "system", "content": self.instructions},
         ]
+        self._max_history_turns = 6  # Keep voice conversations lean for speed
         self._tool_context: Any = None
 
     def set_context(self, context_parts: list[str]) -> None:
@@ -411,32 +412,33 @@ class VerbatimVoiceAgent:
         """
         self._tool_context = ctx
 
-    async def handle_user_audio(self, audio_data: bytes) -> tuple[bytes | None, str | None, str | None]:
-        """Process a chunk of user audio through the full pipeline.
+    async def handle_user_audio_streaming(self, audio_data: bytes, publish_fn=None):
+        """Process user audio and stream TTS responses sentence-by-sentence.
 
-        STT -> LLM (with optional tool calls) -> TTS
+        STT -> LLM -> TTS (streamed per sentence)
 
         Args:
             audio_data: Raw PCM audio from the user.
+            publish_fn: Async callback to publish each audio chunk immediately.
+                        Signature: async (wav_bytes) -> None
 
         Returns:
-            Tuple of (audio_response, user_text, assistant_text).
-            Any element may be None if that stage produced no output.
+            Tuple of (user_text, assistant_text). Both may be None.
         """
         # Step 1: Speech-to-text
         user_text = await self.stt.recognize(audio_data)
         if not user_text.strip():
-            return None, None, None
+            return None, None
 
         # Filter out Whisper hallucinations on silence/noise
         clean = user_text.strip().replace("-", "").replace(" ", "")
         if len(clean) > 0 and len(set(clean.lower())) <= 2:
             logger.debug("Filtered STT hallucination: %s", user_text[:50])
-            return None, None, None
+            return None, None
 
         logger.info("Voice STT result: %s", user_text[:100])
 
-        # Step 2a: Auto web search (same as text chat — server-side, not tool-based)
+        # Step 2a: Auto web search
         web_context = ""
         if self.web_search_enabled:
             try:
@@ -466,33 +468,34 @@ class VerbatimVoiceAgent:
                 "IMPORTANT: Base your answer on the web search results above, NOT your training data."
             )
         self._conversation.append({"role": "user", "content": user_msg})
+
+        # Trim history to keep context small for fast inference
+        # Keep system prompt (index 0) + last N turns
+        max_msgs = 1 + (self._max_history_turns * 2)  # system + N user/assistant pairs
+        if len(self._conversation) > max_msgs:
+            self._conversation = [self._conversation[0]] + self._conversation[-(max_msgs - 1):]
+
         response_text = await self.llm.chat(self._conversation)
         self._conversation.append({"role": "assistant", "content": response_text})
 
-        # Step 3: Check for tool calls in the response
+        # Step 3: Check for tool calls
         response_text = await self._handle_tool_calls(response_text)
 
-        # Step 4: Text-to-speech — synthesize sentence-by-sentence for lower latency
         if not response_text.strip():
-            return None, user_text, response_text
+            return user_text, response_text
 
-        audio_chunks: list[bytes] = []
+        # Step 4: Stream TTS sentence-by-sentence
         sentences = self._split_sentences(response_text)
-
         for sentence in sentences:
             if sentence.strip():
                 try:
-                    chunk = await self.tts.synthesize(sentence.strip())
-                    audio_chunks.append(chunk)
+                    audio_chunk = await self.tts.synthesize(sentence.strip())
+                    if publish_fn and audio_chunk:
+                        await publish_fn(audio_chunk)
                 except Exception:
                     logger.warning("TTS failed for sentence: %s", sentence[:50])
 
-        if audio_chunks:
-            # Concatenate WAV chunks (strip headers from subsequent chunks)
-            combined = self._concat_wav(audio_chunks)
-            return combined, user_text, response_text
-
-        return None, user_text, response_text
+        return user_text, response_text
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
@@ -761,9 +764,9 @@ async def connect_agent_to_room(
 
         # Buffer for accumulating user audio
         audio_buffer = bytearray()
-        SILENCE_THRESHOLD = 800  # int16 amplitude threshold (raised to avoid echo pickup)
-        SILENCE_DURATION_MS = 1200  # ms of silence before processing
-        MIN_AUDIO_MS = 500  # minimum audio to process
+        SILENCE_THRESHOLD = 800  # int16 amplitude threshold
+        SILENCE_DURATION_MS = 500  # ms of silence before processing
+        MIN_AUDIO_MS = 400  # minimum audio to process
         speaking_state = {"active": False}  # mutable container for nested scope access
 
         @room.on("track_subscribed")
@@ -823,8 +826,21 @@ async def connect_agent_to_room(
                     logger.info("Processing %d ms of user audio", int(buffer_ms))
 
                     try:
-                        # Run the full STT → LLM → TTS pipeline
-                        response_audio, user_text, assistant_text = await agent.handle_user_audio(pcm_data)
+                        # Streaming pipeline: STT → LLM → TTS sentence-by-sentence
+                        speaking_state["active"] = True
+
+                        async def publish_sentence(wav_data: bytes):
+                            """Publish one sentence of audio immediately."""
+                            await _publish_audio_response(audio_source, wav_data)
+
+                        user_text, assistant_text = await agent.handle_user_audio_streaming(
+                            pcm_data,
+                            publish_fn=publish_sentence,
+                        )
+
+                        speaking_state["active"] = False
+                        audio_buffer.clear()
+                        silence_frames = 0
 
                         # Publish transcript via data channel
                         if user_text:
@@ -837,19 +853,8 @@ async def connect_agent_to_room(
                                 json.dumps({"type": "transcript", "role": "assistant", "content": assistant_text}).encode(),
                                 reliable=True,
                             )
-
-                        if response_audio:
-                            # Suppress mic input while speaking
-                            speaking_state["active"] = True
-                            try:
-                                await _publish_audio_response(
-                                    audio_source, response_audio
-                                )
-                            finally:
-                                speaking_state["active"] = False
-                                audio_buffer.clear()
-                                silence_frames = 0
                     except Exception:
+                        speaking_state["active"] = False
                         logger.exception("Agent pipeline error")
 
         async def _publish_audio_response(source: rtc.AudioSource, wav_data: bytes):
