@@ -232,8 +232,8 @@ export function ChatPanel({
         onToggleGeneralMode={() => setGeneralMode((prev) => !prev)}
         webSearchEnabled={webSearchEnabled}
         onToggleWebSearch={() => setWebSearchEnabled((prev) => !prev)}
-        voiceActive={voiceMode}
-        onToggleVoice={() => setVoiceMode((prev) => !prev)}
+        voiceActive={false}
+        onToggleVoice={undefined}
       />
       {voiceMode ? (
         <VoiceChatPanel onClose={(voiceMessages?: VoiceTranscriptMessage[]) => {
@@ -271,6 +271,8 @@ export function ChatPanel({
               onAttachClick={() => setShowPicker(!showPicker)}
               disabled={isStreaming}
               attachedCount={attached.length}
+              onMicClick={() => setVoiceMode(true)}
+              voiceActive={voiceMode}
             />
           </div>
         </>
