@@ -764,9 +764,9 @@ async def connect_agent_to_room(
 
         # Buffer for accumulating user audio
         audio_buffer = bytearray()
-        SILENCE_THRESHOLD = 800  # int16 amplitude threshold
-        SILENCE_DURATION_MS = 500  # ms of silence before processing
-        MIN_AUDIO_MS = 400  # minimum audio to process
+        SILENCE_THRESHOLD = 600  # int16 amplitude RMS threshold
+        SILENCE_DURATION_MS = 700  # ms of silence before processing
+        MIN_AUDIO_MS = 1000  # minimum 1s of audio to avoid processing fragments
         speaking_state = {"active": False}  # mutable container for nested scope access
 
         @room.on("track_subscribed")
