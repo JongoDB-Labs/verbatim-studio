@@ -25,10 +25,15 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
   const audioElementsRef = useRef<HTMLAudioElement[]>([]);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
-  // Check TTS availability on mount
+  const [missingDeps, setMissingDeps] = useState<string[]>([]);
+
+  // Check TTS and dependency availability on mount
   useEffect(() => {
     api.voice.status()
-      .then((status) => setTtsAvailable(status.tts_available))
+      .then((status) => {
+        setTtsAvailable(status.tts_available && status.livekit_available);
+        setMissingDeps(status.missing_deps || []);
+      })
       .catch(() => setTtsAvailable(false));
   }, []);
 
@@ -177,10 +182,12 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
           </div>
 
           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Voice chat requires a TTS model
+            Voice chat setup required
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400 text-center max-w-[280px]">
-            Download a text-to-speech model in Settings &rarr; AI Models to enable voice chat.
+            {missingDeps.length > 0
+              ? `Missing dependencies: ${missingDeps.join(', ')}. Install them and download a TTS model in Settings.`
+              : 'Download a text-to-speech model in Settings \u2192 AI Models to enable voice chat.'}
           </p>
 
           <button

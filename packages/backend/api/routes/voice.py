@@ -43,6 +43,8 @@ class VoiceStatusResponse(BaseModel):
     tts_available: bool
     tts_model: str | None
     voices: list[dict]
+    livekit_available: bool = False
+    missing_deps: list[str] = []
 
 
 class VoiceSessionResponse(BaseModel):
@@ -114,10 +116,27 @@ async def voice_status() -> VoiceStatusResponse:
 
             voices = list(_PRESET_VOICES)
 
+    # Check for required dependencies
+    missing_deps: list[str] = []
+    livekit_available = False
+
+    try:
+        from livekit.api import AccessToken  # noqa: F401
+        livekit_available = True
+    except ImportError:
+        missing_deps.append("livekit-api")
+
+    try:
+        import mlx_audio  # noqa: F401
+    except ImportError:
+        missing_deps.append("mlx-audio[tts]")
+
     return VoiceStatusResponse(
         tts_available=tts_available,
         tts_model=active_id if tts_available else None,
         voices=voices,
+        livekit_available=livekit_available,
+        missing_deps=missing_deps,
     )
 
 

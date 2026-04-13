@@ -3078,7 +3078,7 @@ class ApiClient {
   // Voice
   voice = {
     status: () =>
-      this.request<{ tts_available: boolean; tts_model: string | null; voices: { id: string; name: string; description: string }[] }>(
+      this.request<{ tts_available: boolean; tts_model: string | null; voices: { id: string; name: string; description: string }[]; livekit_available: boolean; missing_deps: string[] }>(
         '/api/voice/status',
       ),
 
