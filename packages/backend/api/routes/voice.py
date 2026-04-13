@@ -321,19 +321,17 @@ def _generate_user_token(room_name: str, identity: str = "user") -> str:
             ),
         )
 
-    # TODO: Validate exact AccessToken / VideoGrants API against
-    # the livekit Python SDK. Constructor args may differ.
-    grant = VideoGrants(
-        room_join=True,
-        room=room_name,
+    token = (
+        AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        .with_identity(identity)
+        .with_name(identity.title())
+        .with_grants(VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+        ))
     )
-    token = AccessToken(
-        api_key=LIVEKIT_API_KEY,
-        api_secret=LIVEKIT_API_SECRET,
-    )
-    token.identity = identity
-    token.video_grants = grant
-
     return token.to_jwt()
 
 
@@ -360,17 +358,17 @@ def _generate_agent_token(room_name: str) -> str:
             ),
         )
 
-    grant = VideoGrants(
-        room_join=True,
-        room=room_name,
+    token = (
+        AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        .with_identity("max-agent")
+        .with_name("Max")
+        .with_grants(VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+        ))
     )
-    token = AccessToken(
-        api_key=LIVEKIT_API_KEY,
-        api_secret=LIVEKIT_API_SECRET,
-    )
-    token.identity = "max-agent"
-    token.video_grants = grant
-
     return token.to_jwt()
 
 
