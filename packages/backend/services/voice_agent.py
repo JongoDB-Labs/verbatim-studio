@@ -412,7 +412,7 @@ class VerbatimVoiceAgent:
         """
         self._tool_context = ctx
 
-    async def handle_user_audio_streaming(self, audio_data: bytes, publish_fn=None):
+    async def handle_user_audio_streaming(self, audio_data: bytes, publish_fn=None, transcript_fn=None):
         """Process user audio and stream TTS responses sentence-by-sentence.
 
         STT -> LLM -> TTS (streamed per sentence)
@@ -420,7 +420,8 @@ class VerbatimVoiceAgent:
         Args:
             audio_data: Raw PCM audio from the user.
             publish_fn: Async callback to publish each audio chunk immediately.
-                        Signature: async (wav_bytes) -> None
+            transcript_fn: Async callback to publish transcript messages as they happen.
+                           Signature: async (role: str, content: str) -> None
 
         Returns:
             Tuple of (user_text, assistant_text). Both may be None.
@@ -445,6 +446,10 @@ class VerbatimVoiceAgent:
                 return None, None
 
         logger.info("Voice STT result: %s", user_text[:100])
+
+        # Stream user transcript immediately (before LLM call)
+        if transcript_fn:
+            await transcript_fn("user", user_text)
 
         # Step 2a: Auto web search
         web_context = ""
@@ -491,6 +496,10 @@ class VerbatimVoiceAgent:
 
         if not response_text.strip():
             return user_text, response_text
+
+        # Stream assistant transcript immediately (before TTS)
+        if transcript_fn:
+            await transcript_fn("assistant", response_text)
 
         # Step 4: Stream TTS sentence-by-sentence
         sentences = self._split_sentences(response_text)
@@ -819,84 +828,104 @@ async def connect_agent_to_room(
 
         async def _process_audio_track(track):
             """Read audio frames from user, detect speech, run agent pipeline."""
+            import time as _time
+            from collections import deque
+
             stream = rtc.AudioStream.from_track(
                 track=track,
-                sample_rate=16000,  # Whisper expects 16kHz
+                sample_rate=16000,
                 num_channels=1,
             )
 
+            frames_per_ms = 16
+            is_speaking = False
             silence_frames = 0
-            frames_per_ms = 16  # 16 samples per ms at 16kHz
+
+            # Pre-buffer: keep last 500ms of audio so speech start isn't clipped
+            PRE_BUFFER_MS = 500
+            pre_buffer_bytes = int(PRE_BUFFER_MS * frames_per_ms * 2)  # 2 bytes per sample
+            pre_buffer = deque(maxlen=pre_buffer_bytes // 320)  # ~320 bytes per 10ms frame
 
             async for event in stream:
                 if not connected.is_set():
                     break
 
-                # Skip audio input while agent is speaking (echo suppression)
-                import time as _time
-                # Skip audio while speaking OR during cooldown after speaking
                 if speaking_state["active"] or _time.monotonic() < speaking_state["cooldown_until"]:
                     audio_buffer.clear()
                     silence_frames = 0
+                    is_speaking = False
+                    pre_buffer.clear()
                     continue
 
                 frame = event.frame
                 frame_data = bytes(frame.data)
-                audio_buffer.extend(frame_data)
 
-                # Simple VAD: check if this frame is silence
                 samples = np.frombuffer(frame_data, dtype=np.int16)
                 rms = np.sqrt(np.mean(samples.astype(np.float32) ** 2))
 
-                if rms < SILENCE_THRESHOLD:
-                    silence_frames += frame.samples_per_channel
-                else:
+                if rms >= SILENCE_THRESHOLD:
+                    if not is_speaking:
+                        # Speech started — flush pre-buffer into audio_buffer
+                        is_speaking = True
+                        for prebuf_chunk in pre_buffer:
+                            audio_buffer.extend(prebuf_chunk)
+                        pre_buffer.clear()
+                        logger.debug("Speech detected (RMS=%d)", int(rms))
+
+                    audio_buffer.extend(frame_data)
                     silence_frames = 0
+                else:
+                    if is_speaking:
+                        # In speech, accumulating silence
+                        audio_buffer.extend(frame_data)
+                        silence_frames += frame.samples_per_channel
+                    else:
+                        # Not speaking — add to pre-buffer ring
+                        pre_buffer.append(frame_data)
 
-                silence_ms = (silence_frames / frames_per_ms)
-                buffer_ms = (len(audio_buffer) / 2) / frames_per_ms  # 2 bytes per sample
+                # Check if speech ended (enough silence after speech)
+                silence_ms = silence_frames / frames_per_ms
+                buffer_ms = (len(audio_buffer) / 2) / frames_per_ms
 
-                # Process when we have enough audio followed by silence
-                if silence_ms >= SILENCE_DURATION_MS and buffer_ms >= MIN_AUDIO_MS:
+                if is_speaking and silence_ms >= SILENCE_DURATION_MS and buffer_ms >= MIN_AUDIO_MS:
                     pcm_data = bytes(audio_buffer)
                     audio_buffer.clear()
                     silence_frames = 0
+                    is_speaking = False
 
                     logger.info("Processing %d ms of user audio", int(buffer_ms))
 
                     try:
-                        # Streaming pipeline: STT → LLM → TTS sentence-by-sentence
                         speaking_state["active"] = True
 
                         async def publish_sentence(wav_data: bytes):
-                            """Publish one sentence of audio immediately."""
                             await _publish_audio_response(audio_source, wav_data)
+
+                        async def publish_transcript(role: str, content: str):
+                            """Send transcript message via data channel immediately."""
+                            await room.local_participant.publish_data(
+                                json.dumps({"type": "transcript", "role": role, "content": content}).encode(),
+                                reliable=True,
+                            )
 
                         user_text, assistant_text = await agent.handle_user_audio_streaming(
                             pcm_data,
                             publish_fn=publish_sentence,
+                            transcript_fn=publish_transcript,
                         )
 
                         speaking_state["active"] = False
-                        # 2-second cooldown to let speakers finish playing
                         speaking_state["cooldown_until"] = _time.monotonic() + 2.0
                         audio_buffer.clear()
                         silence_frames = 0
-
-                        # Publish transcript via data channel
-                        if user_text:
-                            await room.local_participant.publish_data(
-                                json.dumps({"type": "transcript", "role": "user", "content": user_text}).encode(),
-                                reliable=True,
-                            )
-                        if assistant_text:
-                            await room.local_participant.publish_data(
-                                json.dumps({"type": "transcript", "role": "assistant", "content": assistant_text}).encode(),
-                                reliable=True,
-                            )
                     except Exception:
                         speaking_state["active"] = False
                         logger.exception("Agent pipeline error")
+
+                # Prevent unbounded buffer growth when no speech detected
+                elif not is_speaking and len(audio_buffer) > 0:
+                    audio_buffer.clear()
+                    silence_frames = 0
 
         async def _publish_audio_response(source: rtc.AudioSource, wav_data: bytes):
             """Parse WAV bytes and publish as LiveKit AudioFrames."""
