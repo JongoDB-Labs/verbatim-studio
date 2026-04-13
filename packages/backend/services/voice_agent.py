@@ -457,7 +457,7 @@ class VerbatimVoiceAgent:
             except Exception:
                 logger.warning("Voice web search failed", exc_info=True)
 
-        # Step 2b: LLM response (with optional tool calls)
+        # Step 2b: LLM response
         user_msg = user_text
         if web_context:
             user_msg += (
@@ -472,12 +472,70 @@ class VerbatimVoiceAgent:
         # Step 3: Check for tool calls in the response
         response_text = await self._handle_tool_calls(response_text)
 
-        # Step 4: Text-to-speech
-        if response_text.strip():
-            audio_response = await self.tts.synthesize(response_text)
-            return audio_response, user_text, response_text
+        # Step 4: Text-to-speech — synthesize sentence-by-sentence for lower latency
+        if not response_text.strip():
+            return None, user_text, response_text
+
+        audio_chunks: list[bytes] = []
+        sentences = self._split_sentences(response_text)
+
+        for sentence in sentences:
+            if sentence.strip():
+                try:
+                    chunk = await self.tts.synthesize(sentence.strip())
+                    audio_chunks.append(chunk)
+                except Exception:
+                    logger.warning("TTS failed for sentence: %s", sentence[:50])
+
+        if audio_chunks:
+            # Concatenate WAV chunks (strip headers from subsequent chunks)
+            combined = self._concat_wav(audio_chunks)
+            return combined, user_text, response_text
 
         return None, user_text, response_text
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        """Split text into sentences for incremental TTS."""
+        import re
+        # Split on sentence-ending punctuation followed by a space or end
+        parts = re.split(r'(?<=[.!?])\s+', text)
+        return [p for p in parts if p.strip()]
+
+    @staticmethod
+    def _concat_wav(chunks: list[bytes]) -> bytes:
+        """Concatenate multiple WAV byte strings into one."""
+        import io
+        import wave
+
+        if len(chunks) == 1:
+            return chunks[0]
+
+        # Read all chunks and combine raw PCM data
+        all_frames = bytearray()
+        sample_rate = 24000
+        sample_width = 2
+        channels = 1
+
+        for chunk in chunks:
+            try:
+                with wave.open(io.BytesIO(chunk), "rb") as wf:
+                    sample_rate = wf.getframerate()
+                    sample_width = wf.getsampwidth()
+                    channels = wf.getnchannels()
+                    all_frames.extend(wf.readframes(wf.getnframes()))
+            except Exception:
+                continue
+
+        # Write combined WAV
+        out = io.BytesIO()
+        with wave.open(out, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(sample_rate)
+            wf.writeframes(bytes(all_frames))
+
+        return out.getvalue()
 
     async def _handle_tool_calls(self, response_text: str) -> str:
         """Detect and execute tool calls embedded in LLM output.
@@ -629,6 +687,20 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     # Create the agent
     agent = VerbatimVoiceAgent(stt=stt, llm=llm, tts=tts, web_search_enabled=web_search_enabled)
     logger.info("VerbatimVoiceAgent created successfully")
+
+    # Preload LLM and TTS models so first response is fast
+    try:
+        from api.routes.ai import _ensure_active_model_loaded
+        _ensure_active_model_loaded()
+        logger.info("LLM model preloaded for voice session")
+    except Exception:
+        logger.debug("LLM preload skipped (will load on first call)")
+
+    try:
+        tts_service._ensure_loaded()
+        logger.info("TTS model preloaded for voice session")
+    except Exception:
+        logger.debug("TTS preload skipped (will load on first call)")
 
     return agent
 
