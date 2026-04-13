@@ -460,7 +460,11 @@ class VerbatimVoiceAgent:
         # Step 2b: LLM response (with optional tool calls)
         user_msg = user_text
         if web_context:
-            user_msg += f"\n\n=== Web Search Results ===\n{web_context}"
+            user_msg += (
+                "\n\n=== Web Search Results (CURRENT DATA — USE THIS TO ANSWER) ===\n"
+                f"{web_context}\n"
+                "IMPORTANT: Base your answer on the web search results above, NOT your training data."
+            )
         self._conversation.append({"role": "user", "content": user_msg})
         response_text = await self.llm.chat(self._conversation)
         self._conversation.append({"role": "assistant", "content": response_text})
