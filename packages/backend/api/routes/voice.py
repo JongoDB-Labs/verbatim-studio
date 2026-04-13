@@ -610,6 +610,13 @@ async def create_voice_session(
     )
     agent.set_tool_context(tool_ctx)
 
+    # Cancel any stale sessions before starting a new one
+    for old_room, old_task in list(_active_sessions.items()):
+        if not old_task.done():
+            logger.info("Cancelling stale voice session: %s", old_room)
+            old_task.cancel()
+        _active_sessions.pop(old_room, None)
+
     # Start the agent in the room as a background task
     task = asyncio.create_task(
         _start_agent_in_room(agent, room_name),
