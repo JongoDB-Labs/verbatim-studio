@@ -433,8 +433,16 @@ class VerbatimVoiceAgent:
         # Filter out Whisper hallucinations on silence/noise
         clean = user_text.strip().replace("-", "").replace(" ", "")
         if len(clean) > 0 and len(set(clean.lower())) <= 2:
-            logger.debug("Filtered STT hallucination: %s", user_text[:50])
+            logger.debug("Filtered STT hallucination (low unique chars): %s", user_text[:50])
             return None, None
+
+        # Filter repetitive words (e.g. "Harry Harry Harry Harry...")
+        words = user_text.strip().split()
+        if len(words) >= 4:
+            unique_words = set(w.lower() for w in words)
+            if len(unique_words) <= 2:
+                logger.debug("Filtered STT hallucination (repetitive): %s", user_text[:50])
+                return None, None
 
         logger.info("Voice STT result: %s", user_text[:100])
 
@@ -700,22 +708,9 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     except Exception as e:
         raise RuntimeError(f"Failed to create STT adapter: {e}") from e
 
-    # Create LLM adapter — use smaller context for voice (8K vs 128K)
-    # unless attachments are present which need more context
+    # Create LLM adapter — reuse shared service (history trimming keeps context lean)
     try:
-        if has_attachments:
-            ai_service = factory.create_ai_service()
-            logger.info("Voice LLM: using full context (attachments present)")
-        else:
-            # Create a dedicated voice LLM with 8K context for speed
-            from adapters.ai.llama_cpp import get_llama_service
-            from core.transcription_settings import get_gpu_layers
-            model_path = factory._config.ai_model_path
-            gpu_layers = factory._config.ai_n_gpu_layers
-            if gpu_layers is None:
-                gpu_layers = get_gpu_layers()
-            ai_service = get_llama_service(model_path, n_ctx=8192, n_gpu_layers=gpu_layers)
-            logger.info("Voice LLM: using 8K context (no attachments)")
+        ai_service = factory.create_ai_service()
         llm = GraniteLLMAdapter(ai_service)
         logger.info("Voice LLM adapter created (llama.cpp)")
     except Exception as e:
@@ -806,9 +801,9 @@ async def connect_agent_to_room(
 
         # Buffer for accumulating user audio
         audio_buffer = bytearray()
-        SILENCE_THRESHOLD = 600  # int16 amplitude RMS threshold
+        SILENCE_THRESHOLD = 1200  # int16 amplitude RMS threshold (high to ignore ambient noise)
         SILENCE_DURATION_MS = 700  # ms of silence before processing
-        MIN_AUDIO_MS = 1000  # minimum 1s of audio to avoid processing fragments
+        MIN_AUDIO_MS = 1500  # minimum 1.5s of audio — skip short noise bursts
         speaking_state = {"active": False, "cooldown_until": 0.0}  # echo suppression
 
         @room.on("track_subscribed")
