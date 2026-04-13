@@ -448,7 +448,7 @@ class VerbatimVoiceAgent:
                 )
                 search_query = extract_search_query(user_text)
                 if search_query:
-                    config = load_web_search_config()
+                    config = await load_web_search_config()
                     provider = create_search_provider(config)
                     results = await provider.search(search_query.text)
                     if results:
