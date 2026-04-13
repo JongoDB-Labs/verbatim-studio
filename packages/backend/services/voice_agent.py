@@ -498,31 +498,72 @@ class VerbatimVoiceAgent:
         if len(self._conversation) > max_msgs:
             self._conversation = [self._conversation[0]] + self._conversation[-(max_msgs - 1):]
 
-        response_text = await self.llm.chat(self._conversation)
-        self._conversation.append({"role": "assistant", "content": response_text})
+        # Stream LLM → TTS: start speaking as soon as the first sentence finishes
+        full_response = ""
+        sentence_buffer = ""
+        sentences_spoken = 0
 
-        # Step 3: Check for tool calls
-        response_text = await self._handle_tool_calls(response_text)
+        async for chunk in self.llm.chat_stream(self._conversation):
+            full_response += chunk
+            sentence_buffer += chunk
 
-        if not response_text.strip():
-            return user_text, response_text
+            # Check if we have a complete sentence to speak
+            import re
+            sentence_match = re.search(r'[.!?]\s', sentence_buffer)
+            if sentence_match:
+                # Split at the sentence boundary
+                end_pos = sentence_match.end()
+                sentence = sentence_buffer[:end_pos].strip()
+                sentence_buffer = sentence_buffer[end_pos:]
 
-        # Stream assistant transcript immediately (before TTS)
-        if transcript_fn:
-            await transcript_fn("assistant", response_text)
+                # Check for tool call — if found, stop streaming TTS
+                if '{"tool"' in sentence or any(t + '{' in sentence for t in VOICE_TOOLS):
+                    break
 
-        # Step 4: Stream TTS sentence-by-sentence
-        sentences = self._split_sentences(response_text)
-        for sentence in sentences:
-            if sentence.strip():
+                if sentence and publish_fn:
+                    sentences_spoken += 1
+                    if sentences_spoken == 1:
+                        # Send transcript as soon as first sentence is ready
+                        logger.info("First sentence ready, starting TTS")
+                    try:
+                        audio_chunk = await self.tts.synthesize(sentence)
+                        if audio_chunk:
+                            await publish_fn(audio_chunk)
+                    except Exception:
+                        logger.warning("TTS failed for sentence: %s", sentence[:50])
+
+        # Handle any remaining text in the buffer
+        if sentence_buffer.strip() and publish_fn:
+            if not ('{"tool"' in sentence_buffer or any(t + '{' in sentence_buffer for t in VOICE_TOOLS)):
                 try:
-                    audio_chunk = await self.tts.synthesize(sentence.strip())
-                    if publish_fn and audio_chunk:
+                    audio_chunk = await self.tts.synthesize(sentence_buffer.strip())
+                    if audio_chunk:
                         await publish_fn(audio_chunk)
                 except Exception:
-                    logger.warning("TTS failed for sentence: %s", sentence[:50])
+                    logger.warning("TTS failed for final chunk: %s", sentence_buffer[:50])
 
-        return user_text, response_text
+        self._conversation.append({"role": "assistant", "content": full_response})
+
+        # Handle tool calls in the complete response
+        response_text = await self._handle_tool_calls(full_response)
+
+        # If tool call changed the response, speak the tool result
+        if response_text != full_response and response_text.strip() and publish_fn:
+            sentences = self._split_sentences(response_text)
+            for sentence in sentences:
+                if sentence.strip():
+                    try:
+                        audio_chunk = await self.tts.synthesize(sentence.strip())
+                        if audio_chunk:
+                            await publish_fn(audio_chunk)
+                    except Exception:
+                        logger.warning("TTS failed for tool result: %s", sentence[:50])
+
+        # Send full transcript
+        if transcript_fn and (response_text or full_response):
+            await transcript_fn("assistant", response_text or full_response)
+
+        return user_text, response_text or full_response
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
