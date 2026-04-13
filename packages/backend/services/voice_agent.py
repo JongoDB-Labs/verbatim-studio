@@ -689,9 +689,10 @@ async def connect_agent_to_room(
 
         # Buffer for accumulating user audio
         audio_buffer = bytearray()
-        SILENCE_THRESHOLD = 500  # int16 amplitude threshold
-        SILENCE_DURATION_MS = 800  # ms of silence before processing
-        MIN_AUDIO_MS = 300  # minimum audio to process
+        SILENCE_THRESHOLD = 800  # int16 amplitude threshold (raised to avoid echo pickup)
+        SILENCE_DURATION_MS = 1200  # ms of silence before processing
+        MIN_AUDIO_MS = 500  # minimum audio to process
+        speaking_state = {"active": False}  # mutable container for nested scope access
 
         @room.on("track_subscribed")
         def on_track_subscribed(track, publication, participant):
@@ -718,6 +719,12 @@ async def connect_agent_to_room(
             async for event in stream:
                 if not connected.is_set():
                     break
+
+                # Skip audio input while agent is speaking (echo suppression)
+                if speaking_state["active"]:
+                    audio_buffer.clear()
+                    silence_frames = 0
+                    continue
 
                 frame = event.frame
                 frame_data = bytes(frame.data)
@@ -760,10 +767,16 @@ async def connect_agent_to_room(
                             )
 
                         if response_audio:
-                            # Parse WAV response and publish as AudioFrames
-                            await _publish_audio_response(
-                                audio_source, response_audio
-                            )
+                            # Suppress mic input while speaking
+                            speaking_state["active"] = True
+                            try:
+                                await _publish_audio_response(
+                                    audio_source, response_audio
+                                )
+                            finally:
+                                speaking_state["active"] = False
+                                audio_buffer.clear()
+                                silence_frames = 0
                     except Exception:
                         logger.exception("Agent pipeline error")
 
