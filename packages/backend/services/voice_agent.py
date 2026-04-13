@@ -498,49 +498,63 @@ class VerbatimVoiceAgent:
         if len(self._conversation) > max_msgs:
             self._conversation = [self._conversation[0]] + self._conversation[-(max_msgs - 1):]
 
-        # Stream LLM → TTS: start speaking as soon as the first sentence finishes
+        # Stream LLM → TTS with parallel pipeline:
+        # LLM generates tokens → sentences queued → TTS runs in background
         full_response = ""
         sentence_buffer = ""
-        sentences_spoken = 0
+        tts_queue: asyncio.Queue = asyncio.Queue()
+        has_tool_call = False
+
+        # TTS worker: pulls sentences from queue and synthesizes/publishes
+        async def tts_worker():
+            while True:
+                sentence = await tts_queue.get()
+                if sentence is None:  # poison pill
+                    break
+                try:
+                    audio_chunk = await self.tts.synthesize(sentence)
+                    if audio_chunk and publish_fn:
+                        await publish_fn(audio_chunk)
+                except Exception:
+                    logger.warning("TTS failed for sentence: %s", sentence[:50])
+                tts_queue.task_done()
+
+        tts_task = asyncio.create_task(tts_worker())
+
+        import re
+        sentences_queued = 0
 
         async for chunk in self.llm.chat_stream(self._conversation):
             full_response += chunk
             sentence_buffer += chunk
 
-            # Check if we have a complete sentence to speak
-            import re
+            # Check for complete sentences
             sentence_match = re.search(r'[.!?]\s', sentence_buffer)
             if sentence_match:
-                # Split at the sentence boundary
                 end_pos = sentence_match.end()
                 sentence = sentence_buffer[:end_pos].strip()
                 sentence_buffer = sentence_buffer[end_pos:]
 
-                # Check for tool call — if found, stop streaming TTS
+                # Check for tool call
                 if '{"tool"' in sentence or any(t + '{' in sentence for t in VOICE_TOOLS):
+                    has_tool_call = True
                     break
 
-                if sentence and publish_fn:
-                    sentences_spoken += 1
-                    if sentences_spoken == 1:
-                        # Send transcript as soon as first sentence is ready
-                        logger.info("First sentence ready, starting TTS")
-                    try:
-                        audio_chunk = await self.tts.synthesize(sentence)
-                        if audio_chunk:
-                            await publish_fn(audio_chunk)
-                    except Exception:
-                        logger.warning("TTS failed for sentence: %s", sentence[:50])
+                if sentence:
+                    sentences_queued += 1
+                    if sentences_queued == 1:
+                        logger.info("First sentence ready, queuing TTS")
+                    await tts_queue.put(sentence)
 
-        # Handle any remaining text in the buffer
-        if sentence_buffer.strip() and publish_fn:
-            if not ('{"tool"' in sentence_buffer or any(t + '{' in sentence_buffer for t in VOICE_TOOLS)):
-                try:
-                    audio_chunk = await self.tts.synthesize(sentence_buffer.strip())
-                    if audio_chunk:
-                        await publish_fn(audio_chunk)
-                except Exception:
-                    logger.warning("TTS failed for final chunk: %s", sentence_buffer[:50])
+        # Queue any remaining text
+        if sentence_buffer.strip() and not has_tool_call:
+            clean = re.sub(r'\{[^{}]*\}', '', sentence_buffer).strip()
+            if clean:
+                await tts_queue.put(clean)
+
+        # Signal TTS worker to finish and wait
+        await tts_queue.put(None)
+        await tts_task
 
         self._conversation.append({"role": "assistant", "content": full_response})
 
