@@ -3,10 +3,7 @@
 Implements ITTSService for Apple Silicon inference using Qwen3-TTS MLX models.
 Uses a singleton pattern with lazy loading, matching the llama_cpp adapter style.
 
-NOTE: The exact Qwen3-TTS MLX generation API (model.generate / processor calls)
-needs validation during integration testing. The inference code below is based on
-the expected MLX-LM + transformers pipeline but may require adjustments once
-tested against actual Qwen3-TTS-MLX weights.
+Uses the mlx-audio library for model loading and generation.
 """
 
 import asyncio
@@ -84,9 +81,6 @@ def _cleanup_model() -> None:
         if _tts_service._model is not None:
             del _tts_service._model
             _tts_service._model = None
-        if _tts_service._processor is not None:
-            del _tts_service._processor
-            _tts_service._processor = None
         del _tts_service
         _tts_service = None
 
@@ -106,39 +100,12 @@ def _cleanup_model() -> None:
 # Preset voices
 # ---------------------------------------------------------------------------
 _PRESET_VOICES: list[dict] = [
-    {
-        "id": "default",
-        "name": "Default Narrator",
-        "description": "A clear, neutral English narrator voice with a natural pace.",
-        "prompt": "A clear, neutral English narrator voice with a natural pace.",
-    },
-    {
-        "id": "warm-female",
-        "name": "Warm Female",
-        "description": "A warm, friendly female voice. Calm and conversational.",
-        "prompt": "A warm, friendly female voice. Calm and conversational tone.",
-    },
-    {
-        "id": "professional-male",
-        "name": "Professional Male",
-        "description": "A confident, professional male voice. Authoritative and measured.",
-        "prompt": "A confident, professional male voice. Authoritative and measured pace.",
-    },
+    {"id": "Chelsie", "name": "Chelsie", "description": "Clear female English voice"},
+    {"id": "Ryan", "name": "Ryan", "description": "Natural male English voice"},
+    {"id": "Vivian", "name": "Vivian", "description": "Warm female voice"},
+    {"id": "Aiden", "name": "Aiden", "description": "Young male voice"},
+    {"id": "Serena", "name": "Serena", "description": "Calm female voice"},
 ]
-
-
-def _get_voice_prompt(voice: str | None) -> str:
-    """Resolve a voice identifier to its prompt string.
-
-    Falls back to the default voice when *voice* is ``None`` or not found.
-    """
-    if voice is None:
-        voice = "default"
-    for v in _PRESET_VOICES:
-        if v["id"] == voice:
-            return v["prompt"]
-    # Unknown id — treat the raw string as a freeform voice description
-    return voice
 
 
 # ---------------------------------------------------------------------------
@@ -155,37 +122,25 @@ class Qwen3TTSService(ITTSService):
     def __init__(self, model_path: str) -> None:
         self._model_path = model_path
         self._model = None
-        self._processor = None
 
     # -- lazy loading -------------------------------------------------------
 
     def _ensure_loaded(self) -> None:
-        """Load model + processor if not already in memory."""
+        """Load model if not already in memory."""
         if self._model is not None:
             return
 
         logger.info("Loading Qwen3-TTS model from %s …", self._model_path)
 
         try:
-            from transformers import AutoProcessor
+            from mlx_audio.tts.utils import load_model
         except ImportError as exc:
             raise ImportError(
-                "transformers is required for Qwen3-TTS. "
-                "Install with: pip install transformers"
+                "mlx-audio is required for Qwen3-TTS on Apple Silicon. "
+                "Install with: pip install 'mlx-audio[tts]'"
             ) from exc
 
-        try:
-            from mlx_lm import load as mlx_load
-        except ImportError as exc:
-            raise ImportError(
-                "mlx-lm is required for Qwen3-TTS on Apple Silicon. "
-                "Install with: pip install mlx-lm"
-            ) from exc
-
-        self._model, _ = mlx_load(self._model_path)
-        self._processor = AutoProcessor.from_pretrained(
-            self._model_path, trust_remote_code=True
-        )
+        self._model = load_model(self._model_path)
 
         logger.info("Qwen3-TTS model loaded successfully")
 
@@ -200,63 +155,23 @@ class Qwen3TTSService(ITTSService):
         return await asyncio.to_thread(self._synthesize_sync, text, voice)
 
     def _synthesize_sync(self, text: str, voice: str | None) -> bytes:
-        """Run TTS inference synchronously (called via ``asyncio.to_thread``).
-
-        NOTE: The exact generate / decode calls below are best-effort based
-        on the expected Qwen3-TTS MLX pipeline.  They may need adjustment
-        once validated against actual model weights during integration
-        testing.
-        """
-        import mlx.core as mx
-
+        """Run TTS inference synchronously (called via ``asyncio.to_thread``)."""
         self._ensure_loaded()
 
-        voice_prompt = _get_voice_prompt(voice)
+        results = list(self._model.generate(
+            text=text,
+            voice=voice or "Chelsie",
+            lang_code="auto",
+        ))
+        audio = results[0].audio  # mx.array waveform
 
-        # Build the chat-style prompt expected by Qwen3-TTS
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": voice_prompt},
-                    {"type": "text", "text": text},
-                ],
-            }
-        ]
+        # Convert mx.array to numpy, then to WAV bytes
+        audio_np = np.array(audio, dtype=np.float32)
 
-        # Tokenize via the processor's chat template
-        prompt_text = self._processor.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
-        )
-        inputs = self._processor(
-            prompt_text, return_tensors="np", add_special_tokens=False
-        )
-
-        # Convert numpy inputs to MLX arrays
-        input_ids = mx.array(inputs["input_ids"])
-
-        # --- Generate audio tokens ---
-        # The exact generation API depends on the MLX model wrapper.
-        # This is the expected call pattern; adjust during integration.
-        output_ids = self._model.generate(
-            input_ids,
-            max_tokens=2048,
-            temp=0.0,
-        )
-
-        # Decode generated token IDs into audio waveform
-        # Qwen3-TTS models produce codec tokens that the processor
-        # decodes into a float32 waveform.
-        audio_float = self._processor.decode_audio(output_ids, sample_rate=SAMPLE_RATE)
-
-        if isinstance(audio_float, mx.array):
-            audio_float = np.array(audio_float, dtype=np.float32)
-        elif not isinstance(audio_float, np.ndarray):
-            audio_float = np.asarray(audio_float, dtype=np.float32)
-
-        # Clip and convert to 16-bit PCM
-        audio_float = np.clip(audio_float, -1.0, 1.0)
-        audio_int16 = (audio_float * 32767).astype(np.int16)
+        # Normalize and convert to int16
+        if audio_np.max() > 0:
+            audio_np = audio_np / max(abs(audio_np.max()), abs(audio_np.min()))
+        audio_int16 = (audio_np * 32767).astype(np.int16)
 
         return self._to_wav(audio_int16)
 
@@ -311,9 +226,6 @@ class Qwen3TTSService(ITTSService):
         if self._model is not None:
             del self._model
             self._model = None
-        if self._processor is not None:
-            del self._processor
-            self._processor = None
         gc.collect()
 
         self._model_path = model_path

@@ -66,6 +66,7 @@ VOICE_TOOLS = [
     "summarize_transcript",
     "get_recording_info",
     "get_context",
+    "extract_entities",
 ]
 
 AGENT_INSTRUCTIONS = """\

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 # ── LiveKit constants ─────────────────────────────────────────────────
 
-LIVEKIT_URL = "ws://127.0.0.1:7880"
+LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "ws://127.0.0.1:7880")
 LIVEKIT_API_KEY = "verbatim"
 LIVEKIT_API_SECRET = "verbatim-local-dev-secret-key-min-32-chars!!"
 
@@ -213,7 +214,7 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
                         progress_state["error"] = str(exc)
                         progress_state["done"] = True
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             loop.run_in_executor(None, _do_download)
 
             # Poll progress by checking directory size

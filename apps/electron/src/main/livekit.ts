@@ -25,14 +25,6 @@ class LiveKitManager extends EventEmitter {
     return `ws://127.0.0.1:${this.port}`;
   }
 
-  getApiKey(): string {
-    return this.apiKey;
-  }
-
-  getApiSecret(): string {
-    return this.apiSecret;
-  }
-
   async start(): Promise<void> {
     if (this.process) {
       console.log('[LiveKit] Already running');

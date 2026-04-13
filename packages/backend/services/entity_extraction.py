@@ -9,7 +9,6 @@ import json
 import logging
 from dataclasses import dataclass
 
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from core.interfaces import ChatMessage, ChatOptions
@@ -177,20 +176,6 @@ def chunk_text(
 # ---------------------------------------------------------------------------
 # EE-3: Extraction pipeline (LLM integration)
 # ---------------------------------------------------------------------------
-
-
-class ExtractionEntity(BaseModel):
-    """A single entity extracted by the LLM."""
-
-    entity_type: str
-    text: str
-    attributes: dict = {}
-
-
-class ExtractionResult(BaseModel):
-    """Collection of extracted entities."""
-
-    entities: list[ExtractionEntity] = []
 
 
 def build_extraction_prompt(

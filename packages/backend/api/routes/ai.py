@@ -1155,7 +1155,8 @@ async def get_extraction_templates() -> list[dict]:
         tmpl = get_template(name)
         if tmpl:
             result.append({
-                "name": name,
+                "id": name,
+                "label": name.replace("_", " ").title(),
                 "prompt": tmpl["prompt"],
             })
     return result

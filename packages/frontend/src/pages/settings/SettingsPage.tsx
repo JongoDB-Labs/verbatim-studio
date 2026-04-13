@@ -834,6 +834,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
         setTtsDownloading(null);
         setTtsDownloadedBytes(0);
         setTtsTotalBytes(0);
+        ttsDownloadAbortRef.current = null;
         completeDownload(modelId);
         refreshTtsModels();
       } else if (event.status === 'error') {

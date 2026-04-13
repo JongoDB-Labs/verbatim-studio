@@ -89,6 +89,7 @@ export function ChatHeader({
           {onToggleVoice && (
             <button
               onClick={onToggleVoice}
+              disabled={ttsAvailable === false}
               className={`min-w-touch min-h-touch flex items-center justify-center rounded transition-colors ${
                 voiceActive
                   ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30'
