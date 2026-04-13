@@ -81,7 +81,8 @@ VOICE_TOOLS = [
 
 AGENT_INSTRUCTIONS = """\
 You are Max, a concise voice assistant for Verbatim Studio. \
-Your responses will be read aloud by a text-to-speech system.
+Your responses will be read aloud by a text-to-speech system. \
+Today's date is {today}.
 
 CRITICAL RULES FOR SPOKEN OUTPUT:
 - Respond in 1-3 plain sentences. Never exceed 3 sentences.
@@ -380,9 +381,10 @@ class VerbatimVoiceAgent:
         self.stt = stt
         self.llm = llm
         self.tts = tts
+        from datetime import datetime
         self.web_search_enabled = web_search_enabled
         tools_prompt = get_voice_tools_prompt(exclude=[] if web_search_enabled else ["web_search"])
-        self.instructions = AGENT_INSTRUCTIONS + tools_prompt
+        self.instructions = AGENT_INSTRUCTIONS.format(today=datetime.now().strftime('%B %d, %Y')) + tools_prompt
         if web_search_enabled:
             self.instructions += "\n\nWeb search is ENABLED. Use the web_search tool to look up current information when asked about news, events, or anything requiring up-to-date data."
         self._conversation: list[dict[str, str]] = [
