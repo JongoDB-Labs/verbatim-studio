@@ -10,6 +10,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,7 @@ class LlamaCppAIService(IAIService):
         self._n_gpu_layers = n_gpu_layers
         self._llm = None
         self._available: bool | None = None
+        self._llm_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm")
 
     def _reset_state(self) -> None:
         """Force-clear all model state (KV cache + recurrent/SSM state).
@@ -341,17 +343,19 @@ class LlamaCppAIService(IAIService):
         self._reset_state()
 
         try:
-            result = await asyncio.to_thread(
-                self._llm.create_chat_completion,
-                **kwargs,
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                self._llm_executor,
+                lambda: self._llm.create_chat_completion(**kwargs),
             )
         except RuntimeError as e:
             if "llama_decode" in str(e):
                 logger.warning("llama_decode failed, resetting state and retrying: %s", e)
                 self._reset_state()
-                result = await asyncio.to_thread(
-                    self._llm.create_chat_completion,
-                    **kwargs,
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    self._llm_executor,
+                    lambda: self._llm.create_chat_completion(**kwargs),
                 )
             else:
                 raise
@@ -408,7 +412,8 @@ class LlamaCppAIService(IAIService):
                 return None
 
         while True:
-            chunk = await asyncio.to_thread(_next_chunk, stream)
+            loop = asyncio.get_running_loop()
+            chunk = await loop.run_in_executor(self._llm_executor, _next_chunk, stream)
             if chunk is None:
                 break
 

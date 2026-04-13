@@ -20,6 +20,7 @@ import json
 import logging
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -104,14 +105,11 @@ CRITICAL RULES FOR SPOKEN OUTPUT:
 class WhisperSTTAdapter:
     """Bridges the Verbatim ITranscriptionEngine to LiveKit's STT interface.
 
-    LiveKit Agents expects an STT that can process audio frames. Our Whisper
-    engine expects a file path, so we buffer incoming audio to a temp WAV file
-    and run transcription on it.
-
-    TODO: The exact LiveKit STT adapter interface (base class, method
-    signatures) needs validation against the livekit-agents SDK. This
-    implementation assumes a recognize() method that receives audio frames.
+    Uses a dedicated thread pool so STT doesn't compete with LLM/TTS
+    for the default asyncio executor.
     """
+
+    _stt_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
 
     def __init__(self, engine: ITranscriptionEngine) -> None:
         self._engine = engine

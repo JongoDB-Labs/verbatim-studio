@@ -11,6 +11,7 @@ import io
 import logging
 import wave
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -150,13 +151,19 @@ class Qwen3TTSService(ITTSService):
 
     # -- ITTSService implementation -----------------------------------------
 
+    # Dedicated thread pool so TTS doesn't compete with LLM for the default pool
+    _tts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tts")
+
     async def synthesize(
         self,
         text: str,
         voice: str | None = None,
     ) -> bytes:
         """Synthesize speech from *text*, returning complete WAV bytes."""
-        return await asyncio.to_thread(self._synthesize_sync, text, voice)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._tts_executor, self._synthesize_sync, text, voice
+        )
 
     def _synthesize_sync(self, text: str, voice: str | None) -> bytes:
         """Run TTS inference synchronously (called via ``asyncio.to_thread``)."""
