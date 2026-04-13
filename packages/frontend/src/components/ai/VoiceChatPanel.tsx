@@ -11,15 +11,27 @@ import { api } from '@/lib/api';
 
 type VoiceState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking';
 
+interface VoiceInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
 interface VoiceChatPanelProps {
   onClose: () => void;
 }
+
+const VOICE_STORAGE_KEY = 'verbatim_default_voice';
 
 export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [ttsAvailable, setTtsAvailable] = useState<boolean | null>(null);
+  const [voices, setVoices] = useState<VoiceInfo[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
+    return localStorage.getItem(VOICE_STORAGE_KEY) || '';
+  });
 
   const roomRef = useRef<Room | null>(null);
   const audioElementsRef = useRef<HTMLAudioElement[]>([]);
@@ -33,6 +45,13 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
       .then((status) => {
         setTtsAvailable(status.tts_available && status.livekit_available);
         setMissingDeps(status.missing_deps || []);
+        if (status.voices && status.voices.length > 0) {
+          setVoices(status.voices);
+          // If no voice selected yet, default to the first voice or saved preference
+          if (!selectedVoice) {
+            setSelectedVoice(status.voices[0].id);
+          }
+        }
       })
       .catch(() => setTtsAvailable(false));
   }, []);
@@ -100,7 +119,7 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
     setState('connecting');
 
     try {
-      const session = await api.voice.createSession();
+      const session = await api.voice.createSession(selectedVoice || undefined);
 
       const room = new Room();
       roomRef.current = room;
@@ -142,7 +161,7 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
       setState('idle');
       roomRef.current = null;
     }
-  }, [handleTrackSubscribed, handleTrackUnsubscribed]);
+  }, [handleTrackSubscribed, handleTrackUnsubscribed, selectedVoice]);
 
   const disconnect = useCallback(() => {
     if (roomRef.current) {
@@ -393,6 +412,33 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
           <p className="text-xs text-red-500 dark:text-red-400 text-center max-w-[280px]">
             {error}
           </p>
+        )}
+
+        {/* Voice selector — shown only when idle and voices are available */}
+        {state === 'idle' && ttsAvailable && voices.length > 0 && (
+          <div className="w-full max-w-[240px]">
+            <label
+              htmlFor="voice-select"
+              className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1"
+            >
+              Voice
+            </label>
+            <select
+              id="voice-select"
+              value={selectedVoice}
+              onChange={(e) => {
+                setSelectedVoice(e.target.value);
+                localStorage.setItem(VOICE_STORAGE_KEY, e.target.value);
+              }}
+              className="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            >
+              {voices.map((v) => (
+                <option key={v.id} value={v.id} title={v.description}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
 
         {/* Action buttons */}

@@ -48,6 +48,12 @@ class VoiceStatusResponse(BaseModel):
     missing_deps: list[str] = []
 
 
+class CreateSessionRequest(BaseModel):
+    """Request body for creating a voice chat session."""
+
+    voice: str | None = None
+
+
 class VoiceSessionResponse(BaseModel):
     """Response from creating a voice chat session."""
 
@@ -400,12 +406,17 @@ async def _start_agent_in_room(
 
 
 @router.post("/sessions", response_model=VoiceSessionResponse)
-async def create_voice_session() -> VoiceSessionResponse:
+async def create_voice_session(
+    body: CreateSessionRequest | None = None,
+) -> VoiceSessionResponse:
     """Create a new voice chat session.
 
     Generates a unique LiveKit room, creates access tokens for both the
     user and the agent, and starts the agent in the room as a background
     task.
+
+    Args:
+        body: Optional request body with voice selection.
 
     Returns:
         VoiceSessionResponse with the user's token, LiveKit URL, and room name.
@@ -421,6 +432,8 @@ async def create_voice_session() -> VoiceSessionResponse:
             ),
         )
 
+    selected_voice = body.voice if body else None
+
     # Generate unique room name
     room_name = f"voice-{uuid.uuid4().hex[:8]}"
 
@@ -431,7 +444,7 @@ async def create_voice_session() -> VoiceSessionResponse:
     try:
         from services.voice_agent import create_agent_session
 
-        agent = create_agent_session()
+        agent = create_agent_session(voice=selected_voice)
     except Exception as e:
         logger.exception("Failed to create voice agent session")
         raise HTTPException(

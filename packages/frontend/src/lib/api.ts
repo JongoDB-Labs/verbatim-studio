@@ -3137,10 +3137,13 @@ class ApiClient {
         { method: 'POST' },
       ),
 
-    createSession: () =>
+    createSession: (voice?: string) =>
       this.request<{ token: string; url: string; room_name: string }>(
         '/api/voice/sessions',
-        { method: 'POST' },
+        {
+          method: 'POST',
+          body: JSON.stringify({ voice }),
+        },
       ),
   };
 }

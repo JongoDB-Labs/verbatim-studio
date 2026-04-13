@@ -211,8 +211,9 @@ class Qwen3TTSAdapter:
     (e.g., raw PCM frames rather than WAV).
     """
 
-    def __init__(self, tts_service: ITTSService) -> None:
+    def __init__(self, tts_service: ITTSService, voice: str | None = None) -> None:
         self._tts_service = tts_service
+        self._voice = voice
 
     async def synthesize(self, text: str) -> bytes:
         """Synthesize speech from text.
@@ -223,7 +224,7 @@ class Qwen3TTSAdapter:
         Returns:
             Audio data as bytes (WAV format from Qwen3-TTS).
         """
-        return await self._tts_service.synthesize(text, voice="default")
+        return await self._tts_service.synthesize(text, voice=self._voice)
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +495,7 @@ def _get_tts_service() -> ITTSService:
     return get_tts_service(str(model_dir))
 
 
-def create_agent_session() -> VerbatimVoiceAgent:
+def create_agent_session(voice: str | None = None) -> VerbatimVoiceAgent:
     """Factory that creates a fully configured VerbatimVoiceAgent.
 
     Wires together:
@@ -502,6 +503,9 @@ def create_agent_session() -> VerbatimVoiceAgent:
     - LLM: Granite / llama.cpp via the adapter factory
     - TTS: Qwen3-TTS via the active model
     - Tools: Bridged from the existing ToolRegistry
+
+    Args:
+        voice: Optional voice/speaker ID for TTS (e.g. "Chelsie", "Ryan").
 
     Returns:
         A configured VerbatimVoiceAgent ready to process audio.
@@ -532,8 +536,8 @@ def create_agent_session() -> VerbatimVoiceAgent:
     # Create TTS adapter wrapping Qwen3-TTS
     try:
         tts_service = _get_tts_service()
-        tts = Qwen3TTSAdapter(tts_service)
-        logger.info("Voice TTS adapter created (Qwen3-TTS)")
+        tts = Qwen3TTSAdapter(tts_service, voice=voice)
+        logger.info("Voice TTS adapter created (Qwen3-TTS, voice=%s)", voice or "default")
     except Exception as e:
         raise RuntimeError(f"Failed to create TTS adapter: {e}") from e
 
