@@ -594,6 +594,20 @@ async def create_voice_session(
     if context_parts:
         logger.info("Voice session context: %d item(s) attached", len(context_parts))
 
+    # Set up tool context with a fresh DB session for the background task
+    from services.tool_registry import ToolContext
+    from persistence.database import get_session_factory
+
+    tool_db = get_session_factory()()
+    tool_ctx = ToolContext(
+        project_id=active_project_ids[0] if active_project_ids else None,
+        conversation_id=None,
+        recording_ids=body.recording_ids if body else [],
+        document_ids=body.document_ids if body else [],
+        db=tool_db,
+    )
+    agent.set_tool_context(tool_ctx)
+
     # Start the agent in the room as a background task
     task = asyncio.create_task(
         _start_agent_in_room(agent, room_name),

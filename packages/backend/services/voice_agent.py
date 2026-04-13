@@ -61,6 +61,7 @@ except ImportError:
 MAX_VOICE_RESULT_CHARS = 500
 
 VOICE_TOOLS = [
+    "web_search",
     "project_search",
     "global_search",
     "summarize_transcript",
@@ -441,15 +442,28 @@ class VerbatimVoiceAgent:
         Returns:
             Final response text (either original or post-tool summary).
         """
-        # Simple JSON tool call detection
+        # JSON tool call detection — handles nested braces in args
         try:
-            # Look for {"tool": "...", "args": {...}} pattern
             import re
-            match = re.search(r'\{[^{}]*"tool"\s*:\s*"[^"]+?"[^{}]*\}', response_text)
+            # Find the outermost JSON object containing "tool"
+            match = re.search(r'\{[^{}]*"tool"\s*:', response_text)
             if not match:
                 return response_text
 
-            call_data = json.loads(match.group())
+            # Extract from the match start to find the complete JSON object
+            start = match.start()
+            depth = 0
+            end = start
+            for i, c in enumerate(response_text[start:], start=start):
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+
+            call_data = json.loads(response_text[start:end])
             tool_name = call_data.get("tool")
             tool_args = call_data.get("args", {})
 
