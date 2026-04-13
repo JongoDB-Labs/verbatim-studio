@@ -132,7 +132,11 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
         fileContext,
       );
 
-      const room = new Room();
+      const room = new Room({
+        // Audio-only, local network — disable video codecs and adaptive streaming
+        adaptiveStream: false,
+        dynacast: false,
+      });
       roomRef.current = room;
 
       // Wire up events before connecting

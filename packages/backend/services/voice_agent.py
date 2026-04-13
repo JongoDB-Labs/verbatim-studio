@@ -670,7 +670,7 @@ def _get_tts_service() -> ITTSService:
     return get_tts_service(str(model_dir))
 
 
-def create_agent_session(voice: str | None = None, web_search_enabled: bool = False) -> VerbatimVoiceAgent:
+def create_agent_session(voice: str | None = None, web_search_enabled: bool = False, has_attachments: bool = False) -> VerbatimVoiceAgent:
     """Factory that creates a fully configured VerbatimVoiceAgent.
 
     Wires together:
@@ -700,9 +700,22 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     except Exception as e:
         raise RuntimeError(f"Failed to create STT adapter: {e}") from e
 
-    # Create LLM adapter wrapping Granite / llama.cpp
+    # Create LLM adapter — use smaller context for voice (8K vs 128K)
+    # unless attachments are present which need more context
     try:
-        ai_service = factory.create_ai_service()
+        if has_attachments:
+            ai_service = factory.create_ai_service()
+            logger.info("Voice LLM: using full context (attachments present)")
+        else:
+            # Create a dedicated voice LLM with 8K context for speed
+            from adapters.ai.llama_cpp import get_llama_service
+            from core.transcription_settings import get_gpu_layers
+            model_path = factory._config.ai_model_path
+            gpu_layers = factory._config.ai_n_gpu_layers
+            if gpu_layers is None:
+                gpu_layers = get_gpu_layers()
+            ai_service = get_llama_service(model_path, n_ctx=8192, n_gpu_layers=gpu_layers)
+            logger.info("Voice LLM: using 8K context (no attachments)")
         llm = GraniteLLMAdapter(ai_service)
         logger.info("Voice LLM adapter created (llama.cpp)")
     except Exception as e:

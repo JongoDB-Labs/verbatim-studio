@@ -481,7 +481,8 @@ async def create_voice_session(
         from services.voice_agent import create_agent_session
 
         web_search = body.web_search_enabled if body else False
-        agent = create_agent_session(voice=selected_voice, web_search_enabled=web_search)
+        has_attachments = bool(body and (body.recording_ids or body.document_ids or body.file_context))
+        agent = create_agent_session(voice=selected_voice, web_search_enabled=web_search, has_attachments=has_attachments)
     except Exception as e:
         logger.exception("Failed to create voice agent session")
         raise HTTPException(
