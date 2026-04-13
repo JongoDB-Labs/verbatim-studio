@@ -3137,7 +3137,7 @@ class ApiClient {
         { method: 'POST' },
       ),
 
-    createSession: (voice?: string, recordingIds?: string[], documentIds?: string[]) =>
+    createSession: (voice?: string, recordingIds?: string[], documentIds?: string[], webSearchEnabled?: boolean) =>
       this.request<{ token: string; url: string; room_name: string }>(
         '/api/voice/sessions',
         {
@@ -3145,6 +3145,7 @@ class ApiClient {
           body: JSON.stringify({
             voice,
             recording_ids: recordingIds,
+            web_search_enabled: webSearchEnabled,
             document_ids: documentIds,
           }),
         },

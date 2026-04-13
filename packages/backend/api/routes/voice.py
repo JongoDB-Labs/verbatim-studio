@@ -61,6 +61,7 @@ class CreateSessionRequest(BaseModel):
     recording_ids: list[str] = []
     document_ids: list[str] = []
     project_ids: list[str] = []
+    web_search_enabled: bool = False
 
 
 class VoiceSessionResponse(BaseModel):
@@ -478,7 +479,8 @@ async def create_voice_session(
     try:
         from services.voice_agent import create_agent_session
 
-        agent = create_agent_session(voice=selected_voice)
+        web_search = body.web_search_enabled if body else False
+        agent = create_agent_session(voice=selected_voice, web_search_enabled=web_search)
     except Exception as e:
         logger.exception("Failed to create voice agent session")
         raise HTTPException(

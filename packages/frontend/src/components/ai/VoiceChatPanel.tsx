@@ -26,10 +26,11 @@ interface VoiceChatPanelProps {
   onClose: (messages?: VoiceTranscriptMessage[]) => void;
   recordingIds?: string[];
   documentIds?: string[];
+  webSearchEnabled?: boolean;
 }
 
 
-export function VoiceChatPanel({ onClose, recordingIds, documentIds }: VoiceChatPanelProps) {
+export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEnabled }: VoiceChatPanelProps) {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
@@ -126,6 +127,7 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds }: VoiceChat
         selectedVoice || undefined,
         recordingIds,
         documentIds,
+        webSearchEnabled,
       );
 
       const room = new Room();

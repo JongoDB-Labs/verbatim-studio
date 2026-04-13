@@ -64,10 +64,19 @@ VOICE_TOOLS = [
     "web_search",
     "project_search",
     "global_search",
-    "summarize_transcript",
-    "get_recording_info",
     "get_context",
+    "app_help",
+    "generate_document",
+    "export_transcript",
+    "summarize_transcript",
+    "quality_review",
     "extract_entities",
+    "highlight_segments",
+    "add_note",
+    "create_project",
+    "tag_recordings",
+    "get_recording_info",
+    "system_status",
 ]
 
 AGENT_INSTRUCTIONS = """\
@@ -264,13 +273,18 @@ def get_voice_tool_definitions() -> list[dict[str, Any]]:
     return definitions
 
 
-def get_voice_tools_prompt() -> str:
+def get_voice_tools_prompt(exclude: list[str] | None = None) -> str:
     """Generate a system-prompt section describing available voice tools.
+
+    Args:
+        exclude: Tool names to exclude from the prompt.
 
     Returns a concise tool description string suitable for injection into
     the LLM system prompt during voice sessions.
     """
     definitions = get_voice_tool_definitions()
+    if exclude:
+        definitions = [d for d in definitions if d["name"] not in exclude]
     if not definitions:
         return ""
 
@@ -361,11 +375,16 @@ class VerbatimVoiceAgent:
         stt: WhisperSTTAdapter,
         llm: GraniteLLMAdapter,
         tts: Qwen3TTSAdapter,
+        web_search_enabled: bool = False,
     ) -> None:
         self.stt = stt
         self.llm = llm
         self.tts = tts
-        self.instructions = AGENT_INSTRUCTIONS + get_voice_tools_prompt()
+        self.web_search_enabled = web_search_enabled
+        tools_prompt = get_voice_tools_prompt(exclude=[] if web_search_enabled else ["web_search"])
+        self.instructions = AGENT_INSTRUCTIONS + tools_prompt
+        if web_search_enabled:
+            self.instructions += "\n\nWeb search is ENABLED. Use the web_search tool to look up current information when asked about news, events, or anything requiring up-to-date data."
         self._conversation: list[dict[str, str]] = [
             {"role": "system", "content": self.instructions},
         ]
@@ -531,7 +550,7 @@ def _get_tts_service() -> ITTSService:
     return get_tts_service(str(model_dir))
 
 
-def create_agent_session(voice: str | None = None) -> VerbatimVoiceAgent:
+def create_agent_session(voice: str | None = None, web_search_enabled: bool = False) -> VerbatimVoiceAgent:
     """Factory that creates a fully configured VerbatimVoiceAgent.
 
     Wires together:
@@ -578,7 +597,7 @@ def create_agent_session(voice: str | None = None) -> VerbatimVoiceAgent:
         raise RuntimeError(f"Failed to create TTS adapter: {e}") from e
 
     # Create the agent
-    agent = VerbatimVoiceAgent(stt=stt, llm=llm, tts=tts)
+    agent = VerbatimVoiceAgent(stt=stt, llm=llm, tts=tts, web_search_enabled=web_search_enabled)
     logger.info("VerbatimVoiceAgent created successfully")
 
     return agent

@@ -251,6 +251,7 @@ export function ChatPanel({
           }}
           recordingIds={attached.filter(a => a.type === 'transcript' && a.recordingId).map(a => a.recordingId!)}
           documentIds={attached.filter(a => a.type === 'document' && a.documentId).map(a => a.documentId!)}
+          webSearchEnabled={webSearchEnabled}
         />
       ) : (
         <>
