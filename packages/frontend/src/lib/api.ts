@@ -3067,6 +3067,28 @@ class ApiClient {
 
   // Voice
   voice = {
+    status: () =>
+      this.request<{ tts_available: boolean; tts_model: string | null; voices: { id: string; name: string; description: string }[] }>(
+        '/api/voice/status',
+      ),
+
+    ttsModels: () =>
+      this.request<{ id: string; label: string; description: string; size_bytes: number; ram_gb: number; downloaded: boolean; active: boolean }[]>(
+        '/api/voice/tts/models',
+      ),
+
+    downloadTtsModel: (modelId: string) =>
+      this.request<{ status: string }>(
+        `/api/voice/tts/models/${modelId}/download`,
+        { method: 'POST' },
+      ),
+
+    activateTtsModel: (modelId: string) =>
+      this.request<{ status: string }>(
+        `/api/voice/tts/models/${modelId}/activate`,
+        { method: 'POST' },
+      ),
+
     createSession: () =>
       this.request<{ token: string; url: string; room_name: string }>(
         '/api/voice/sessions',

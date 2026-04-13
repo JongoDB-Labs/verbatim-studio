@@ -285,6 +285,11 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [diarizationError, setDiarizationError] = useState<string | null>(null);
   const diarizationDownloadAbortRef = useRef<{ abort: () => void } | null>(null);
 
+  // TTS model state
+  const [ttsModels, setTtsModels] = useState<{ id: string; label: string; description: string; size_bytes: number; ram_gb: number; downloaded: boolean; active: boolean }[]>([]);
+  const [ttsDownloading, setTtsDownloading] = useState<string | null>(null);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+
   // Hardware info (for memory-aware model recommendations)
   const [hardwareInfo, setHardwareInfo] = useState<HardwareInfo | null>(null);
 
@@ -392,6 +397,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       setDiarizationHfTokenSet(r.hf_token_set);
       setDiarizationAllDownloaded(r.all_downloaded);
     }).catch(console.error);
+    api.voice.ttsModels().then(setTtsModels).catch(console.error);
     api.system.info().then(setSystemInfo).catch(console.error);
     api.system.mlStatus().then(setMlStatus).catch(console.error);
     api.system.getHardware().then(setHardwareInfo).catch(console.error);
@@ -797,6 +803,34 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       setOcrError(err instanceof Error ? err.message : 'Delete failed');
     }
   }, [refreshOcrModels]);
+
+  // TTS model handlers
+  const refreshTtsModels = useCallback(() => {
+    api.voice.ttsModels().then(setTtsModels).catch(console.error);
+  }, []);
+
+  const handleDownloadTtsModel = useCallback(async (modelId: string) => {
+    setTtsDownloading(modelId);
+    setTtsError(null);
+    try {
+      await api.voice.downloadTtsModel(modelId);
+      refreshTtsModels();
+    } catch (err) {
+      setTtsError(err instanceof Error ? err.message : 'Download failed');
+    } finally {
+      setTtsDownloading(null);
+    }
+  }, [refreshTtsModels]);
+
+  const handleActivateTtsModel = useCallback(async (modelId: string) => {
+    setTtsError(null);
+    try {
+      await api.voice.activateTtsModel(modelId);
+      refreshTtsModels();
+    } catch (err) {
+      setTtsError(err instanceof Error ? err.message : 'Activation failed');
+    }
+  }, [refreshTtsModels]);
 
   // Whisper model handlers
   const refreshWhisperModels = useCallback(() => {
@@ -3224,6 +3258,118 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
           <p className="text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-3">
             Models are downloaded from HuggingFace and stored locally. All AI processing happens on your machine. Only one language model can be active at a time.
           </p>
+        </div>
+      </div>
+
+      {/* Text-to-Speech Models Section */}
+      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Text-to-Speech Models</h2>
+            {ttsModels.some((m) => m.active) ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                Active ({ttsModels.find((m) => m.active)?.label})
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                No model active
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Required for voice chat with Max. Download and activate a TTS model to enable voice responses.
+          </p>
+
+          {ttsError && (
+            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-600 dark:text-red-400">
+              {ttsError}
+              <button onClick={() => setTtsError(null)} className="ml-2 underline">Dismiss</button>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Models</label>
+            <div className="space-y-3">
+              {ttsModels.map((model) => (
+                <div
+                  key={model.id}
+                  className={`p-4 rounded-lg border transition-all ${
+                    model.active
+                      ? 'border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10'
+                      : 'border-gray-200 dark:border-gray-600'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{model.label}</span>
+                        {model.active && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Active
+                          </span>
+                        )}
+                        {model.downloaded && !model.active && (
+                          <span className="px-1.5 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
+                            Downloaded
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{model.description}</p>
+                      <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                        ~{formatBytes(model.size_bytes)} download
+                        {model.ram_gb ? ` | ~${model.ram_gb} GB RAM` : ''}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap sm:shrink-0">
+                      {!model.downloaded && ttsDownloading !== model.id && (
+                        <button
+                          onClick={() => handleDownloadTtsModel(model.id)}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                        >
+                          Download
+                        </button>
+                      )}
+
+                      {model.downloaded && !model.active && ttsDownloading !== model.id && (
+                        <button
+                          onClick={() => handleActivateTtsModel(model.id)}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-success text-success-foreground hover:bg-success/90 transition-colors"
+                        >
+                          Activate
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Download spinner */}
+                  {ttsDownloading === model.id && (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                      </svg>
+                      <span>Downloading... This may take a few minutes.</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {ttsModels.length === 0 && (
+                <p className="text-sm text-gray-500 dark:text-gray-400 py-2">
+                  Loading model catalog...
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

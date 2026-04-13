@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { useProjectStore } from '@/stores/projectStore';
+import { api } from '@/lib/api';
 import { type ChatAttachment } from './AttachmentPicker';
 
 interface ChatHeaderProps {
@@ -33,6 +35,16 @@ export function ChatHeader({
   onToggleVoice,
 }: ChatHeaderProps) {
   const { selectedProjects } = useProjectStore();
+  const [ttsAvailable, setTtsAvailable] = useState<boolean | null>(null);
+
+  // Check TTS availability for voice toggle tooltip
+  useEffect(() => {
+    if (onToggleVoice) {
+      api.voice.status()
+        .then((status) => setTtsAvailable(status.tts_available))
+        .catch(() => setTtsAvailable(false));
+    }
+  }, [onToggleVoice]);
 
   // Build scope label for the scope line
   const scopeLabel = (() => {
@@ -80,10 +92,18 @@ export function ChatHeader({
               className={`min-w-touch min-h-touch flex items-center justify-center rounded transition-colors ${
                 voiceActive
                   ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30'
-                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  : ttsAvailable === false
+                    ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
               }`}
               aria-label={voiceActive ? 'Switch to text chat' : 'Switch to voice chat'}
-              title={voiceActive ? 'Voice mode on' : 'Voice mode off'}
+              title={
+                ttsAvailable === false
+                  ? 'Voice chat requires a TTS model \u2014 configure in Settings'
+                  : voiceActive
+                    ? 'Voice mode on'
+                    : 'Voice mode off'
+              }
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />

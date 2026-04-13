@@ -19,10 +19,18 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
+  const [ttsAvailable, setTtsAvailable] = useState<boolean | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const audioElementsRef = useRef<HTMLAudioElement[]>([]);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+
+  // Check TTS availability on mount
+  useEffect(() => {
+    api.voice.status()
+      .then((status) => setTtsAvailable(status.tts_available))
+      .catch(() => setTtsAvailable(false));
+  }, []);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -144,6 +152,84 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
     audioElementsRef.current = [];
     setState('idle');
   }, []);
+
+  // TTS not available — show setup message
+  if (ttsAvailable === false) {
+    return (
+      <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 py-6">
+          <div className="relative">
+            <div className="w-24 h-24 rounded-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
+              <svg
+                className="w-10 h-10 text-gray-400 dark:text-gray-500 opacity-50"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                />
+              </svg>
+            </div>
+          </div>
+
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Voice chat requires a TTS model
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 text-center max-w-[280px]">
+            Download a text-to-speech model in Settings &rarr; AI Models to enable voice chat.
+          </p>
+
+          <button
+            onClick={() => {
+              disconnect();
+              onClose();
+            }}
+            className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Still loading TTS status
+  if (ttsAvailable === null) {
+    return (
+      <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 py-6">
+          <div className="w-24 h-24 rounded-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
+            <svg
+              className="w-10 h-10 text-gray-400 dark:text-gray-500 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+              />
+            </svg>
+          </div>
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
+            Checking voice availability...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
