@@ -293,11 +293,8 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [ttsError, setTtsError] = useState<string | null>(null);
   const ttsDownloadAbortRef = useRef<{ abort: () => void } | null>(null);
 
-  // Default voice preference
-  const [ttsVoices, setTtsVoices] = useState<{ id: string; name: string; description: string }[]>([]);
-  const [defaultVoice, setDefaultVoice] = useState<string>(() => {
-    return localStorage.getItem('verbatim_default_voice') || '';
-  });
+  // Voice state (voice is hardcoded to Ryan — kept for TTS status fetch)
+  const [, setTtsVoices] = useState<{ id: string; name: string; description: string }[]>([]);
 
   // Hardware info (for memory-aware model recommendations)
   const [hardwareInfo, setHardwareInfo] = useState<HardwareInfo | null>(null);
@@ -410,9 +407,6 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     api.voice.status().then((status) => {
       if (status.voices && status.voices.length > 0) {
         setTtsVoices(status.voices);
-        if (!defaultVoice) {
-          setDefaultVoice(status.voices[0].id);
-        }
       }
     }).catch(console.error);
     api.system.info().then(setSystemInfo).catch(console.error);
@@ -3437,31 +3431,6 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
             </div>
           </div>
 
-          {/* Default Voice preference */}
-          {ttsVoices.length > 0 && (
-            <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                Default Voice
-              </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                The voice used for voice chat sessions. Can also be changed per-session in the voice panel.
-              </p>
-              <select
-                value={defaultVoice}
-                onChange={(e) => {
-                  setDefaultVoice(e.target.value);
-                  localStorage.setItem('verbatim_default_voice', e.target.value);
-                }}
-                className="w-full max-w-xs px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              >
-                {ttsVoices.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name} — {v.description}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
       </div>
 

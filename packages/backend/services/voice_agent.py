@@ -70,15 +70,19 @@ VOICE_TOOLS = [
 ]
 
 AGENT_INSTRUCTIONS = """\
-You are Max, a concise voice assistant for Verbatim Studio.
+You are Max, a concise voice assistant for Verbatim Studio. \
+Your responses will be read aloud by a text-to-speech system.
 
-Key rules:
-- Keep responses SHORT and conversational (1-3 sentences).
-- You are speaking out loud, so avoid markdown, bullet points, or long lists.
-- Use tools to look up data rather than guessing. Say "let me check" before calling a tool.
-- When reporting tool results, summarize the key info in a natural spoken style.
+CRITICAL RULES FOR SPOKEN OUTPUT:
+- Respond in 1-3 plain sentences. Never exceed 3 sentences.
+- NEVER use bullet points, numbered lists, dashes, asterisks, or any markdown formatting.
+- NEVER use special characters like #, *, -, or > at the start of lines.
+- Write exactly as you would speak naturally in a conversation.
+- Use tools to look up data rather than guessing.
+- When reporting results, summarize the key info conversationally.
 - If something fails, say so briefly and suggest what the user can try.
-- Be friendly but efficient. The user is busy.
+- Be friendly but efficient.
+- ALWAYS finish your sentences completely. Never stop mid-word or mid-sentence.
 """
 
 # ---------------------------------------------------------------------------
@@ -169,7 +173,7 @@ class GraniteLLMAdapter:
             ChatMessage(role=m["role"], content=m["content"])
             for m in messages
         ]
-        options = ChatOptions(temperature=0.7, max_tokens=300)
+        options = ChatOptions(temperature=0.7, max_tokens=512)
         response = await self._ai_service.chat(chat_messages, options)
         return response.content
 
@@ -188,7 +192,7 @@ class GraniteLLMAdapter:
             ChatMessage(role=m["role"], content=m["content"])
             for m in messages
         ]
-        options = ChatOptions(temperature=0.7, max_tokens=300)
+        options = ChatOptions(temperature=0.7, max_tokens=512)
         async for chunk in self._ai_service.chat_stream(chat_messages, options):
             if chunk.content:
                 yield chunk.content
@@ -374,7 +378,7 @@ class VerbatimVoiceAgent:
         """
         self._tool_context = ctx
 
-    async def handle_user_audio(self, audio_data: bytes) -> bytes | None:
+    async def handle_user_audio(self, audio_data: bytes) -> tuple[bytes | None, str | None, str | None]:
         """Process a chunk of user audio through the full pipeline.
 
         STT -> LLM (with optional tool calls) -> TTS
@@ -383,12 +387,19 @@ class VerbatimVoiceAgent:
             audio_data: Raw PCM audio from the user.
 
         Returns:
-            Synthesized audio response bytes, or None if no response.
+            Tuple of (audio_response, user_text, assistant_text).
+            Any element may be None if that stage produced no output.
         """
         # Step 1: Speech-to-text
         user_text = await self.stt.recognize(audio_data)
         if not user_text.strip():
-            return None
+            return None, None, None
+
+        # Filter out Whisper hallucinations on silence/noise
+        clean = user_text.strip().replace("-", "").replace(" ", "")
+        if len(clean) > 0 and len(set(clean.lower())) <= 2:
+            logger.debug("Filtered STT hallucination: %s", user_text[:50])
+            return None, None, None
 
         logger.info("Voice STT result: %s", user_text[:100])
 
@@ -403,9 +414,9 @@ class VerbatimVoiceAgent:
         # Step 4: Text-to-speech
         if response_text.strip():
             audio_response = await self.tts.synthesize(response_text)
-            return audio_response
+            return audio_response, user_text, response_text
 
-        return None
+        return None, user_text, response_text
 
     async def _handle_tool_calls(self, response_text: str) -> str:
         """Detect and execute tool calls embedded in LLM output.
@@ -559,18 +570,13 @@ async def connect_agent_to_room(
     token: str,
     url: str = "ws://127.0.0.1:7880",
 ) -> None:
-    """Connect the voice agent to a LiveKit room.
+    """Connect the voice agent to a LiveKit room and run the audio loop.
 
-    This is the integration point where the VerbatimVoiceAgent is wired
-    into the LiveKit real-time infrastructure.
+    Joins the room, subscribes to user audio tracks, buffers audio frames
+    for VAD-based segmentation, runs STT→LLM→TTS, and publishes the
+    response audio back.
 
-    TODO: The exact LiveKit Agents SDK API for connecting an agent to a
-    room needs validation. This implementation is a best-effort sketch
-    based on expected SDK patterns. Key areas to validate:
-    - How to join a room as an agent participant
-    - How to subscribe to audio tracks
-    - How to publish audio tracks
-    - The event loop / callback model for audio processing
+    The agent stays connected until the user disconnects or the room closes.
 
     Args:
         agent: The configured VerbatimVoiceAgent.
@@ -584,33 +590,175 @@ async def connect_agent_to_room(
             "Install with: pip install 'livekit-agents[silero]'"
         )
 
+    from livekit import rtc
+    import numpy as np
+    import struct
+
+    room = rtc.Room()
+
+    # Create an AudioSource for publishing agent responses
+    AGENT_SAMPLE_RATE = 24000  # Qwen3-TTS output rate
+    audio_source = rtc.AudioSource(sample_rate=AGENT_SAMPLE_RATE, num_channels=1)
+    agent_track = rtc.LocalAudioTrack.create_audio_track("agent-voice", audio_source)
+
+    # Track whether we're still connected
+    connected = asyncio.Event()
+    connected.set()
+
     try:
-        from livekit import rtc
-
-        # TODO: Validate exact LiveKit RTC API for room connection
-        room = rtc.Room()
-
         await room.connect(url, token)
-        logger.info("Voice agent connected to room: %s", room_name)
+        logger.info("Voice agent connected to room %s", room_name)
 
-        # TODO: Set up audio track subscription and processing callbacks.
-        # The exact API for:
-        #   - Subscribing to participant audio tracks
-        #   - Processing incoming audio frames via agent.stt.recognize()
-        #   - Publishing synthesized audio via agent.tts.synthesize()
-        # needs validation against the LiveKit Python SDK.
+        # Publish the agent's audio track
+        await room.local_participant.publish_track(agent_track)
+        logger.info("Agent audio track published")
+
+        # Buffer for accumulating user audio
+        audio_buffer = bytearray()
+        SILENCE_THRESHOLD = 500  # int16 amplitude threshold
+        SILENCE_DURATION_MS = 800  # ms of silence before processing
+        MIN_AUDIO_MS = 300  # minimum audio to process
 
         @room.on("track_subscribed")
         def on_track_subscribed(track, publication, participant):
             if track.kind == rtc.TrackKind.KIND_AUDIO:
-                logger.info(
-                    "Subscribed to audio track from %s",
-                    participant.identity,
-                )
-                # TODO: Set up audio frame processing pipeline
-                # audio_stream = rtc.AudioStream(track)
-                # Process frames through agent.handle_user_audio()
+                logger.info("Subscribed to audio from %s", participant.identity)
+                asyncio.ensure_future(_process_audio_track(track))
 
+        @room.on("disconnected")
+        def on_disconnected():
+            logger.info("Room %s disconnected", room_name)
+            connected.clear()
+
+        async def _process_audio_track(track):
+            """Read audio frames from user, detect speech, run agent pipeline."""
+            stream = rtc.AudioStream.from_track(
+                track=track,
+                sample_rate=16000,  # Whisper expects 16kHz
+                num_channels=1,
+            )
+
+            silence_frames = 0
+            frames_per_ms = 16  # 16 samples per ms at 16kHz
+
+            async for event in stream:
+                if not connected.is_set():
+                    break
+
+                frame = event.frame
+                frame_data = bytes(frame.data)
+                audio_buffer.extend(frame_data)
+
+                # Simple VAD: check if this frame is silence
+                samples = np.frombuffer(frame_data, dtype=np.int16)
+                rms = np.sqrt(np.mean(samples.astype(np.float32) ** 2))
+
+                if rms < SILENCE_THRESHOLD:
+                    silence_frames += frame.samples_per_channel
+                else:
+                    silence_frames = 0
+
+                silence_ms = (silence_frames / frames_per_ms)
+                buffer_ms = (len(audio_buffer) / 2) / frames_per_ms  # 2 bytes per sample
+
+                # Process when we have enough audio followed by silence
+                if silence_ms >= SILENCE_DURATION_MS and buffer_ms >= MIN_AUDIO_MS:
+                    pcm_data = bytes(audio_buffer)
+                    audio_buffer.clear()
+                    silence_frames = 0
+
+                    logger.info("Processing %d ms of user audio", int(buffer_ms))
+
+                    try:
+                        # Run the full STT → LLM → TTS pipeline
+                        response_audio, user_text, assistant_text = await agent.handle_user_audio(pcm_data)
+
+                        # Publish transcript via data channel
+                        if user_text:
+                            await room.local_participant.publish_data(
+                                json.dumps({"type": "transcript", "role": "user", "content": user_text}).encode(),
+                                reliable=True,
+                            )
+                        if assistant_text:
+                            await room.local_participant.publish_data(
+                                json.dumps({"type": "transcript", "role": "assistant", "content": assistant_text}).encode(),
+                                reliable=True,
+                            )
+
+                        if response_audio:
+                            # Parse WAV response and publish as AudioFrames
+                            await _publish_audio_response(
+                                audio_source, response_audio
+                            )
+                    except Exception:
+                        logger.exception("Agent pipeline error")
+
+        async def _publish_audio_response(source: rtc.AudioSource, wav_data: bytes):
+            """Parse WAV bytes and publish as LiveKit AudioFrames."""
+            import io
+            import wave
+
+            try:
+                with wave.open(io.BytesIO(wav_data), "rb") as wf:
+                    sr = wf.getframerate()
+                    nch = wf.getnchannels()
+                    sw = wf.getsampwidth()
+                    raw = wf.readframes(wf.getnframes())
+
+                # Convert to the agent's sample rate if needed
+                samples = np.frombuffer(raw, dtype=np.int16)
+
+                if nch > 1:
+                    samples = samples[::nch]  # Take first channel
+
+                if sr != AGENT_SAMPLE_RATE:
+                    # Simple resampling via linear interpolation
+                    ratio = AGENT_SAMPLE_RATE / sr
+                    new_len = int(len(samples) * ratio)
+                    indices = np.linspace(0, len(samples) - 1, new_len)
+                    samples = np.interp(indices, np.arange(len(samples)), samples.astype(np.float32)).astype(np.int16)
+
+                # Publish in chunks (20ms frames)
+                chunk_samples = AGENT_SAMPLE_RATE // 50  # 20ms at sample rate
+                for i in range(0, len(samples), chunk_samples):
+                    chunk = samples[i:i + chunk_samples]
+                    if len(chunk) < chunk_samples:
+                        chunk = np.pad(chunk, (0, chunk_samples - len(chunk)))
+
+                    frame = rtc.AudioFrame.create(
+                        sample_rate=AGENT_SAMPLE_RATE,
+                        num_channels=1,
+                        samples_per_channel=len(chunk),
+                    )
+                    # frame.data is a memoryview of int16 ('h' format)
+                    frame.data[:len(chunk)] = memoryview(chunk)
+
+                    await source.capture_frame(frame)
+
+                await source.wait_for_playout()
+                logger.info("Agent audio response published")
+
+            except Exception:
+                logger.exception("Failed to publish audio response")
+
+        # Keep the agent alive until disconnected
+        await asyncio.wait_for(
+            _wait_for_disconnect(connected),
+            timeout=3600,  # Max 1 hour session
+        )
+
+    except asyncio.TimeoutError:
+        logger.info("Voice session timed out for room %s", room_name)
     except Exception as e:
         logger.exception("Failed to connect agent to room %s", room_name)
         raise RuntimeError(f"Failed to connect to LiveKit room: {e}") from e
+    finally:
+        if room.isconnected:
+            await room.disconnect()
+        logger.info("Agent disconnected from room %s", room_name)
+
+
+async def _wait_for_disconnect(connected: asyncio.Event) -> None:
+    """Wait until the connected event is cleared."""
+    while connected.is_set():
+        await asyncio.sleep(0.5)

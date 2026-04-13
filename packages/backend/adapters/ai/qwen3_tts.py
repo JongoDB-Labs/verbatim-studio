@@ -11,6 +11,7 @@ import io
 import logging
 import wave
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import numpy as np
 
@@ -100,11 +101,14 @@ def _cleanup_model() -> None:
 # Preset voices
 # ---------------------------------------------------------------------------
 _PRESET_VOICES: list[dict] = [
-    {"id": "Chelsie", "name": "Chelsie", "description": "Clear female English voice"},
-    {"id": "Ryan", "name": "Ryan", "description": "Natural male English voice"},
-    {"id": "Vivian", "name": "Vivian", "description": "Warm female voice"},
-    {"id": "Aiden", "name": "Aiden", "description": "Young male voice"},
-    {"id": "Serena", "name": "Serena", "description": "Calm female voice"},
+    {"id": "serena", "name": "Serena", "description": "Calm female voice"},
+    {"id": "vivian", "name": "Vivian", "description": "Warm female voice"},
+    {"id": "ryan", "name": "Ryan", "description": "Natural male English voice"},
+    {"id": "aiden", "name": "Aiden", "description": "Young male voice"},
+    {"id": "dylan", "name": "Dylan", "description": "Male voice (Beijing accent)"},
+    {"id": "eric", "name": "Eric", "description": "Male voice (Sichuan accent)"},
+    {"id": "ono_anna", "name": "Ono Anna", "description": "Japanese female voice"},
+    {"id": "sohee", "name": "Sohee", "description": "Korean female voice"},
 ]
 
 
@@ -158,11 +162,24 @@ class Qwen3TTSService(ITTSService):
         """Run TTS inference synchronously (called via ``asyncio.to_thread``)."""
         self._ensure_loaded()
 
-        results = list(self._model.generate(
-            text=text,
-            voice=voice or "Chelsie",
-            lang_code="auto",
-        ))
+        # Use ICL (voice cloning) with a reference clip to ensure consistent
+        # voice across all generations. Without this, the Base model produces
+        # a different voice each time.
+        ref_audio_path = str(Path(self._model_path).parent / "max_voice_ref.wav")
+        ref_text = "I'm very sorry I can't be with you all today and such an important gathering. Some have speculated that I've seen more of the natural world than anyone else."
+
+        generate_kwargs: dict = {
+            "text": text,
+            "lang_code": "auto",
+            "speed": 1.3,
+        }
+
+        if Path(ref_audio_path).exists():
+            generate_kwargs["ref_audio"] = ref_audio_path
+            generate_kwargs["ref_text"] = ref_text
+
+        results = list(self._model.generate(**generate_kwargs))
+
         audio = results[0].audio  # mx.array waveform
 
         # Convert mx.array to numpy, then to WAV bytes

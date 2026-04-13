@@ -5,7 +5,7 @@ import { ChatHeader } from './ChatHeader';
 import { ChatMessages, type ChatMessage } from './ChatMessages';
 import { ChatInput } from './ChatInput';
 import { AttachmentPicker, type ChatAttachment } from './AttachmentPicker';
-import { VoiceChatPanel } from './VoiceChatPanel';
+import { VoiceChatPanel, type VoiceTranscriptMessage } from './VoiceChatPanel';
 
 interface ChatPanelProps {
   isOpen: boolean;
@@ -236,7 +236,18 @@ export function ChatPanel({
         onToggleVoice={() => setVoiceMode((prev) => !prev)}
       />
       {voiceMode ? (
-        <VoiceChatPanel onClose={() => setVoiceMode(false)} />
+        <VoiceChatPanel onClose={(voiceMessages?: VoiceTranscriptMessage[]) => {
+          setVoiceMode(false);
+          // Inject voice conversation into chat history
+          if (voiceMessages && voiceMessages.length > 0) {
+            const chatMessages: ChatMessage[] = voiceMessages.map((m, i) => ({
+              id: `voice-${Date.now()}-${i}`,
+              role: m.role,
+              content: m.content,
+            }));
+            setMessages((prev) => [...prev, ...chatMessages]);
+          }
+        }} />
       ) : (
         <>
           <ChatMessages
