@@ -218,13 +218,10 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
           </p>
 
           <button
-            onClick={() => {
-              disconnect();
-              onClose();
-            }}
+            onClick={() => onClose()}
             className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           >
-            Close
+            Back to Chat
           </button>
         </div>
       </div>
@@ -422,34 +419,23 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
           </p>
         )}
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-3">
-          {state === 'idle' ? (
-            <button
-              onClick={connect}
-              className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-full hover:bg-purple-700 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
-            >
-              Start Voice Chat
-            </button>
-          ) : (
-            <button
-              onClick={() => disconnect()}
-              disabled={state === 'connecting'}
-              className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-full hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 disabled:opacity-50"
-            >
-              End Voice Chat
-            </button>
-          )}
+        {/* Action button */}
+        {state === 'idle' ? (
           <button
-            onClick={() => {
-              disconnect();
-              onClose();
-            }}
-            className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            onClick={connect}
+            className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-full hover:bg-purple-700 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
           >
-            Close
+            Start Voice Chat
           </button>
-        </div>
+        ) : (
+          <button
+            onClick={() => disconnect()}
+            disabled={state === 'connecting'}
+            className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-full hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 disabled:opacity-50"
+          >
+            End Voice Chat
+          </button>
+        )}
       </div>
 
       {/* Live transcript area */}
