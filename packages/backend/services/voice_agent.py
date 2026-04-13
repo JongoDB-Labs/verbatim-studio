@@ -796,7 +796,7 @@ async def connect_agent_to_room(
         SILENCE_THRESHOLD = 600  # int16 amplitude RMS threshold
         SILENCE_DURATION_MS = 700  # ms of silence before processing
         MIN_AUDIO_MS = 1000  # minimum 1s of audio to avoid processing fragments
-        speaking_state = {"active": False}  # mutable container for nested scope access
+        speaking_state = {"active": False, "cooldown_until": 0.0}  # echo suppression
 
         @room.on("track_subscribed")
         def on_track_subscribed(track, publication, participant):
@@ -825,7 +825,9 @@ async def connect_agent_to_room(
                     break
 
                 # Skip audio input while agent is speaking (echo suppression)
-                if speaking_state["active"]:
+                import time as _time
+                # Skip audio while speaking OR during cooldown after speaking
+                if speaking_state["active"] or _time.monotonic() < speaking_state["cooldown_until"]:
                     audio_buffer.clear()
                     silence_frames = 0
                     continue
@@ -868,6 +870,8 @@ async def connect_agent_to_room(
                         )
 
                         speaking_state["active"] = False
+                        # 2-second cooldown to let speakers finish playing
+                        speaking_state["cooldown_until"] = _time.monotonic() + 2.0
                         audio_buffer.clear()
                         silence_frames = 0
 
