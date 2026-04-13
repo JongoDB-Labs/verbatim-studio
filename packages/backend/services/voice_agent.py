@@ -552,30 +552,52 @@ class VerbatimVoiceAgent:
         Returns:
             Final response text (either original or post-tool summary).
         """
-        # JSON tool call detection — handles nested braces in args
+        # Tool call detection — multiple formats the LLM may use
         try:
             import re
-            # Find the outermost JSON object containing "tool"
+
+            tool_name = None
+            tool_args = {}
+            clean_text = response_text
+
+            # Format 1: {"tool": "name", "args": {...}}
             match = re.search(r'\{[^{}]*"tool"\s*:', response_text)
-            if not match:
-                return response_text
+            if match:
+                start = match.start()
+                depth = 0
+                end = start
+                for i, c in enumerate(response_text[start:], start=start):
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                try:
+                    call_data = json.loads(response_text[start:end])
+                    tool_name = call_data.get("tool")
+                    tool_args = call_data.get("args", {})
+                    clean_text = response_text[:start].strip()
+                except json.JSONDecodeError:
+                    pass
 
-            # Extract from the match start to find the complete JSON object
-            start = match.start()
-            depth = 0
-            end = start
-            for i, c in enumerate(response_text[start:], start=start):
-                if c == '{':
-                    depth += 1
-                elif c == '}':
-                    depth -= 1
-                    if depth == 0:
-                        end = i + 1
-                        break
+            # Format 2: tool_name{"key": "value"} (LLM shorthand)
+            if not tool_name:
+                match2 = re.search(r'(\w+)\s*(\{[^{}]*\})', response_text)
+                if match2 and match2.group(1) in VOICE_TOOLS:
+                    tool_name = match2.group(1)
+                    try:
+                        tool_args = json.loads(match2.group(2))
+                    except json.JSONDecodeError:
+                        tool_name = None
+                    if tool_name:
+                        clean_text = response_text[:match2.start()].strip()
 
-            call_data = json.loads(response_text[start:end])
-            tool_name = call_data.get("tool")
-            tool_args = call_data.get("args", {})
+            if not tool_name:
+                # Strip any remaining JSON-like content before sending to TTS
+                cleaned = re.sub(r'\{[^{}]*\}', '', response_text).strip()
+                return cleaned if cleaned else response_text
 
             if tool_name not in VOICE_TOOLS:
                 return response_text
@@ -597,11 +619,18 @@ class VerbatimVoiceAgent:
             summary = await self.llm.chat(self._conversation)
             self._conversation.append({"role": "assistant", "content": summary})
 
-            return summary
+            # Combine any pre-tool text with the tool result summary
+            import re as _re
+            summary_clean = _re.sub(r'\{[^{}]*\}', '', summary).strip()
+            if clean_text:
+                return f"{clean_text} {summary_clean}"
+            return summary_clean
 
         except (json.JSONDecodeError, KeyError, TypeError):
-            # Not a valid tool call, return original response
-            return response_text
+            # Strip any JSON artifacts before returning to TTS
+            import re as _re
+            cleaned = _re.sub(r'\{[^{}]*\}', '', response_text).strip()
+            return cleaned if cleaned else response_text
 
 
 # ---------------------------------------------------------------------------
