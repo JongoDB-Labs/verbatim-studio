@@ -160,8 +160,11 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
 
     async def _stream_progress():
         import asyncio
+        import threading
 
         dest_dir = _tts_model_dir(model_id)
+        repo_id = entry["repo"]
+        total_bytes = entry["size_bytes"]
 
         yield f"data: {json.dumps({'status': 'starting', 'model_id': model_id})}\n\n"
 
@@ -169,35 +172,68 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
             try:
                 from huggingface_hub import snapshot_download
             except ImportError:
-                yield f"data: {json.dumps({'status': 'error', 'error': 'huggingface-hub is not installed. Install with: pip install huggingface-hub'})}\n\n"
+                yield f"data: {json.dumps({'status': 'error', 'error': 'huggingface-hub is not installed'})}\n\n"
                 return
 
-            repo_id = entry["repo"]
-            total_bytes = entry["size_bytes"]
+            # Track download progress via a shared state dict
+            progress_state = {"downloaded": 0, "total": total_bytes, "done": False, "error": None, "path": None}
+            lock = threading.Lock()
 
-            label = entry["label"]
-            yield f"data: {json.dumps({'status': 'progress', 'model_id': model_id, 'phase': 'download', 'message': f'Downloading {label}...'})}\n\n"
+            def _do_download():
+                try:
+                    result = snapshot_download(
+                        repo_id=repo_id,
+                        local_dir=str(dest_dir),
+                        local_dir_use_symlinks=False,
+                    )
+                    with lock:
+                        progress_state["path"] = result
+                        progress_state["done"] = True
+                except Exception as exc:
+                    with lock:
+                        progress_state["error"] = str(exc)
+                        progress_state["done"] = True
 
-            # snapshot_download is blocking — run in a thread
             loop = asyncio.get_event_loop()
+            loop.run_in_executor(None, _do_download)
 
-            def _do_download() -> str:
-                return snapshot_download(
-                    repo_id=repo_id,
-                    local_dir=str(dest_dir),
-                    local_dir_use_symlinks=False,
-                )
+            # Poll progress by checking directory size
+            last_pct = -1
+            while True:
+                await asyncio.sleep(1)
 
-            result_path = await loop.run_in_executor(None, _do_download)
+                with lock:
+                    done = progress_state["done"]
+                    error = progress_state["error"]
+                    result_path = progress_state["path"]
 
-            # Verify download
+                # Estimate progress from disk usage
+                downloaded = 0
+                if dest_dir.exists():
+                    try:
+                        downloaded = sum(f.stat().st_size for f in dest_dir.rglob("*") if f.is_file())
+                    except OSError:
+                        pass
+
+                pct = int(downloaded * 100 / total_bytes) if total_bytes else 0
+                pct = min(pct, 99 if not done else 100)
+
+                if pct != last_pct:
+                    last_pct = pct
+                    yield f"data: {json.dumps({'status': 'progress', 'model_id': model_id, 'downloaded_bytes': downloaded, 'total_bytes': total_bytes})}\n\n"
+
+                if done:
+                    break
+
+            if error:
+                raise Exception(error)
+
             if not dest_dir.exists() or not any(dest_dir.iterdir()):
                 yield f"data: {json.dumps({'status': 'error', 'error': 'Download completed but model directory is empty'})}\n\n"
                 return
 
             yield f"data: {json.dumps({'status': 'complete', 'model_id': model_id, 'path': str(result_path)})}\n\n"
 
-            # Auto-activate if no TTS model is currently active
             if _get_active_tts_model() is None:
                 _set_active_tts_model(model_id)
                 yield f"data: {json.dumps({'status': 'activated', 'model_id': model_id})}\n\n"

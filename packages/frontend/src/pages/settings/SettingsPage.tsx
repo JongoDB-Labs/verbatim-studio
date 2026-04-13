@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate } from '@/lib/api';
+import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate } from '@/lib/api';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useKeybindingStore, DEFAULT_ACTIONS, formatCombo, type KeyCombo, type ActionCategory } from '@/stores/keybindingStore';
 import { StorageTypeSelector } from '@/components/storage/StorageTypeSelector';
@@ -288,7 +288,10 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   // TTS model state
   const [ttsModels, setTtsModels] = useState<{ id: string; label: string; description: string; size_bytes: number; ram_gb: number; downloaded: boolean; active: boolean }[]>([]);
   const [ttsDownloading, setTtsDownloading] = useState<string | null>(null);
+  const [ttsDownloadedBytes, setTtsDownloadedBytes] = useState(0);
+  const [ttsTotalBytes, setTtsTotalBytes] = useState(0);
   const [ttsError, setTtsError] = useState<string | null>(null);
+  const ttsDownloadAbortRef = useRef<{ abort: () => void } | null>(null);
 
   // Hardware info (for memory-aware model recommendations)
   const [hardwareInfo, setHardwareInfo] = useState<HardwareInfo | null>(null);
@@ -809,17 +812,38 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     api.voice.ttsModels().then(setTtsModels).catch(console.error);
   }, []);
 
-  const handleDownloadTtsModel = useCallback(async (modelId: string) => {
+  const handleDownloadTtsModel = useCallback((modelId: string, modelName?: string) => {
+    const { startDownload, updateProgress, completeDownload, failDownload } = useDownloadStore.getState();
+
     setTtsDownloading(modelId);
+    setTtsDownloadedBytes(0);
+    setTtsTotalBytes(0);
     setTtsError(null);
-    try {
-      await api.voice.downloadTtsModel(modelId);
-      refreshTtsModels();
-    } catch (err) {
-      setTtsError(err instanceof Error ? err.message : 'Download failed');
-    } finally {
-      setTtsDownloading(null);
-    }
+
+    // Track in global store
+    startDownload(modelId, 'tts', modelName || modelId);
+
+    const handle = api.voice.downloadTtsModel(modelId, (event: TtsModelDownloadEvent) => {
+      if (event.status === 'progress') {
+        const downloaded = event.downloaded_bytes || 0;
+        const total = event.total_bytes || 0;
+        setTtsDownloadedBytes(downloaded);
+        setTtsTotalBytes(total);
+        updateProgress(modelId, downloaded, total);
+      } else if (event.status === 'complete' || event.status === 'activated') {
+        setTtsDownloading(null);
+        setTtsDownloadedBytes(0);
+        setTtsTotalBytes(0);
+        completeDownload(modelId);
+        refreshTtsModels();
+      } else if (event.status === 'error') {
+        setTtsError(event.error || 'Download failed');
+        setTtsDownloading(null);
+        failDownload(modelId, event.error || 'Download failed');
+      }
+    });
+
+    ttsDownloadAbortRef.current = handle;
   }, [refreshTtsModels]);
 
   const handleActivateTtsModel = useCallback(async (modelId: string) => {
@@ -3332,7 +3356,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                     <div className="flex items-center gap-2 flex-wrap sm:shrink-0">
                       {!model.downloaded && ttsDownloading !== model.id && (
                         <button
-                          onClick={() => handleDownloadTtsModel(model.id)}
+                          onClick={() => handleDownloadTtsModel(model.id, model.label)}
                           className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
                         >
                           Download
@@ -3350,14 +3374,41 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                     </div>
                   </div>
 
-                  {/* Download spinner */}
+                  {/* Download progress bar */}
                   {ttsDownloading === model.id && (
-                    <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                      </svg>
-                      <span>Downloading... This may take a few minutes.</span>
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <span>Downloading...</span>
+                        <div className="flex items-center gap-3">
+                          <span>
+                            {ttsTotalBytes > 0
+                              ? `${formatBytes(ttsDownloadedBytes)} / ${formatBytes(ttsTotalBytes)}`
+                              : 'Starting...'}
+                          </span>
+                          <button
+                            onClick={() => {
+                              ttsDownloadAbortRef.current?.abort();
+                              setTtsDownloading(null);
+                              setTtsDownloadedBytes(0);
+                              setTtsTotalBytes(0);
+                            }}
+                            className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                      <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                          style={{ width: ttsTotalBytes > 0 ? `${Math.min(100, (ttsDownloadedBytes / ttsTotalBytes) * 100)}%` : '0%' }}
+                        />
+                      </div>
+                      {ttsTotalBytes > 0 && (
+                        <div className="text-right text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                          {Math.round((ttsDownloadedBytes / ttsTotalBytes) * 100)}%
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

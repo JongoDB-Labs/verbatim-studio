@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 
-export type ModelType = 'ai' | 'whisper' | 'ocr' | 'diarization';
+export type ModelType = 'ai' | 'whisper' | 'ocr' | 'diarization' | 'tts';
 
 export interface DownloadProgress {
   modelId: string;

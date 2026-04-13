@@ -841,6 +841,16 @@ export interface AIModelDownloadEvent {
   total_bytes?: number;
 }
 
+export interface TtsModelDownloadEvent {
+  status: 'starting' | 'progress' | 'complete' | 'activated' | 'error';
+  downloaded_bytes?: number;
+  total_bytes?: number;
+  percent?: number;
+  message?: string;
+  model_id?: string;
+  error?: string;
+}
+
 // OCR Model Types
 export interface OCRModel {
   id: string;
@@ -3077,11 +3087,49 @@ class ApiClient {
         '/api/voice/tts/models',
       ),
 
-    downloadTtsModel: (modelId: string) =>
-      this.request<{ status: string }>(
-        `/api/voice/tts/models/${modelId}/download`,
-        { method: 'POST' },
-      ),
+    downloadTtsModel: (modelId: string, onEvent: (event: TtsModelDownloadEvent) => void): { abort: () => void } => {
+      const abortController = new AbortController();
+
+      fetch(`${this.baseUrl}/api/voice/tts/models/${modelId}/download`, {
+        method: 'POST',
+        signal: abortController.signal,
+      }).then(async (response) => {
+        if (!response.ok) {
+          onEvent({ status: 'error', error: `HTTP ${response.status}` });
+          return;
+        }
+        const reader = response.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event = JSON.parse(line.slice(6)) as TtsModelDownloadEvent;
+                onEvent(event);
+              } catch {
+                // skip malformed lines
+              }
+            }
+          }
+        }
+      }).catch((err) => {
+        if (err.name !== 'AbortError') {
+          onEvent({ status: 'error', error: err.message });
+        }
+      });
+
+      return { abort: () => abortController.abort() };
+    },
 
     activateTtsModel: (modelId: string) =>
       this.request<{ status: string }>(
