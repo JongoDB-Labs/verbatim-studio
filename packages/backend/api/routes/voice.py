@@ -62,6 +62,7 @@ class CreateSessionRequest(BaseModel):
     document_ids: list[str] = []
     project_ids: list[str] = []
     web_search_enabled: bool = False
+    file_context: str | None = None
 
 
 class VoiceSessionResponse(BaseModel):
@@ -538,8 +539,14 @@ async def create_voice_session(
             logger.warning("Voice context: could not load document %s: %s", doc_id, e)
             continue
 
+    # Add uploaded file content
+    if body and body.file_context:
+        label = chr(65 + label_index)
+        context_parts.append(f"=== Uploaded File {label} ===\n{body.file_context}\n")
+        label_index += 1
+
     # Auto-inject project context when no manual attachments are provided
-    has_manual_attachments = (body and (body.recording_ids or body.document_ids))
+    has_manual_attachments = (body and (body.recording_ids or body.document_ids or body.file_context))
     if active_project_ids and not has_manual_attachments:
         try:
             # Load all recordings with transcripts from scoped projects
