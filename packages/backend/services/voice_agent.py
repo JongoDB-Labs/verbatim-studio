@@ -434,8 +434,32 @@ class VerbatimVoiceAgent:
 
         logger.info("Voice STT result: %s", user_text[:100])
 
-        # Step 2: LLM response (with tool call handling)
-        self._conversation.append({"role": "user", "content": user_text})
+        # Step 2a: Auto web search (same as text chat — server-side, not tool-based)
+        web_context = ""
+        if self.web_search_enabled:
+            try:
+                from services.web_search import (
+                    extract_search_query,
+                    create_search_provider,
+                    format_results_for_context,
+                    load_web_search_config,
+                )
+                search_query = extract_search_query(user_text)
+                if search_query:
+                    config = load_web_search_config()
+                    provider = create_search_provider(config)
+                    results = await provider.search(search_query.text)
+                    if results:
+                        web_context = format_results_for_context(results)
+                        logger.info("Voice web search: %d results for '%s'", len(results), search_query.text)
+            except Exception:
+                logger.warning("Voice web search failed", exc_info=True)
+
+        # Step 2b: LLM response (with optional tool calls)
+        user_msg = user_text
+        if web_context:
+            user_msg += f"\n\n=== Web Search Results ===\n{web_context}"
+        self._conversation.append({"role": "user", "content": user_msg})
         response_text = await self.llm.chat(self._conversation)
         self._conversation.append({"role": "assistant", "content": response_text})
 
