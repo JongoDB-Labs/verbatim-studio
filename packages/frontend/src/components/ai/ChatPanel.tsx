@@ -236,18 +236,22 @@ export function ChatPanel({
         onToggleVoice={undefined}
       />
       {voiceMode ? (
-        <VoiceChatPanel onClose={(voiceMessages?: VoiceTranscriptMessage[]) => {
-          setVoiceMode(false);
-          // Inject voice conversation into chat history
-          if (voiceMessages && voiceMessages.length > 0) {
-            const chatMessages: ChatMessage[] = voiceMessages.map((m, i) => ({
-              id: `voice-${Date.now()}-${i}`,
-              role: m.role,
-              content: m.content,
-            }));
-            setMessages((prev) => [...prev, ...chatMessages]);
-          }
-        }} />
+        <VoiceChatPanel
+          onClose={(voiceMessages?: VoiceTranscriptMessage[]) => {
+            setVoiceMode(false);
+            // Inject voice conversation into chat history
+            if (voiceMessages && voiceMessages.length > 0) {
+              const chatMessages: ChatMessage[] = voiceMessages.map((m, i) => ({
+                id: `voice-${Date.now()}-${i}`,
+                role: m.role,
+                content: m.content,
+              }));
+              setMessages((prev) => [...prev, ...chatMessages]);
+            }
+          }}
+          recordingIds={attached.filter(a => a.type === 'transcript' && a.recordingId).map(a => a.recordingId!)}
+          documentIds={attached.filter(a => a.type === 'document' && a.documentId).map(a => a.documentId!)}
+        />
       ) : (
         <>
           <ChatMessages

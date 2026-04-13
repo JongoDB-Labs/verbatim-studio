@@ -6,13 +6,19 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.dependencies import get_active_project_ids
 from core.config import settings
 from core.tts_catalog import TTS_CATALOG
+from persistence.database import get_db
+from persistence.models import Document, Recording, Segment, Transcript
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -52,6 +58,9 @@ class CreateSessionRequest(BaseModel):
     """Request body for creating a voice chat session."""
 
     voice: str | None = None
+    recording_ids: list[str] = []
+    document_ids: list[str] = []
+    project_ids: list[str] = []
 
 
 class VoiceSessionResponse(BaseModel):
@@ -403,18 +412,45 @@ async def _start_agent_in_room(
         logger.info("Agent session ended for room %s", room_name)
 
 
+async def _get_transcript_text(db: AsyncSession, transcript_id: str) -> str:
+    """Get full transcript text from segments (mirrors ai.py helper)."""
+    result = await db.execute(
+        select(Segment)
+        .where(Segment.transcript_id == transcript_id)
+        .order_by(Segment.segment_index)
+    )
+    segments = result.scalars().all()
+
+    if not segments:
+        return ""
+
+    lines = []
+    for seg in segments:
+        if seg.speaker:
+            lines.append(f"[{seg.speaker}]: {seg.text}")
+        else:
+            lines.append(seg.text)
+
+    return "\n".join(lines)
+
+
 @router.post("/sessions", response_model=VoiceSessionResponse)
 async def create_voice_session(
     body: CreateSessionRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    active_project_ids: Annotated[list[str], Depends(get_active_project_ids)] = [],
 ) -> VoiceSessionResponse:
     """Create a new voice chat session.
 
     Generates a unique LiveKit room, creates access tokens for both the
     user and the agent, and starts the agent in the room as a background
-    task.
+    task. Loads attached transcripts, documents, and project context into
+    the agent's system prompt.
 
     Args:
-        body: Optional request body with voice selection.
+        body: Optional request body with voice selection and attachment IDs.
+        db: Database session for loading context.
+        active_project_ids: Project IDs from X-Active-Project header.
 
     Returns:
         VoiceSessionResponse with the user's token, LiveKit URL, and room name.
@@ -449,6 +485,114 @@ async def create_voice_session(
             status_code=503,
             detail=f"Failed to create voice agent: {e}",
         )
+
+    # ── Load attached context ─────────────────────────────────────────
+    context_parts: list[str] = []
+    label_index = 0
+
+    # Load explicitly-attached transcripts
+    for recording_id in (body.recording_ids if body else []):
+        label = chr(65 + label_index)  # A, B, C, ...
+        try:
+            recording_result = await db.execute(
+                select(Recording).where(Recording.id == recording_id)
+            )
+            recording = recording_result.scalar_one_or_none()
+            if not recording:
+                logger.warning("Voice context: recording not found: %s", recording_id)
+                continue
+
+            transcript_result = await db.execute(
+                select(Transcript).where(Transcript.recording_id == recording_id)
+            )
+            transcript = transcript_result.scalar_one_or_none()
+            if not transcript:
+                logger.warning("Voice context: no transcript for recording: %s", recording_id)
+                continue
+
+            text = await _get_transcript_text(db, transcript.id)
+            if text:
+                title = recording.title
+                context_parts.append(f"=== Transcript {label}: {title} ===\n{text}\n")
+                label_index += 1
+        except Exception as e:
+            logger.warning("Voice context: could not load recording %s: %s", recording_id, e)
+            continue
+
+    # Load explicitly-attached documents
+    for doc_id in (body.document_ids if body else []):
+        label = chr(65 + label_index)
+        try:
+            doc = await db.get(Document, doc_id)
+            if doc and doc.extracted_text:
+                context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_text}\n")
+                label_index += 1
+            elif doc and doc.extracted_markdown:
+                context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_markdown}\n")
+                label_index += 1
+            else:
+                logger.warning("Voice context: document %s has no extracted text", doc_id)
+        except Exception as e:
+            logger.warning("Voice context: could not load document %s: %s", doc_id, e)
+            continue
+
+    # Auto-inject project context when no manual attachments are provided
+    has_manual_attachments = (body and (body.recording_ids or body.document_ids))
+    if active_project_ids and not has_manual_attachments:
+        try:
+            # Load all recordings with transcripts from scoped projects
+            rec_result = await db.execute(
+                select(Recording).where(
+                    Recording.project_id.in_(active_project_ids),
+                    Recording.is_archived == False,  # noqa: E712
+                )
+            )
+            project_recordings = rec_result.scalars().all()
+
+            for recording in project_recordings:
+                label = chr(65 + label_index)
+                try:
+                    transcript_result = await db.execute(
+                        select(Transcript).where(Transcript.recording_id == recording.id)
+                    )
+                    transcript = transcript_result.scalar_one_or_none()
+                    if not transcript:
+                        continue
+                    text = await _get_transcript_text(db, transcript.id)
+                    if text:
+                        context_parts.append(f"=== Transcript {label}: {recording.title} ===\n{text}\n")
+                        label_index += 1
+                except Exception as e:
+                    logger.warning("Voice auto-context: could not load transcript for recording %s: %s", recording.id, e)
+
+            # Load all documents from scoped projects
+            doc_result = await db.execute(
+                select(Document).where(
+                    Document.project_id.in_(active_project_ids),
+                    Document.is_archived == False,  # noqa: E712
+                )
+            )
+            project_documents = doc_result.scalars().all()
+
+            for doc in project_documents:
+                label = chr(65 + label_index)
+                if doc.extracted_text:
+                    context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_text}\n")
+                    label_index += 1
+                elif doc.extracted_markdown:
+                    context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_markdown}\n")
+                    label_index += 1
+
+            if label_index > 0:
+                logger.info("Voice project auto-context: loaded %d item(s) from %d project(s)", label_index, len(active_project_ids))
+        except Exception as e:
+            logger.warning("Voice project auto-context failed: %s", e)
+
+    # Inject loaded context into the agent's system prompt
+    agent.set_context(context_parts)
+
+    if context_parts:
+        logger.info("Voice session context: %d item(s) attached", len(context_parts))
 
     # Start the agent in the room as a background task
     task = asyncio.create_task(

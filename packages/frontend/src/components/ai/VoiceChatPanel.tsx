@@ -24,10 +24,12 @@ export interface VoiceTranscriptMessage {
 
 interface VoiceChatPanelProps {
   onClose: (messages?: VoiceTranscriptMessage[]) => void;
+  recordingIds?: string[];
+  documentIds?: string[];
 }
 
 
-export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
+export function VoiceChatPanel({ onClose, recordingIds, documentIds }: VoiceChatPanelProps) {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
@@ -120,7 +122,11 @@ export function VoiceChatPanel({ onClose }: VoiceChatPanelProps) {
     setState('connecting');
 
     try {
-      const session = await api.voice.createSession(selectedVoice || undefined);
+      const session = await api.voice.createSession(
+        selectedVoice || undefined,
+        recordingIds,
+        documentIds,
+      );
 
       const room = new Room();
       roomRef.current = room;

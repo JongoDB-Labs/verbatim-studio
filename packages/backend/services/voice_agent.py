@@ -370,6 +370,17 @@ class VerbatimVoiceAgent:
         ]
         self._tool_context: Any = None
 
+    def set_context(self, context_parts: list[str]) -> None:
+        """Inject attached transcript/document content into the system prompt."""
+        if not context_parts:
+            return
+        context_text = (
+            f"\n\nYou have access to {len(context_parts)} attached item(s):\n\n"
+            + "\n".join(context_parts)
+        )
+        # Append to the system message
+        self._conversation[0]["content"] += context_text
+
     def set_tool_context(self, ctx: Any) -> None:
         """Set the ToolContext for tool execution during this session.
 
