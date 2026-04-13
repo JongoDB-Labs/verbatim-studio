@@ -13,6 +13,14 @@ class LiveKitManager extends EventEmitter {
   private apiKey = 'verbatim';
   private apiSecret = 'verbatim-local-dev-secret-key-min-32-chars!!';
 
+  constructor() {
+    super();
+    // Prevent unhandled 'error' events from crashing the process
+    this.on('error', (err: Error) => {
+      console.warn('[LiveKit] Error (non-fatal):', err.message);
+    });
+  }
+
   getUrl(): string {
     return `ws://127.0.0.1:${this.port}`;
   }
@@ -37,7 +45,16 @@ class LiveKitManager extends EventEmitter {
     const binaryPath = this.getLiveKitBinaryPath();
     console.log(`[LiveKit] Binary path: ${binaryPath}`);
 
-    if (app.isPackaged && !fs.existsSync(binaryPath)) {
+    // In dev mode, check if the binary is available in PATH
+    if (!app.isPackaged) {
+      const { execFileSync } = require('child_process');
+      try {
+        execFileSync(process.platform === 'win32' ? 'where' : 'which', [binaryPath], { stdio: 'ignore' });
+      } catch {
+        console.log('[LiveKit] Binary not found in PATH — voice assistant disabled. Install with: brew install livekit');
+        return;
+      }
+    } else if (!fs.existsSync(binaryPath)) {
       throw new Error(`LiveKit binary not found at ${binaryPath}`);
     }
 
