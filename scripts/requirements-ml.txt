@@ -49,8 +49,10 @@ sentence-transformers==3.4.1
 
 # =============================================================================
 # Voice assistant (TTS + LiveKit)
+# NOTE: mlx-audio requires huggingface_hub>=1.0 and transformers>=5.0 which
+# conflict with whisperx pins above. Voice deps are installed separately
+# via the app's Settings > TTS model download flow, not during CI build.
 # =============================================================================
-mlx-audio>=0.4.0
 livekit-api>=1.1.0
 livekit-agents>=1.5.0
 livekit-plugins-silero>=1.5.0
