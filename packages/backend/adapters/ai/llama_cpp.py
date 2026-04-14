@@ -399,12 +399,13 @@ class LlamaCppAIService(IAIService):
         # Force clean state before each call (prevents Mamba-2 state corruption)
         self._reset_state()
 
-        stream = await asyncio.to_thread(
-            self._llm.create_chat_completion,
-            **kwargs,
+        loop = asyncio.get_running_loop()
+        stream = await loop.run_in_executor(
+            self._llm_executor,
+            lambda: self._llm.create_chat_completion(**kwargs),
         )
 
-        # Iterate over the synchronous generator using to_thread for each chunk
+        # Iterate over the synchronous generator using the SAME executor
         def _next_chunk(iterator):
             try:
                 return next(iterator)
@@ -412,7 +413,6 @@ class LlamaCppAIService(IAIService):
                 return None
 
         while True:
-            loop = asyncio.get_running_loop()
             chunk = await loop.run_in_executor(self._llm_executor, _next_chunk, stream)
             if chunk is None:
                 break
