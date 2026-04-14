@@ -618,6 +618,22 @@ async def create_voice_session(
     )
     agent.set_tool_context(tool_ctx)
 
+    # Warm up STT (Whisper) with a tiny silent clip
+    try:
+        import tempfile
+        import wave as _wave
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            with _wave.open(tmp.name, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(b'\x00' * 3200)
+            await agent.stt._engine.transcribe(tmp.name)
+            Path(tmp.name).unlink(missing_ok=True)
+        logger.info("STT model preloaded for voice session")
+    except Exception:
+        logger.debug("STT preload skipped")
+
     # Cancel any stale sessions before starting a new one
     for old_room, old_task in list(_active_sessions.items()):
         if not old_task.done():

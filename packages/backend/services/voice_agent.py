@@ -805,19 +805,22 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     agent = VerbatimVoiceAgent(stt=stt, llm=llm, tts=tts, web_search_enabled=web_search_enabled)
     logger.info("VerbatimVoiceAgent created successfully")
 
-    # Preload LLM and TTS models so first response is fast
+    # Preload ALL models so first response is fast
+    # 1. LLM — force load into memory (not just config)
     try:
-        from api.routes.ai import _ensure_active_model_loaded
-        _ensure_active_model_loaded()
+        ai_service._ensure_loaded()
         logger.info("LLM model preloaded for voice session")
     except Exception:
-        logger.debug("LLM preload skipped (will load on first call)")
+        logger.debug("LLM preload skipped")
 
+    # 2. TTS — force load into memory
     try:
         tts_service._ensure_loaded()
         logger.info("TTS model preloaded for voice session")
     except Exception:
-        logger.debug("TTS preload skipped (will load on first call)")
+        logger.debug("TTS preload skipped")
+
+    # 3. STT preload happens in the voice session endpoint (async context)
 
     return agent
 
