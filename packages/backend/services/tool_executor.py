@@ -56,21 +56,29 @@ class ToolExecutor:
         current_messages = list(messages)
 
         while True:
-            # Collect the full LLM response while remembering individual chunks
+            # Stream tokens in real-time while accumulating for tool call detection
             full_response = ""
-            chunk_contents: list[str] = []
+            streamed_up_to = 0
+
             async for chunk in ctx.ai_service.chat_stream(current_messages, options):
                 if chunk.content:
                     full_response += chunk.content
-                    chunk_contents.append(chunk.content)
 
-            # Check for a tool call in the response
+                    # Stream tokens immediately unless we detect a tool call starting
+                    # Tool calls start with { or <tool_call> — hold back once detected
+                    pending = full_response[streamed_up_to:]
+                    if '{' not in pending and '<tool_call>' not in pending:
+                        yield {"token": chunk.content}
+                        streamed_up_to = len(full_response)
+
+            # Check for a tool call in the full response
             parsed = parse_tool_call(full_response)
 
             if parsed is None:
-                # No tool call — stream each chunk as a separate token event
-                for content in chunk_contents:
-                    yield {"token": content}
+                # No tool call — stream any remaining unstreamed content
+                remaining = full_response[streamed_up_to:]
+                if remaining:
+                    yield {"token": remaining}
                 yield {"done": True, "artifacts": artifacts}
                 return
 
