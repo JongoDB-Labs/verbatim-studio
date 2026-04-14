@@ -50,9 +50,10 @@ sentence-transformers==3.4.1
 # =============================================================================
 # Voice assistant (TTS + LiveKit)
 # =============================================================================
-mlx-audio[tts]>=0.4.0
+mlx-audio>=0.4.0
 livekit-api>=1.1.0
-livekit-agents[silero]>=1.5.0
+livekit-agents>=1.5.0
+livekit-plugins-silero>=1.5.0
 
 # =============================================================================
 # Other ML dependencies with strict pins
