@@ -526,6 +526,10 @@ class VerbatimVoiceAgent:
             full_response += chunk
             sentence_buffer += chunk
 
+            # Stream each token to the transcript display
+            if transcript_fn and chunk.strip():
+                await transcript_fn("assistant_token", chunk)
+
             # Check for complete sentences
             sentence_match = re.search(r'[.!?]\s', sentence_buffer)
             if sentence_match:
@@ -571,9 +575,9 @@ class VerbatimVoiceAgent:
                     except Exception:
                         logger.warning("TTS failed for tool result: %s", sentence[:50])
 
-        # Send full transcript
-        if transcript_fn and (response_text or full_response):
-            await transcript_fn("assistant", response_text or full_response)
+        # Signal end of assistant response
+        if transcript_fn:
+            await transcript_fn("assistant_done", "")
 
         return user_text, response_text or full_response
 

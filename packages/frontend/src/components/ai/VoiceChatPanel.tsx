@@ -143,16 +143,44 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
       room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
 
+      // Track streaming assistant response
+      let streamingAssistant = '';
+
       room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
         try {
           const text = new TextDecoder().decode(payload);
           const data = JSON.parse(text);
-          if (data.type === 'transcript' && data.role && data.content) {
-            // Accumulate for chat history
-            voiceMessagesRef.current.push({ role: data.role, content: data.content });
-            // Show in live transcript
-            const prefix = data.role === 'user' ? 'You' : 'Max';
-            setTranscript((prev) => [...prev, `${prefix}: ${data.content}`]);
+
+          if (data.type === 'transcript') {
+            if (data.role === 'user') {
+              // User message — show immediately
+              voiceMessagesRef.current.push({ role: 'user', content: data.content });
+              setTranscript((prev) => [...prev, `You: ${data.content}`]);
+              streamingAssistant = '';
+            } else if (data.role === 'assistant_token') {
+              // Streaming token — append to current assistant line
+              streamingAssistant += data.content;
+              setTranscript((prev) => {
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                if (lastIdx >= 0 && updated[lastIdx].startsWith('Max: ')) {
+                  updated[lastIdx] = `Max: ${streamingAssistant}`;
+                } else {
+                  updated.push(`Max: ${streamingAssistant}`);
+                }
+                return updated;
+              });
+            } else if (data.role === 'assistant_done') {
+              // Finalize — save to chat history
+              if (streamingAssistant) {
+                voiceMessagesRef.current.push({ role: 'assistant', content: streamingAssistant });
+              }
+              streamingAssistant = '';
+            } else if (data.role === 'assistant') {
+              // Legacy full message (tool results, etc.)
+              voiceMessagesRef.current.push({ role: 'assistant', content: data.content });
+              setTranscript((prev) => [...prev, `Max: ${data.content}`]);
+            }
           }
         } catch {
           // Non-JSON data, ignore

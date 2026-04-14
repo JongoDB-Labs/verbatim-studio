@@ -180,9 +180,9 @@ class Qwen3TTSService(ITTSService):
         """Synthesize via Kokoro 82M — ultra-fast."""
         results = list(self._model.generate(
             text=text,
-            voice="am_michael",  # American male voice
-            lang_code="a",       # 'a' = American English
-            speed=1.0,
+            voice="bm_fable",    # British male voice
+            lang_code="b",       # 'b' = British English
+            speed=1.1,
         ))
 
         audio = results[0].audio
