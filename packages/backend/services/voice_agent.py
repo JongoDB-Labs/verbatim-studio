@@ -554,11 +554,12 @@ class VerbatimVoiceAgent:
             if clean:
                 await tts_queue.put(clean)
 
-        # Signal TTS worker to finish and wait
-        await tts_queue.put(None)
-        await tts_task
-
         self._conversation.append({"role": "assistant", "content": full_response})
+
+        # Signal assistant response complete BEFORE waiting for TTS
+        # This ensures the transcript is saved even if user disconnects during TTS
+        if transcript_fn:
+            await transcript_fn("assistant_done", "")
 
         # Handle tool calls in the complete response
         response_text = await self._handle_tool_calls(full_response)
@@ -575,9 +576,9 @@ class VerbatimVoiceAgent:
                     except Exception:
                         logger.warning("TTS failed for tool result: %s", sentence[:50])
 
-        # Signal end of assistant response
-        if transcript_fn:
-            await transcript_fn("assistant_done", "")
+        # Wait for TTS to finish (but transcript is already saved)
+        await tts_queue.put(None)
+        await tts_task
 
         return user_text, response_text or full_response
 

@@ -42,6 +42,7 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
   const roomRef = useRef<Room | null>(null);
   const audioElementsRef = useRef<HTMLAudioElement[]>([]);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const streamingAssistantRef = useRef<string>('');
   const voiceMessagesRef = useRef<VoiceTranscriptMessage[]>([]);
 
   const [missingDeps, setMissingDeps] = useState<string[]>([]);
@@ -143,9 +144,6 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
       room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
 
-      // Track streaming assistant response
-      let streamingAssistant = '';
-
       room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
         try {
           const text = new TextDecoder().decode(payload);
@@ -153,31 +151,28 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
 
           if (data.type === 'transcript') {
             if (data.role === 'user') {
-              // User message — show immediately
               voiceMessagesRef.current.push({ role: 'user', content: data.content });
               setTranscript((prev) => [...prev, `You: ${data.content}`]);
-              streamingAssistant = '';
+              streamingAssistantRef.current = '';
             } else if (data.role === 'assistant_token') {
-              // Streaming token — append to current assistant line
-              streamingAssistant += data.content;
+              streamingAssistantRef.current += data.content;
+              const currentText = streamingAssistantRef.current;
               setTranscript((prev) => {
                 const updated = [...prev];
                 const lastIdx = updated.length - 1;
                 if (lastIdx >= 0 && updated[lastIdx].startsWith('Max: ')) {
-                  updated[lastIdx] = `Max: ${streamingAssistant}`;
+                  updated[lastIdx] = `Max: ${currentText}`;
                 } else {
-                  updated.push(`Max: ${streamingAssistant}`);
+                  updated.push(`Max: ${currentText}`);
                 }
                 return updated;
               });
             } else if (data.role === 'assistant_done') {
-              // Finalize — save to chat history
-              if (streamingAssistant) {
-                voiceMessagesRef.current.push({ role: 'assistant', content: streamingAssistant });
+              if (streamingAssistantRef.current) {
+                voiceMessagesRef.current.push({ role: 'assistant', content: streamingAssistantRef.current });
               }
-              streamingAssistant = '';
+              streamingAssistantRef.current = '';
             } else if (data.role === 'assistant') {
-              // Legacy full message (tool results, etc.)
               voiceMessagesRef.current.push({ role: 'assistant', content: data.content });
               setTranscript((prev) => [...prev, `Max: ${data.content}`]);
             }
@@ -217,6 +212,12 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
     });
     audioElementsRef.current = [];
     setState('idle');
+
+    // Save any in-progress streaming assistant text
+    if (streamingAssistantRef.current) {
+      voiceMessagesRef.current.push({ role: 'assistant', content: streamingAssistantRef.current });
+      streamingAssistantRef.current = '';
+    }
 
     // Pass accumulated voice messages to ChatPanel on close
     if (passMessages && voiceMessagesRef.current.length > 0) {
