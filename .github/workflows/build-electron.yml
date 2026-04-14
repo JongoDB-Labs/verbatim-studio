@@ -156,5 +156,9 @@ jobs:
       - name: Build frontend
         run: pnpm --filter @verbatim/frontend build:ci
 
+      - name: Download LiveKit Server
+        shell: bash
+        run: bash scripts/download-livekit.sh
+
       - name: Build Electron
         run: pnpm --filter @verbatim/electron build

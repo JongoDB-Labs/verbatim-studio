@@ -96,6 +96,13 @@
       {
         "from": "../../scripts/requirements-ml-windows.txt",
         "to": "requirements-ml-windows.txt"
+      },
+      {
+        "from": "../../build/resources/bin",
+        "to": "bin",
+        "filter": [
+          "livekit-server*"
+        ]
       }
     ],
     "mac": {

@@ -29,6 +29,10 @@ extraResources:
     to: requirements-ml.txt
   - from: ../../scripts/requirements-ml-windows.txt
     to: requirements-ml-windows.txt
+  - from: ../../build/resources/bin
+    to: bin
+    filter:
+      - "livekit-server*"
   # EXCLUDED from update builds (all persist in user data dir):
   # - python (~1.2-1.5GB) — migrated on first launch
   # - ffmpeg (~50MB) — migrated on first launch
