@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 import { useProjectStore } from '@/stores/projectStore';
 import { ChatHeader } from './ChatHeader';
@@ -42,6 +42,7 @@ export function ChatPanel({
   const [generalMode, setGeneralMode] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const { selectedProjects } = useProjectStore();
 
   const handleSend = useCallback(async (message: string) => {
@@ -56,6 +57,11 @@ export function ChatPanel({
     setStreamingWebSources([]);
     setToolActivities([]);
     setStreamingArtifacts([]);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    let fullContent = '';
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -74,8 +80,6 @@ export function ChatPanel({
           fileTexts.push(`=== ${a.title} ===\n${a.fileText}`);
         }
       }
-
-      let fullContent = '';
       let currentWebSources: Array<{ title: string; url: string }> | undefined;
 
       for await (const token of api.ai.chatMultiStream({
@@ -88,7 +92,7 @@ export function ChatPanel({
         temperature: 0.7,
         general_mode: generalMode || undefined,
         web_search_enabled: webSearchEnabled || undefined,
-      })) {
+      }, controller.signal)) {
         if (token.error) {
           throw new Error(token.error);
         }
@@ -139,14 +143,28 @@ export function ChatPanel({
         }
       }
     } catch (error) {
-      console.error('Chat error:', error);
-      const errorMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      // Don't show error for user-initiated abort
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // Save whatever was streamed so far as the assistant message
+        if (fullContent) {
+          const partialMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: fullContent,
+          };
+          setMessages((prev) => [...prev, partialMessage]);
+        }
+      } else {
+        console.error('Chat error:', error);
+        const errorMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: 'Sorry, I encountered an error. Please try again.',
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      }
     } finally {
+      abortRef.current = null;
       setIsStreaming(false);
       setStreamingContent('');
       setStreamingWebSources([]);
@@ -279,6 +297,8 @@ export function ChatPanel({
               attachedCount={attached.length}
               onMicClick={() => setVoiceMode(true)}
               voiceActive={voiceMode}
+              isStreaming={isStreaming}
+              onStop={() => abortRef.current?.abort()}
             />
           </div>
         </>

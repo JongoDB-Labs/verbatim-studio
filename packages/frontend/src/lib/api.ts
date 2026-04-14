@@ -2190,7 +2190,7 @@ class ApiClient {
         { method: 'DELETE' }
       ),
 
-    chatMultiStream: (data: ChatMultiRequest): AsyncGenerator<ChatStreamToken> => {
+    chatMultiStream: (data: ChatMultiRequest, signal?: AbortSignal): AsyncGenerator<ChatStreamToken> => {
       const baseUrl = this.baseUrl;
       const selectedProjects = useProjectStore.getState().selectedProjects;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -2202,6 +2202,7 @@ class ApiClient {
           method: 'POST',
           headers,
           body: JSON.stringify(data),
+          signal,
         });
 
         if (!response.ok) {

@@ -7,9 +7,11 @@ interface ChatInputProps {
   attachedCount: number;
   onMicClick?: () => void;
   voiceActive?: boolean;
+  isStreaming?: boolean;
+  onStop?: () => void;
 }
 
-export function ChatInput({ onSend, onAttachClick, disabled, attachedCount, onMicClick, voiceActive }: ChatInputProps) {
+export function ChatInput({ onSend, onAttachClick, disabled, attachedCount, onMicClick, voiceActive, isStreaming, onStop }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -82,16 +84,30 @@ export function ChatInput({ onSend, onAttachClick, disabled, attachedCount, onMi
             </svg>
           </button>
         )}
-        <button
-          type="submit"
-          disabled={disabled || !input.trim()}
-          className="shrink-0 min-w-touch min-h-touch flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          aria-label="Send message"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-        </button>
+        {isStreaming && onStop ? (
+          <button
+            type="button"
+            onClick={onStop}
+            className="shrink-0 min-w-touch min-h-touch flex items-center justify-center rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+            aria-label="Stop generating"
+            title="Stop generating"
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={disabled || !input.trim()}
+            className="shrink-0 min-w-touch min-h-touch flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="Send message"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        )}
       </div>
     </form>
   );
