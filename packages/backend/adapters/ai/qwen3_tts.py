@@ -127,6 +127,8 @@ class Qwen3TTSService(ITTSService):
     def __init__(self, model_path: str) -> None:
         self._model_path = model_path
         self._model = None
+        # Detect engine from path or catalog
+        self._engine = "kokoro" if "kokoro" in model_path.lower() else "qwen3"
 
     # -- lazy loading -------------------------------------------------------
 
@@ -135,19 +137,19 @@ class Qwen3TTSService(ITTSService):
         if self._model is not None:
             return
 
-        logger.info("Loading Qwen3-TTS model from %s …", self._model_path)
+        logger.info("Loading TTS model (%s) from %s …", self._engine, self._model_path)
 
         try:
             from mlx_audio.tts.utils import load_model
         except ImportError as exc:
             raise ImportError(
-                "mlx-audio is required for Qwen3-TTS on Apple Silicon. "
+                "mlx-audio is required for TTS on Apple Silicon. "
                 "Install with: pip install 'mlx-audio[tts]'"
             ) from exc
 
         self._model = load_model(self._model_path)
 
-        logger.info("Qwen3-TTS model loaded successfully")
+        logger.info("TTS model loaded successfully (%s)", self._engine)
 
     # -- ITTSService implementation -----------------------------------------
 
@@ -169,9 +171,31 @@ class Qwen3TTSService(ITTSService):
         """Run TTS inference synchronously (called via ``asyncio.to_thread``)."""
         self._ensure_loaded()
 
-        # Use ICL (voice cloning) with a reference clip to ensure consistent
-        # voice across all generations. Without this, the Base model produces
-        # a different voice each time.
+        if self._engine == "kokoro":
+            return self._synthesize_kokoro(text)
+        else:
+            return self._synthesize_qwen3(text)
+
+    def _synthesize_kokoro(self, text: str) -> bytes:
+        """Synthesize via Kokoro 82M — ultra-fast."""
+        results = list(self._model.generate(
+            text=text,
+            voice="af_heart",  # Default Kokoro voice
+            lang_code="a",     # 'a' = American English
+            speed=1.0,
+        ))
+
+        audio = results[0].audio
+        audio_np = np.array(audio, dtype=np.float32)
+
+        if audio_np.max() > 0:
+            audio_np = audio_np / max(abs(audio_np.max()), abs(audio_np.min()))
+        audio_int16 = (audio_np * 32767).astype(np.int16)
+
+        return self._to_wav(audio_int16)
+
+    def _synthesize_qwen3(self, text: str) -> bytes:
+        """Synthesize via Qwen3-TTS 1.7B — higher quality with voice cloning."""
         ref_audio_path = str(Path(self._model_path).parent / "max_voice_ref.wav")
         ref_text = "I'm very sorry I can't be with you all today and such an important gathering. Some have speculated that I've seen more of the natural world than anyone else."
 
@@ -187,12 +211,9 @@ class Qwen3TTSService(ITTSService):
 
         results = list(self._model.generate(**generate_kwargs))
 
-        audio = results[0].audio  # mx.array waveform
-
-        # Convert mx.array to numpy, then to WAV bytes
+        audio = results[0].audio
         audio_np = np.array(audio, dtype=np.float32)
 
-        # Normalize and convert to int16
         if audio_np.max() > 0:
             audio_np = audio_np / max(abs(audio_np.max()), abs(audio_np.min()))
         audio_int16 = (audio_np * 32767).astype(np.int16)
