@@ -224,7 +224,24 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
 
     async def _stream_progress():
         import asyncio
+        import subprocess
         import threading
+
+        # On non-macOS, ensure kokoro-onnx is installed (on-demand, not bundled)
+        if sys.platform != "darwin":
+            try:
+                import kokoro_onnx  # noqa: F401
+            except ImportError:
+                yield f"data: {json.dumps({'status': 'installing_deps', 'message': 'Installing TTS engine (kokoro-onnx)...'})}\n\n"
+                try:
+                    subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "kokoro-onnx>=0.4.0"],
+                        capture_output=True, text=True, check=True, timeout=300,
+                    )
+                    yield f"data: {json.dumps({'status': 'installing_deps', 'message': 'TTS engine installed successfully'})}\n\n"
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                    yield f"data: {json.dumps({'status': 'error', 'error': f'Failed to install kokoro-onnx: {exc}'})}\n\n"
+                    return
 
         dest_dir = _tts_model_dir(model_id)
         repo_id = entry["repo"]
