@@ -106,6 +106,7 @@ jobs:
           NOTES_GENERATED: ${{ steps.notes.outputs.notes_b64 }}
           NOTES_EXISTING: ${{ steps.existing.outputs.notes_b64 }}
           HAS_EXISTING: ${{ steps.existing.outputs.has_notes }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           if [ "$HAS_EXISTING" = "true" ]; then
             NOTES="$NOTES_EXISTING"
@@ -118,8 +119,6 @@ jobs:
             -f tag="$TAG" \
             -f sha="$SHA" \
             -f release_notes="$NOTES"
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
 
   # For PRs: validate the build still works (no artifacts uploaded)
   validate:
