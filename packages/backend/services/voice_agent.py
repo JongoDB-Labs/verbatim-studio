@@ -384,10 +384,12 @@ class VerbatimVoiceAgent:
         stt: WhisperSTTAdapter,
         llm: GraniteLLMAdapter,
         tts: Qwen3TTSAdapter,
+        main_llm: GraniteLLMAdapter | None = None,
         web_search_enabled: bool = False,
     ) -> None:
         self.stt = stt
-        self.llm = llm
+        self.llm = llm  # Fast voice LLM (Granite Tiny)
+        self.main_llm = main_llm  # Full-power LLM for tool calls/analysis
         self.tts = tts
         from datetime import datetime
         self.web_search_enabled = web_search_enabled
@@ -694,14 +696,19 @@ class VerbatimVoiceAgent:
                 tool_name, tool_args, ctx=self._tool_context
             )
 
-            # Feed result back to LLM for spoken summary
+            # Use MAIN LLM (full-power) to summarize tool results
+            # Falls back to voice LLM if main not available
+            summarizer = self.main_llm or self.llm
+            logger.info("Summarizing tool result with %s",
+                        "main LLM" if self.main_llm else "voice LLM")
+
             self._conversation.append({
                 "role": "user",
                 "content": f"Tool result for {tool_name}:\n{tool_result}\n\n"
                 "Summarize this result conversationally in 1-2 sentences.",
             })
 
-            summary = await self.llm.chat(self._conversation)
+            summary = await summarizer.chat(self._conversation)
             self._conversation.append({"role": "assistant", "content": summary})
 
             # Combine any pre-tool text with the tool result summary
@@ -813,25 +820,47 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     except Exception as e:
         raise RuntimeError(f"Failed to create LLM adapter: {e}") from e
 
-    # Create TTS adapter wrapping Qwen3-TTS
+    # Create main LLM adapter (user's selected model) for tool calls and analysis
+    main_llm = None
+    main_ai_service = None
+    try:
+        main_ai_service = factory.create_ai_service()
+        main_llm = GraniteLLMAdapter(main_ai_service)
+        logger.info("Main LLM adapter created for tool calls")
+    except Exception:
+        logger.warning("Main LLM not available — voice agent will use Granite Tiny for everything")
+
+    # Create TTS adapter
     try:
         tts_service = _get_tts_service()
         tts = Qwen3TTSAdapter(tts_service, voice=voice)
-        logger.info("Voice TTS adapter created (Qwen3-TTS, voice=%s)", voice or "default")
+        logger.info("Voice TTS adapter created (voice=%s)", voice or "default")
     except Exception as e:
         raise RuntimeError(f"Failed to create TTS adapter: {e}") from e
 
-    # Create the agent
-    agent = VerbatimVoiceAgent(stt=stt, llm=llm, tts=tts, web_search_enabled=web_search_enabled)
-    logger.info("VerbatimVoiceAgent created successfully")
+    # Create the agent with both LLMs
+    agent = VerbatimVoiceAgent(
+        stt=stt, llm=llm, tts=tts,
+        main_llm=main_llm,
+        web_search_enabled=web_search_enabled,
+    )
+    logger.info("VerbatimVoiceAgent created (voice LLM + main LLM)")
 
-    # Preload ALL models so first response is fast
-    # 1. LLM — force load into memory (not just config)
+    # Preload ALL models simultaneously for fast first response
+    # 1. Voice LLM (Granite Tiny)
     try:
         ai_service._ensure_loaded()
-        logger.info("LLM model preloaded for voice session")
+        logger.info("Voice LLM preloaded (Granite Tiny)")
     except Exception:
-        logger.debug("LLM preload skipped")
+        logger.debug("Voice LLM preload skipped")
+
+    # 2. Main LLM (user's selected model)
+    if main_ai_service:
+        try:
+            main_ai_service._ensure_loaded()
+            logger.info("Main LLM preloaded (%s)", factory._config.ai_model_path)
+        except Exception:
+            logger.debug("Main LLM preload skipped")
 
     # 2. TTS — force load into memory
     try:
