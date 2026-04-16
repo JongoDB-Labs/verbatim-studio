@@ -504,7 +504,7 @@ class VerbatimVoiceAgent:
 
         if needs_delegation:
             logger.info("Delegating to main LLM: '%s'", user_text[:80])
-            # Speak a filler while main LLM works
+            # Speak and display filler as its own message
             if publish_fn:
                 try:
                     filler = await self.tts.synthesize("Let me look into that for you.")
@@ -513,7 +513,8 @@ class VerbatimVoiceAgent:
                 except Exception:
                     pass
             if transcript_fn:
-                await transcript_fn("assistant_token", "Let me look into that for you. ")
+                await transcript_fn("assistant_token", "Let me look into that for you.")
+                await transcript_fn("assistant_done", "")  # Finalize filler as separate message
 
         active_llm = self.main_llm if needs_delegation else self.llm
 
