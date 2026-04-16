@@ -253,6 +253,17 @@ export function ChatPanel({
         voiceActive={false}
         onToggleVoice={undefined}
       />
+      {/* Attachment picker — available in both voice and text modes */}
+      {showPicker && voiceMode && (
+        <div className="relative border-b border-gray-200 dark:border-gray-700">
+          <AttachmentPicker
+            attached={attached}
+            onAttach={handleAttach}
+            onDetach={handleDetach}
+            onClose={() => setShowPicker(false)}
+          />
+        </div>
+      )}
       {voiceMode ? (
         <VoiceChatPanel
           onClose={(voiceMessages?: VoiceTranscriptMessage[]) => {
@@ -271,6 +282,8 @@ export function ChatPanel({
           documentIds={attached.filter(a => a.type === 'document' && a.documentId).map(a => a.documentId!)}
           webSearchEnabled={webSearchEnabled}
           fileContext={attached.filter(a => a.type === 'file' && a.fileText).map(a => `=== ${a.title} ===\n${a.fileText}`).join('\n\n') || undefined}
+          onAttachClick={() => setShowPicker(!showPicker)}
+          attachedCount={attached.length}
         />
       ) : (
         <>

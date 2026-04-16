@@ -28,16 +28,19 @@ interface VoiceChatPanelProps {
   documentIds?: string[];
   webSearchEnabled?: boolean;
   fileContext?: string;
+  onAttachClick?: () => void;
+  attachedCount?: number;
 }
 
 
-export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEnabled, fileContext }: VoiceChatPanelProps) {
+export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEnabled, fileContext, onAttachClick, attachedCount }: VoiceChatPanelProps) {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [ttsAvailable, setTtsAvailable] = useState<boolean | null>(null);
   const [_voices, setVoices] = useState<VoiceInfo[]>([]);
   const [selectedVoice] = useState<string>('');
+  const [isMuted, setIsMuted] = useState(false);
 
   const roomRef = useRef<Room | null>(null);
   const audioElementsRef = useRef<HTMLAudioElement[]>([]);
@@ -212,6 +215,7 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
     });
     audioElementsRef.current = [];
     setState('idle');
+    setIsMuted(false);
 
     // Save any in-progress streaming assistant text
     if (streamingAssistantRef.current) {
@@ -227,6 +231,14 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
       onClose();
     }
   }, [onClose]);
+
+  const toggleMute = useCallback(() => {
+    if (roomRef.current?.localParticipant) {
+      const newMuted = !isMuted;
+      roomRef.current.localParticipant.setMicrophoneEnabled(!newMuted);
+      setIsMuted(newMuted);
+    }
+  }, [isMuted]);
 
   // TTS not available — show setup message
   if (ttsAvailable === false) {
@@ -469,23 +481,68 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
           </p>
         )}
 
-        {/* Action button */}
-        {state === 'idle' ? (
-          <button
-            onClick={connect}
-            className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-full hover:bg-purple-700 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
-          >
-            Start Voice Chat
-          </button>
-        ) : (
-          <button
-            onClick={() => disconnect()}
-            disabled={state === 'connecting'}
-            className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-full hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 disabled:opacity-50"
-          >
-            End Voice Chat
-          </button>
-        )}
+        {/* Action buttons */}
+        <div className="flex items-center gap-2">
+          {state === 'idle' ? (
+            <button
+              onClick={connect}
+              className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-full hover:bg-purple-700 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+            >
+              Start Voice Chat
+            </button>
+          ) : (
+            <>
+              {/* Mute button */}
+              <button
+                onClick={toggleMute}
+                className={`p-2 rounded-full transition-colors ${
+                  isMuted
+                    ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+                title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {isMuted ? (
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                )}
+              </button>
+
+              {/* End button */}
+              <button
+                onClick={() => disconnect()}
+                disabled={state === 'connecting'}
+                className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-full hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 disabled:opacity-50"
+              >
+                End Voice Chat
+              </button>
+            </>
+          )}
+
+          {/* Attach button — always visible */}
+          {onAttachClick && (
+            <button
+              onClick={onAttachClick}
+              className="relative p-2 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title="Attach transcripts or documents"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              {(attachedCount ?? 0) > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-purple-600 text-white text-[10px] rounded-full flex items-center justify-center">
+                  {attachedCount}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Live transcript area */}
