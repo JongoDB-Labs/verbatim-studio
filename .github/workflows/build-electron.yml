@@ -79,7 +79,7 @@ jobs:
           BODY="${BODY}"$'\n'"**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"$'\n'
 
           # Encode as base64 to safely transport emoji and special chars
-          NOTES_B64=$(echo "$BODY" | base64)
+          NOTES_B64=$(echo "$BODY" | base64 | tr -d '\n')
           echo "notes_b64=$NOTES_B64" >> "$GITHUB_OUTPUT"
 
       - name: Check for existing manual release notes
