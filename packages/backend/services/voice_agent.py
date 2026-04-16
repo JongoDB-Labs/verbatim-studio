@@ -482,7 +482,9 @@ class VerbatimVoiceAgent:
             except Exception:
                 logger.warning("Voice web search failed", exc_info=True)
 
-        # Step 2b: LLM response
+        # Step 2b: Decide which LLM to use
+        # Main LLM for: context-heavy queries, web results, document questions
+        # Voice LLM for: simple conversation, greetings, general chat
         user_msg = user_text
         if web_context:
             user_msg += (
@@ -490,11 +492,19 @@ class VerbatimVoiceAgent:
                 f"{web_context}\n"
                 "IMPORTANT: Base your answer on the web search results above, NOT your training data."
             )
+
+        has_context = bool(web_context) or len(self._conversation[0]["content"]) > 2000
+        use_main = has_context and self.main_llm is not None
+
+        if use_main:
+            logger.info("Routing to main LLM (context present)")
+
+        active_llm = self.main_llm if use_main else self.llm
+
         self._conversation.append({"role": "user", "content": user_msg})
 
         # Trim history to keep context small for fast inference
-        # Keep system prompt (index 0) + last N turns
-        max_msgs = 1 + (self._max_history_turns * 2)  # system + N user/assistant pairs
+        max_msgs = 1 + (self._max_history_turns * 2)
         if len(self._conversation) > max_msgs:
             self._conversation = [self._conversation[0]] + self._conversation[-(max_msgs - 1):]
 
@@ -524,7 +534,7 @@ class VerbatimVoiceAgent:
         import re
         sentences_queued = 0
 
-        async for chunk in self.llm.chat_stream(self._conversation):
+        async for chunk in active_llm.chat_stream(self._conversation):
             full_response += chunk
             sentence_buffer += chunk
 
