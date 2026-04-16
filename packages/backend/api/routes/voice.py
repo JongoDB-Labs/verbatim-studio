@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Annotated
@@ -144,10 +145,16 @@ async def voice_status() -> VoiceStatusResponse:
     except ImportError:
         missing_deps.append("livekit-api")
 
-    try:
-        import mlx_audio  # noqa: F401
-    except ImportError:
-        missing_deps.append("mlx-audio[tts]")
+    # Check TTS engine availability (platform-specific)
+    if sys.platform == "darwin":
+        try:
+            import mlx_audio  # noqa: F401
+        except ImportError:
+            missing_deps.append("mlx-audio[tts]")
+    else:
+        # Windows/Linux: no TTS engine available yet (future: kokoro-onnx)
+        if not tts_available:
+            missing_deps.append("tts-engine (not available on this platform)")
 
     return VoiceStatusResponse(
         tts_available=tts_available,
@@ -160,11 +167,19 @@ async def voice_status() -> VoiceStatusResponse:
 
 @router.get("/tts/models")
 async def list_tts_models() -> list[TTSModelInfo]:
-    """List all TTS models from the catalog with download/active status."""
+    """List all TTS models from the catalog with download/active status.
+
+    Only returns models compatible with the current platform.
+    """
     active_id = _get_active_tts_model()
     items: list[TTSModelInfo] = []
 
     for model_id, entry in TTS_CATALOG.items():
+        # Filter by platform — only show models that work on this OS
+        model_platform = entry.get("platform")
+        if model_platform and model_platform != sys.platform:
+            continue
+
         downloaded = _is_tts_model_downloaded(model_id)
         items.append(TTSModelInfo(
             id=model_id,
@@ -189,6 +204,14 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
     entry = TTS_CATALOG.get(model_id)
     if not entry:
         raise HTTPException(status_code=404, detail="TTS model not in catalog")
+
+    # Reject downloads for models incompatible with this platform
+    model_platform = entry.get("platform")
+    if model_platform and model_platform != sys.platform:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This TTS model requires {model_platform}. Current platform: {sys.platform}",
+        )
 
     if _is_tts_model_downloaded(model_id):
         raise HTTPException(status_code=409, detail="TTS model already downloaded")
@@ -622,14 +645,15 @@ async def create_voice_session(
     try:
         import tempfile
         import wave as _wave
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            with _wave.open(tmp.name, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(16000)
-                wf.writeframes(b'\x00' * 3200)
-            await agent.stt._engine.transcribe(tmp.name)
-            Path(tmp.name).unlink(missing_ok=True)
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
+        with _wave.open(tmp.name, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(b'\x00' * 3200)
+        await agent.stt._engine.transcribe(tmp.name)
+        Path(tmp.name).unlink(missing_ok=True)
         logger.info("STT model preloaded for voice session")
     except Exception:
         logger.debug("STT preload skipped")

@@ -13,7 +13,11 @@ def _default_data_dir() -> Path:
     if sys.platform == "win32":
         base = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
         return Path(base) / "Verbatim Studio"
-    return Path.home() / "Library" / "Application Support" / "Verbatim Studio"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Verbatim Studio"
+    # Linux / other: follow XDG Base Directory spec
+    xdg = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+    return Path(xdg) / "verbatim-studio"
 
 
 class Settings(BaseSettings):

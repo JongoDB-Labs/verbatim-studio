@@ -75,7 +75,7 @@ async def migrate_recordings(
             # Check if already migrated (not in recordings/ subdirectory)
             try:
                 relative = old_path.relative_to(storage_root)
-                if not str(relative).startswith("recordings/"):
+                if relative.parts[0] != "recordings":
                     if verbose:
                         logger.info(f"Skipping recording {rec.id}: already migrated")
                     skipped += 1
@@ -158,7 +158,7 @@ async def migrate_documents(
             # Check if already migrated (not in documents/ subdirectory)
             try:
                 relative = old_path.relative_to(storage_root)
-                if not str(relative).startswith("documents/"):
+                if relative.parts[0] != "documents":
                     if verbose:
                         logger.info(f"Skipping document {doc.id}: already migrated")
                     skipped += 1

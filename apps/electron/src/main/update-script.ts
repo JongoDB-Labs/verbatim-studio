@@ -1,7 +1,8 @@
 import { promises as fs } from 'fs';
+import os from 'os';
 import path from 'path';
 
-export const UPDATE_DIR = '/tmp/verbatim-update';
+export const UPDATE_DIR = path.join(os.tmpdir(), 'verbatim-update');
 
 /**
  * Generates a shell script for seamless macOS app replacement.

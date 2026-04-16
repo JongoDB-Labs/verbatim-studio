@@ -152,7 +152,7 @@ class PathManager:
 
         if new_path != old_path:
             # Use run_in_executor for blocking rename
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, shutil.move, str(old_path), str(new_path))
 
         return new_path
@@ -181,7 +181,7 @@ class PathManager:
 
         if new_path != old_path:
             # Use run_in_executor for blocking move
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, shutil.move, str(old_path), str(new_path))
 
         return new_path
@@ -210,7 +210,7 @@ class PathManager:
         new_path = self.generate_unique_path(old_path.parent, safe_name)
 
         if new_path != old_path:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, shutil.move, str(old_path), str(new_path))
 
         return new_path

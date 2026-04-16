@@ -28,7 +28,7 @@ class LocalAdapter(StorageAdapter):
         if not path:
             return self.base_path
         resolved = (self.base_path / path).resolve()
-        if not str(resolved).startswith(str(self.base_path.resolve())):
+        if not resolved.is_relative_to(self.base_path.resolve()):
             raise StoragePermissionError(f"Path traversal not allowed: {path}")
         return resolved
 

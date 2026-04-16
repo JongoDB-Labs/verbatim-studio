@@ -129,8 +129,9 @@ class WhisperSTTAdapter:
         """
         import wave
 
-        # Write audio to temp file
+        # Write audio to temp file — close handle before wave.open() for Windows
         tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
         try:
             with wave.open(tmp.name, "wb") as wf:
                 wf.setnchannels(1)

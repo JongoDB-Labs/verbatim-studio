@@ -49,3 +49,10 @@ sentence-transformers==3.4.1
 # Other ML dependencies with strict pins
 # =============================================================================
 numpy==2.0.2
+
+# =============================================================================
+# Voice assistant (LiveKit) — same packages as macOS, Windows wheels available
+# =============================================================================
+livekit-api>=1.1.0
+livekit-agents>=1.5.0
+livekit-plugins-silero>=1.5.0
