@@ -276,7 +276,7 @@ export function ChatPanel({
           attachedCount={attached.length}
         />
         {showPicker && (
-          <div className="relative border-t border-gray-200 dark:border-gray-700 [&>div]:!static [&>div]:!mb-0 [&>div]:!max-h-52 [&>div]:!w-full [&>div]:!rounded-none [&>div]:!shadow-none [&>div]:!border-0">
+          <div className="relative border-t border-gray-200 dark:border-gray-700 [&>div]:!static [&>div]:!mb-0 [&>div]:!max-h-72 [&>div]:!w-full [&>div]:!rounded-none [&>div]:!shadow-none [&>div]:!border-0">
             <AttachmentPicker
               attached={attached}
               onAttach={handleAttach}
