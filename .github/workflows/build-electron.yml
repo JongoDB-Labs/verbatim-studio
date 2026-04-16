@@ -78,9 +78,9 @@ jobs:
           fi
           BODY="${BODY}"$'\n'"**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"$'\n'
 
-          # Escape for JSON
-          NOTES_JSON=$(echo "$BODY" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-          echo "notes_json=$NOTES_JSON" >> "$GITHUB_OUTPUT"
+          # Encode as base64 to safely transport emoji and special chars
+          NOTES_B64=$(echo "$BODY" | base64)
+          echo "notes_b64=$NOTES_B64" >> "$GITHUB_OUTPUT"
 
       - name: Check for existing manual release notes
         id: existing
@@ -90,9 +90,8 @@ jobs:
           EXISTING_BODY=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
           if [ -n "$EXISTING_BODY" ] && ! echo "$EXISTING_BODY" | grep -q "Minor updates and refinements"; then
             echo "has_notes=true" >> "$GITHUB_OUTPUT"
-            # Use existing manual notes instead
-            NOTES_JSON=$(echo "$EXISTING_BODY" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-            echo "notes_json=$NOTES_JSON" >> "$GITHUB_OUTPUT"
+            NOTES_B64=$(echo "$EXISTING_BODY" | base64)
+            echo "notes_b64=$NOTES_B64" >> "$GITHUB_OUTPUT"
           else
             echo "has_notes=false" >> "$GITHUB_OUTPUT"
           fi
@@ -101,15 +100,17 @@ jobs:
 
       - name: Trigger build in public releases repo
         shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          NOTES_GENERATED: ${{ steps.notes.outputs.notes_b64 }}
+          NOTES_EXISTING: ${{ steps.existing.outputs.notes_b64 }}
+          HAS_EXISTING: ${{ steps.existing.outputs.has_notes }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          SHA="${GITHUB_SHA}"
-
-          # Use manual notes if they exist, otherwise generated notes
-          if [ "${{ steps.existing.outputs.has_notes }}" = "true" ]; then
-            NOTES=${{ steps.existing.outputs.notes_json }}
+          if [ "$HAS_EXISTING" = "true" ]; then
+            NOTES="$NOTES_EXISTING"
           else
-            NOTES=${{ steps.notes.outputs.notes_json }}
+            NOTES="$NOTES_GENERATED"
           fi
 
           gh workflow run build-electron.yml \
