@@ -104,6 +104,27 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
     --constraint "$REQUIREMENTS_ML" \
     -r "$REQUIREMENTS_ML"
 
+  # Step 3: Install mlx-audio separately (requires huggingface_hub>=1.0 which
+  # conflicts with whisperx's pin). Using --no-deps to avoid pulling in
+  # conflicting transitive deps — the necessary deps are already installed.
+  echo "Installing mlx-audio (voice TTS) without conflicting deps..."
+  "$PYTHON_BIN" -m pip install \
+    --target "$SITE_PACKAGES" \
+    --no-deps \
+    "mlx-audio>=0.4.0"
+
+  # Install mlx-audio's unique deps that aren't already present
+  "$PYTHON_BIN" -m pip install \
+    --target "$SITE_PACKAGES" \
+    --no-deps \
+    "mlx-lm>=0.31.0" \
+    "sounddevice>=0.5.0" \
+    "miniaudio>=1.61" \
+    "pyloudnorm>=0.2.0" \
+    "misaki>=0.9.0" \
+    "phonemizer-fork>=3.3.0" \
+    "espeakng-loader>=0.2.0" 2>/dev/null || true
+
 elif [ "$PLATFORM" = "windows" ]; then
   echo "Installing for Windows x64 (CPU PyTorch + CTranslate2 GPU)..."
 
