@@ -850,11 +850,16 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     main_llm = None
     main_ai_service = None
     try:
+        from api.routes.ai import _ensure_active_model_loaded
+        _ensure_active_model_loaded()  # Ensure model path is set in factory config
         main_ai_service = factory.create_ai_service()
-        main_llm = GraniteLLMAdapter(main_ai_service)
-        logger.info("Main LLM adapter created for tool calls")
-    except Exception:
-        logger.warning("Main LLM not available — voice agent will use Granite Tiny for everything")
+        if main_ai_service._model_path:
+            main_llm = GraniteLLMAdapter(main_ai_service)
+            logger.info("Main LLM adapter created (%s)", Path(main_ai_service._model_path).name)
+        else:
+            logger.warning("Main LLM has no model path configured")
+    except Exception as e:
+        logger.warning("Main LLM not available (%s) — voice agent will use Granite Tiny for everything", e)
 
     # Create TTS adapter
     try:
