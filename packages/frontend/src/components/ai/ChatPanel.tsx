@@ -253,18 +253,8 @@ export function ChatPanel({
         voiceActive={false}
         onToggleVoice={undefined}
       />
-      {/* Attachment picker — available in both voice and text modes */}
-      {showPicker && voiceMode && (
-        <div className="relative border-b border-gray-200 dark:border-gray-700">
-          <AttachmentPicker
-            attached={attached}
-            onAttach={handleAttach}
-            onDetach={handleDetach}
-            onClose={() => setShowPicker(false)}
-          />
-        </div>
-      )}
       {voiceMode ? (
+        <>
         <VoiceChatPanel
           onClose={(voiceMessages?: VoiceTranscriptMessage[]) => {
             setVoiceMode(false);
@@ -285,6 +275,17 @@ export function ChatPanel({
           onAttachClick={() => setShowPicker(!showPicker)}
           attachedCount={attached.length}
         />
+        {showPicker && (
+          <div className="relative border-t border-gray-200 dark:border-gray-700">
+            <AttachmentPicker
+              attached={attached}
+              onAttach={handleAttach}
+              onDetach={handleDetach}
+              onClose={() => setShowPicker(false)}
+            />
+          </div>
+        )}
+        </>
       ) : (
         <>
           <ChatMessages
