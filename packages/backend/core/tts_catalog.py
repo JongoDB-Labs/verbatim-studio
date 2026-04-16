@@ -6,6 +6,7 @@ Two options:
 """
 
 TTS_CATALOG: dict[str, dict] = {
+    # ── macOS (Apple Silicon / MLX) ──────────────────────────────────
     "kokoro-82m": {
         "repo": "mlx-community/Kokoro-82M-bf16",
         "label": "Kokoro 82M (Fast)",
@@ -25,5 +26,16 @@ TTS_CATALOG: dict[str, dict] = {
         "tier": "basic",
         "platform": "darwin",
         "engine": "qwen3",
+    },
+    # ── Windows / Linux (ONNX Runtime) ───────────────────────────────
+    "kokoro-onnx": {
+        "repo": "onnx-community/Kokoro-82M-v1.0-ONNX",
+        "label": "Kokoro 82M ONNX (Fast)",
+        "description": "Ultra-fast TTS via ONNX Runtime. ~0.3s per sentence. ~1 GB RAM. Supports CUDA.",
+        "size_bytes": 330_000_000,
+        "ram_gb": 1,
+        "tier": "basic",
+        "platform": "win32",
+        "engine": "kokoro-onnx",
     },
 }

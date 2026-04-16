@@ -31,7 +31,7 @@ import { UpdatePrompt, WhatsNewDialog } from '@/components/updates';
 import { useProjectStore } from '@/stores/projectStore';
 
 // Check if running on macOS in Electron (for title bar padding)
-const isMacOS = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
+const isMacOS = typeof window !== 'undefined' && (window as any).electronAPI?.platform === 'darwin';
 const needsTitleBarPadding = isElectron() && isMacOS;
 
 type NavigationState =

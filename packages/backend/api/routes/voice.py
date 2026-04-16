@@ -130,8 +130,11 @@ async def voice_status() -> VoiceStatusResponse:
         tts_available = _is_tts_model_downloaded(active_id)
 
         if tts_available:
-            # Return preset voices from the adapter without loading the model
-            from adapters.ai.qwen3_tts import _PRESET_VOICES
+            # Return preset voices from the platform-appropriate adapter
+            if sys.platform == "darwin":
+                from adapters.ai.qwen3_tts import _PRESET_VOICES
+            else:
+                from adapters.ai.kokoro_onnx_tts import _PRESET_VOICES
 
             voices = list(_PRESET_VOICES)
 
@@ -152,9 +155,10 @@ async def voice_status() -> VoiceStatusResponse:
         except ImportError:
             missing_deps.append("mlx-audio[tts]")
     else:
-        # Windows/Linux: no TTS engine available yet (future: kokoro-onnx)
-        if not tts_available:
-            missing_deps.append("tts-engine (not available on this platform)")
+        try:
+            import kokoro_onnx  # noqa: F401
+        except ImportError:
+            missing_deps.append("kokoro-onnx")
 
     return VoiceStatusResponse(
         tts_available=tts_available,

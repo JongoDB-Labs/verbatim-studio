@@ -762,16 +762,19 @@ def _get_tts_service() -> ITTSService:
     """Get the active TTS service instance.
 
     Reads the active TTS model from the voice route helpers and creates
-    the Qwen3-TTS service.
+    the appropriate TTS service for the current platform:
+    - macOS: Qwen3-TTS via MLX (Apple Silicon)
+    - Windows/Linux: Kokoro ONNX (CPU/CUDA)
 
     Returns:
-        Configured Qwen3TTSService instance.
+        Configured ITTSService instance.
 
     Raises:
         RuntimeError: If no TTS model is active or downloaded.
     """
+    import sys
+
     from api.routes.voice import _get_active_tts_model, _tts_model_dir
-    from adapters.ai.qwen3_tts import get_tts_service
 
     active_model = _get_active_tts_model()
     if not active_model:
@@ -786,6 +789,12 @@ def _get_tts_service() -> ITTSService:
             f"TTS model directory not found: {model_dir}. "
             "Re-download the model via the voice settings."
         )
+
+    # Platform dispatch — import the correct adapter
+    if sys.platform == "darwin":
+        from adapters.ai.qwen3_tts import get_tts_service
+    else:
+        from adapters.ai.kokoro_onnx_tts import get_tts_service
 
     return get_tts_service(str(model_dir))
 

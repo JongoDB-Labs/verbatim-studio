@@ -32,6 +32,12 @@
       "output": "../../dist",
       "buildResources": "assets"
     },
+    "protocols": [
+      {
+        "name": "Verbatim Studio",
+        "schemes": ["verbatim"]
+      }
+    ],
     "files": [
       "dist/**/*"
     ],

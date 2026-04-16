@@ -56,3 +56,9 @@ numpy==2.0.2
 livekit-api>=1.1.0
 livekit-agents>=1.5.0
 livekit-plugins-silero>=1.5.0
+
+# =============================================================================
+# TTS engine — Kokoro ONNX (cross-platform, CUDA-capable via onnxruntime)
+# macOS uses mlx-audio instead (installed separately in install-bundled-deps.sh)
+# =============================================================================
+kokoro-onnx>=0.4.0

@@ -1,7 +1,7 @@
 import { isElectron } from '../../lib/api';
 
 // Check if running on macOS in Electron
-const isMacOS = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
+const isMacOS = typeof window !== 'undefined' && (window as any).electronAPI?.platform === 'darwin';
 
 /**
  * Native-style title bar for macOS Electron apps.
