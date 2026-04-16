@@ -462,6 +462,13 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
           </p>
         )}
 
+        {/* Pipeline info */}
+        {state === 'idle' && ttsAvailable && (
+          <p className="text-[10px] text-gray-400 dark:text-gray-500 text-center">
+            Voice: Granite Tiny (fast) &middot; Work: your selected model
+          </p>
+        )}
+
         {/* Action button */}
         {state === 'idle' ? (
           <button

@@ -3315,7 +3315,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
 
         <div className="px-5 py-4 space-y-4">
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Required for voice chat with Max. Download and activate a TTS model to enable voice responses.
+            Required for voice chat with Max. Voice conversations use Granite Tiny for fast responses, while your selected language model handles text chat and complex tasks.
           </p>
 
           {ttsError && (
