@@ -785,11 +785,31 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
     except Exception as e:
         raise RuntimeError(f"Failed to create STT adapter: {e}") from e
 
-    # Create LLM adapter — reuse shared service (history trimming keeps context lean)
+    # Create LLM adapter — use dedicated Granite Tiny for fast voice responses
+    # This runs separately from the user's selected model (no eviction)
     try:
-        ai_service = factory.create_ai_service()
+        from adapters.ai.llama_cpp import get_voice_llm_service
+        from core.transcription_settings import detect_llm_gpu_layers
+
+        # Find Granite Tiny model path
+        granite_path = None
+        models_dir = settings.MODELS_DIR
+        for candidate in ["granite-4.0-h-tiny-Q4_K_M.gguf", "granite-4.0-h-tiny.gguf"]:
+            p = models_dir / candidate
+            if p.exists():
+                granite_path = str(p)
+                break
+
+        if granite_path:
+            gpu_layers = detect_llm_gpu_layers()
+            ai_service = get_voice_llm_service(granite_path, n_gpu_layers=gpu_layers)
+            logger.info("Voice LLM: Granite Tiny (dedicated instance, 8K context)")
+        else:
+            # Fallback to whatever model is active
+            ai_service = factory.create_ai_service()
+            logger.info("Voice LLM: using active model (Granite Tiny not found)")
+
         llm = GraniteLLMAdapter(ai_service)
-        logger.info("Voice LLM adapter created (llama.cpp)")
     except Exception as e:
         raise RuntimeError(f"Failed to create LLM adapter: {e}") from e
 

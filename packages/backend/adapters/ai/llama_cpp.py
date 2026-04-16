@@ -81,6 +81,35 @@ def get_llama_service(
     return _cached_service
 
 
+# Separate voice LLM cache — runs Granite Tiny for fast voice responses
+# without evicting the user's selected model from the main cache
+_voice_service: "LlamaCppAIService | None" = None
+_voice_model_path: str | None = None
+
+
+def get_voice_llm_service(model_path: str, n_gpu_layers: int = -1) -> "LlamaCppAIService":
+    """Get a dedicated LLM instance for voice chat (separate from main cache).
+
+    Uses a small context (8K) for fast inference. Does NOT evict the main
+    LLM model — both can be resident simultaneously.
+    """
+    global _voice_service, _voice_model_path
+
+    if model_path != _voice_model_path or _voice_service is None:
+        if _voice_service is not None and _voice_service._llm is not None:
+            del _voice_service._llm
+            _voice_service._llm = None
+        _voice_model_path = model_path
+        _voice_service = LlamaCppAIService(
+            model_path=model_path,
+            n_ctx=8192,  # Small context for fast voice responses
+            n_gpu_layers=n_gpu_layers,
+        )
+        logger.info("Created voice LLM instance (model=%s, n_ctx=8K)", Path(model_path).name)
+
+    return _voice_service
+
+
 def cleanup_llama_service() -> None:
     """Unload the cached LLM service to free memory.
 
