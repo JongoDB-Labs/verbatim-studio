@@ -90,8 +90,8 @@ CRITICAL RULES FOR SPOKEN OUTPUT:
 - NEVER use bullet points, numbered lists, dashes, asterisks, or any markdown formatting.
 - NEVER use special characters like #, *, -, or > at the start of lines.
 - Write exactly as you would speak naturally in a conversation.
-- Use tools to look up data rather than guessing.
-- When reporting results, summarize the key info conversationally.
+- For simple questions, answer directly from what you know.
+- For complex requests (summarize, analyze, review, search), a specialist will handle the work. Just answer naturally.
 - If something fails, say so briefly and suggest what the user can try.
 - Be friendly but efficient.
 - ALWAYS finish your sentences completely. Never stop mid-word or mid-sentence.
@@ -483,8 +483,8 @@ class VerbatimVoiceAgent:
                 logger.warning("Voice web search failed", exc_info=True)
 
         # Step 2b: Decide which LLM to use
-        # Main LLM for: context-heavy queries, web results, document questions
-        # Voice LLM for: simple conversation, greetings, general chat
+        # Granite Tiny handles everything by default (fast responses)
+        # Only delegates to main LLM when user explicitly requests deep work
         user_msg = user_text
         if web_context:
             user_msg += (
@@ -493,13 +493,29 @@ class VerbatimVoiceAgent:
                 "IMPORTANT: Base your answer on the web search results above, NOT your training data."
             )
 
-        has_context = bool(web_context) or len(self._conversation[0]["content"]) > 2000
-        use_main = has_context and self.main_llm is not None
+        import re as _re
+        DELEGATE_PATTERNS = _re.compile(
+            r'\b(summarize|analyze|extract|review|compare|detail|in[- ]depth|'
+            r'break down|explain in detail|thorough|comprehensive|'
+            r'search for|look up|find information|what does .+ say about)\b',
+            _re.IGNORECASE,
+        )
+        needs_delegation = bool(DELEGATE_PATTERNS.search(user_text)) and self.main_llm is not None
 
-        if use_main:
-            logger.info("Routing to main LLM (context present)")
+        if needs_delegation:
+            logger.info("Delegating to main LLM: '%s'", user_text[:80])
+            # Speak a filler while main LLM works
+            if publish_fn:
+                try:
+                    filler = await self.tts.synthesize("Let me look into that for you.")
+                    if filler:
+                        await publish_fn(filler)
+                except Exception:
+                    pass
+            if transcript_fn:
+                await transcript_fn("assistant_token", "Let me look into that for you. ")
 
-        active_llm = self.main_llm if use_main else self.llm
+        active_llm = self.main_llm if needs_delegation else self.llm
 
         self._conversation.append({"role": "user", "content": user_msg})
 
