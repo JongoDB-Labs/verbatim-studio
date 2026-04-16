@@ -227,20 +227,31 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
         import subprocess
         import threading
 
-        # On non-macOS, ensure kokoro-onnx is installed (on-demand, not bundled)
+        # On non-macOS, install voice deps on-demand (not bundled — too large for NSIS)
         if sys.platform != "darwin":
-            try:
-                import kokoro_onnx  # noqa: F401
-            except ImportError:
-                yield f"data: {json.dumps({'status': 'installing_deps', 'message': 'Installing TTS engine (kokoro-onnx)...'})}\n\n"
+            voice_deps = [
+                ("livekit-api", "livekit.api", "livekit-api>=1.1.0"),
+                ("livekit-agents", "livekit.agents", "livekit-agents>=1.5.0"),
+                ("livekit-plugins-silero", "livekit.plugins.silero", "livekit-plugins-silero>=1.5.0"),
+                ("kokoro-onnx", "kokoro_onnx", "kokoro-onnx>=0.4.0"),
+            ]
+            missing = []
+            for name, import_path, spec in voice_deps:
+                try:
+                    __import__(import_path)
+                except ImportError:
+                    missing.append(spec)
+
+            if missing:
+                yield f"data: {json.dumps({'status': 'installing_deps', 'message': f'Installing voice dependencies ({len(missing)} packages)...'})}\n\n"
                 try:
                     subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "kokoro-onnx>=0.4.0"],
-                        capture_output=True, text=True, check=True, timeout=300,
+                        [sys.executable, "-m", "pip", "install", *missing],
+                        capture_output=True, text=True, check=True, timeout=600,
                     )
-                    yield f"data: {json.dumps({'status': 'installing_deps', 'message': 'TTS engine installed successfully'})}\n\n"
+                    yield f"data: {json.dumps({'status': 'installing_deps', 'message': 'Voice dependencies installed successfully'})}\n\n"
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                    yield f"data: {json.dumps({'status': 'error', 'error': f'Failed to install kokoro-onnx: {exc}'})}\n\n"
+                    yield f"data: {json.dumps({'status': 'error', 'error': f'Failed to install voice dependencies: {exc}'})}\n\n"
                     return
 
         dest_dir = _tts_model_dir(model_id)

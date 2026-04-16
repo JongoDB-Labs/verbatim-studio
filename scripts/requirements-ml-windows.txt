@@ -51,15 +51,11 @@ sentence-transformers==3.4.1
 numpy==2.0.2
 
 # =============================================================================
-# Voice assistant (LiveKit) — same packages as macOS, Windows wheels available
+# Voice assistant dependencies — NOT bundled on Windows (too large for NSIS).
+# LiveKit + TTS are installed on-demand when user downloads a TTS model.
+# macOS bundles these via requirements-ml.txt / install-bundled-deps.sh.
 # =============================================================================
-livekit-api>=1.1.0
-livekit-agents>=1.5.0
-livekit-plugins-silero>=1.5.0
-
-# =============================================================================
-# TTS engine — Kokoro ONNX is NOT bundled (onnxruntime adds ~200MB).
-# Installed on-demand when user downloads a TTS model via Settings > Voice.
-# macOS uses mlx-audio instead (installed separately in install-bundled-deps.sh).
-# =============================================================================
-# kokoro-onnx>=0.4.0  # on-demand install
+# livekit-api>=1.1.0         # on-demand install
+# livekit-agents>=1.5.0      # on-demand install (livekit-rtc native DLL ~50MB)
+# livekit-plugins-silero>=1.5.0  # on-demand install
+# kokoro-onnx>=0.4.0         # on-demand install (onnxruntime ~200MB)
