@@ -73,16 +73,17 @@ Verbatim Studio works just as well for everyday use:
 
 Each AI feature loads its own model. You only pay for what you use — deactivate models in **Settings > AI** to reclaim memory.
 
-| Feature | Memory | Loaded when… |
-|---------|--------|--------------|
+| Feature | Memory | Loaded when... |
+|---------|--------|----------------|
 | App (idle) | ~300 MB | Always |
-| Transcription (Whisper base) | +200–300 MB | Transcribing audio/video |
+| Transcription (Whisper base) | +200-300 MB | Transcribing audio/video |
 | Speaker ID (pyannote) | +1 GB | Diarization enabled |
 | Semantic search (nomic-embed) | +600 MB | Search index active |
-| Max assistant (Granite 8B) | +5 GB | AI chat / summaries |
+| Max assistant (Granite 4.0) | +5 GB | AI chat / summaries |
+| Voice chat (Kokoro TTS) | +1 GB | Voice sessions active |
 | OCR (Qwen2-VL 2B) | +5 GB | Processing images / scanned PDFs |
 
-> **Tip:** On a 16 GB machine you can comfortably run transcription + diarization + search + Max simultaneously. OCR is loaded on-demand and released when idle.
+> **Tip:** On a 16 GB machine you can comfortably run transcription + diarization + search + Max + voice simultaneously. OCR is loaded on-demand and released when idle.
 
 ### Windows GPU / VRAM
 
@@ -125,15 +126,18 @@ Record directly from your microphone with real-time speech-to-text. Choose your 
   <img src="docs/screenshots/live-transcription.png" alt="Live Transcription" width="100%">
 </p>
 
-### Max: Your AI-Powered Verbatim Assistant
+### Max: Your AI Research Assistant
 
 Max isn't just a chatbot—it's a research tool that actually understands your content:
 
 - **Query across your entire library** — Ask questions that span multiple files and documents
+- **Voice chat** — Talk to Max directly with full-duplex voice conversations (LiveKit + Kokoro TTS)
 - **Persistent conversations** — Pick up where you left off with saved chat history
 - **Document-aware** — Upload PDFs, images, and notes for Max to reference
+- **Web search** — Pull in current information when you need it
 - **OCR built-in** — Extract text from scanned documents and images automatically
-- **Platform guidance** — Not sure how to do something? Just ask Max
+- **Smart delegation** — Granite Tiny handles quick replies; main LLM tackles complex questions
+- **Tool calling** — Max can search your library, export transcripts, and more
 
 All powered by IBM Granite, running 100% locally. No API keys. No usage limits. No data leaving your machine.
 
@@ -166,13 +170,15 @@ Upload PDFs and images for automatic text extraction. The built-in OCR model (Qw
 - **In-transcript search** — Find exactly what you're looking for with highlighted navigation
 - **Keyboard-first workflow** — Control playback without leaving your keyboard
 - **Inline annotations** — Add notes directly to your documents and transcripts
+- **Entity extraction** — Automatically identify people, organizations, locations, and key terms
 
 ### Organize Your Way
 
-- **Real folders** — Projects map to actual directories on your filesystem
+- **Projects with custom metadata** — Templates for legal cases, medical records, interviews
+- **Trash / recycle bin** — Soft-delete with 30-day auto-purge, bulk restore
 - **Bulk operations** — Select multiple files and act on them at once
 - **Flexible storage** — Keep files local, on network drives, or synced with Google Drive, OneDrive, and Dropbox
-- **Full exports** — TXT, SRT, VTT, JSON, or complete backup archives
+- **Full exports** — TXT, SRT, VTT, DOCX, PDF, JSON, or complete backup archives
 
 ### Local AI Models
 
@@ -192,8 +198,8 @@ Download for your platform:
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **macOS (Apple Silicon)** | [Download .dmg](https://github.com/JongoDB/verbatim-studio/releases) | M1/M2/M3/M4 optimized |
-| **Windows (x64)** | [Download .exe](https://github.com/JongoDB/verbatim-studio/releases) | NVIDIA GPU optional for faster transcription |
+| **macOS (Apple Silicon)** | [Download .dmg](https://github.com/JongoDB/verbatim-studio-releases/releases/latest) | M1/M2/M3/M4 optimized |
+| **Windows (x64)** | [Download .exe](https://github.com/JongoDB/verbatim-studio-releases/releases/latest) | NVIDIA GPU optional for faster transcription |
 
 The app is self-contained—no Python, Node.js, or other dependencies required. Just download, install, and run.
 
@@ -303,6 +309,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 | Backend | FastAPI, SQLAlchemy, Pydantic |
 | Transcription | WhisperX, MLX Whisper, pyannote.audio |
 | AI/LLM | llama-cpp-python, sentence-transformers |
+| Voice | LiveKit, Kokoro TTS (ONNX / MLX), Silero VAD |
 | OCR | Qwen2-VL (vision-language model) |
 | Audio | WaveSurfer.js, ffmpeg |
 | Storage | SQLite, Google Drive, OneDrive, Dropbox |
@@ -311,44 +318,54 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## Roadmap
 
-### Current Release (v0.26.x)
+### Current Release (v0.62.x)
 
 **Core Platform**
 - [x] Native macOS desktop app (Apple Silicon optimized)
-- [x] Native Windows desktop app (Nvidia CUDA optimized)
+- [x] Native Windows desktop app (NVIDIA CUDA optimized)
+- [x] Cross-platform auto-updates with release notes
 - [x] Local AI transcription with speaker identification
 - [x] Live transcription from microphone
 - [x] Video file support with automatic audio extraction
-- [x] Automatic update notifications with release notes
 
 **AI Assistant (Max)**
 - [x] Multi-document conversations with chat history
+- [x] Full-duplex voice chat (LiveKit + Kokoro TTS)
+- [x] Smart delegation — Granite Tiny for quick replies, main LLM for complex questions
+- [x] Web search integration (Tavily, Brave)
 - [x] Semantic search across all content
-- [x] Platform guidance and help
+- [x] Tool calling (search, export, web lookup)
 - [x] OCR for scanned documents and images
+- [x] Streaming token output in text and voice modes
+- [x] Conversation memory compression for long sessions
 
 **Editing & Organization**
 - [x] Clickable timestamps and playback keyboard shortcuts
 - [x] Segment highlights and bookmarks
 - [x] In-transcript search with navigation
 - [x] Inline document annotations
-- [x] Project-based organization with real filesystem folders
-- [x] Bulk operations
+- [x] Entity extraction (people, organizations, locations, key terms)
+- [x] AI transcript quality review
+- [x] Projects with custom metadata and filesystem folders
+- [x] Trash / recycle bin with 30-day auto-purge
+- [x] Bulk operations with multi-select
 
 **Storage & Export**
 - [x] Local, network, and cloud storage options
 - [x] Google Drive, OneDrive, Dropbox integration
-- [x] Export to TXT, SRT, VTT, JSON
+- [x] Export to TXT, SRT, VTT, DOCX, PDF, JSON
+- [x] AI summary and speaker statistics in exports
+- [x] Map-reduce summarization for long transcripts
 
-### Enterprise Tier (Planned)
+### Planned
 
+- [ ] Windows code signing (SmartScreen trust)
 - [ ] External LLM connections (Ollama, OpenAI, self-hosted)
 - [ ] Multi-user with role-based access control
 - [ ] Meeting bots for Teams, Google Meet, and Zoom
 - [ ] PostgreSQL database support
 - [ ] Administration dashboard
-- [ ] Audit logging and compliance reports
-- [ ] Secure mobile access to self-hosted servers
+- [ ] Mobile companion app
 
 ---
 
@@ -365,7 +382,9 @@ On first use, Verbatim Studio downloads the AI models you select:
 | Whisper (base) | ~150 MB | Transcription (pre-bundled; configurable up to large-v3) |
 | pyannote | ~200 MB | Speaker diarization |
 | nomic-embed-text | ~550 MB | Semantic search (pre-bundled) |
-| IBM Granite 3.3 | ~5 GB | AI assistant and transcript summarization |
+| IBM Granite 4.0 | ~5 GB | AI assistant, summarization, and tool calling |
+| Granite Tiny | ~350 MB | Fast voice chat responses |
+| Kokoro 82M | ~350 MB | Text-to-speech for voice chat |
 | Qwen2 VL | ~4.4 GB | Image OCR and document parsing |
 
 Models are cached locally and only download once.
