@@ -10,6 +10,8 @@ import { BulkHighlightToolbar } from '@/components/transcript/BulkHighlightToolb
 import { TranscriptSearch, highlightSearchMatches } from '@/components/transcript/TranscriptSearch';
 import { QualityReviewButton } from '@/components/transcript/QualityReviewButton';
 import { QualityReviewPanel } from '@/components/transcript/QualityReviewPanel';
+import { FillerDetectionPanel } from '@/components/transcript/FillerDetectionPanel';
+import { TranslateButton } from '@/components/transcript/TranslateButton';
 import { useKeyboardShortcuts, getPlaybackShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useKeybindingStore } from '@/stores/keybindingStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -403,6 +405,17 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
     }
   }, [transcript, handleScrollToSegment]);
 
+  const handleTranslate = useCallback((language: string) => {
+    // Store prefill prompt for the chat page to pick up
+    sessionStorage.setItem('verbatim-chat-prefill', JSON.stringify({
+      prompt: `Translate this transcript to ${language}`,
+      recording_ids: [recordingId],
+    }));
+    // Navigate to chats page via pushState + popstate (App.tsx listens for popstate)
+    window.history.pushState(null, '', '/chats');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, [recordingId]);
+
   const handleCloseSearch = useCallback(() => {
     setShowSearch(false);
     setSearchMatches([]);
@@ -629,6 +642,10 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
               transcriptId={transcript.id}
               onJobStarted={(jobId) => setQualityReviewJobId(jobId)}
             />
+            <TranslateButton
+              transcriptId={transcript.id}
+              onTranslate={handleTranslate}
+            />
             <ExportButton transcriptId={transcript.id} title={recording.title} />
           </div>
         </div>
@@ -776,6 +793,12 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
 
       {/* Entity Extraction Panel */}
       <EntityPanel transcriptId={transcript.id} onScrollToSegment={handleScrollToSegmentById} />
+
+      {/* Filler Detection Panel */}
+      <FillerDetectionPanel
+        transcriptId={transcript.id}
+        onScrollToSegment={handleScrollToSegmentById}
+      />
 
       {/* Quality Review Panel */}
       {qualityReviewRecord && (
