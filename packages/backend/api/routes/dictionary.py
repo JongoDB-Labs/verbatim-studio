@@ -45,7 +45,7 @@ class DictionaryEntryResponse(BaseModel):
 class DictionaryListResponse(BaseModel):
     """Response model for listing dictionary entries."""
 
-    items: list[DictionaryEntryResponse]
+    entries: list[DictionaryEntryResponse]
 
 
 class MessageResponse(BaseModel):
@@ -64,38 +64,42 @@ async def list_entries(
     db: AsyncSession = Depends(get_db),
 ) -> DictionaryListResponse:
     """List all custom dictionary entries, optionally filtered by project."""
-    if project_id:
-        result = await db.execute(
-            text(
-                "SELECT id, term, category, project_id, created_at "
-                "FROM custom_dictionary "
-                "WHERE project_id IS NULL OR project_id = :pid "
-                "ORDER BY created_at"
-            ),
-            {"pid": project_id},
-        )
-    else:
-        result = await db.execute(
-            text(
-                "SELECT id, term, category, project_id, created_at "
-                "FROM custom_dictionary "
-                "ORDER BY created_at"
+    try:
+        if project_id:
+            result = await db.execute(
+                text(
+                    "SELECT id, term, category, project_id, created_at "
+                    "FROM custom_dictionary "
+                    "WHERE project_id IS NULL OR project_id = :pid "
+                    "ORDER BY created_at"
+                ),
+                {"pid": project_id},
             )
-        )
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT id, term, category, project_id, created_at "
+                    "FROM custom_dictionary "
+                    "ORDER BY created_at"
+                )
+            )
 
-    rows = result.fetchall()
-    return DictionaryListResponse(
-        items=[
-            DictionaryEntryResponse(
-                id=row[0],
-                term=row[1],
-                category=row[2],
-                project_id=row[3],
-                created_at=row[4],
-            )
-            for row in rows
-        ]
-    )
+        rows = result.fetchall()
+        return DictionaryListResponse(
+            entries=[
+                DictionaryEntryResponse(
+                    id=row[0],
+                    term=row[1],
+                    category=row[2],
+                    project_id=row[3],
+                    created_at=row[4],
+                )
+                for row in rows
+            ]
+        )
+    except Exception as e:
+        logger.warning("Could not query custom_dictionary table: %s", e)
+        return DictionaryListResponse(entries=[])
 
 
 @router.post("", response_model=DictionaryEntryResponse, status_code=status.HTTP_201_CREATED)
