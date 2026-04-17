@@ -271,11 +271,34 @@ async def api_info():
 
 
 # In server/Docker mode, serve the frontend SPA from VERBATIM_FRONTEND_DIR.
-# The SPA mount handles "/" so we skip the JSON root endpoint.
+# Uses a custom ASGI app that serves static files for real assets and falls
+# back to index.html for client-side routes (e.g. /recordings, /projects).
 _frontend_dir = os.environ.get("VERBATIM_FRONTEND_DIR")
 if _frontend_dir and os.path.isdir(_frontend_dir):
     from starlette.staticfiles import StaticFiles
-    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+    from starlette.responses import FileResponse
+
+    _static = StaticFiles(directory=_frontend_dir, html=True)
+    _index_html = os.path.join(_frontend_dir, "index.html")
+
+    async def _spa_app(scope, receive, send):
+        """Serve static files, falling back to index.html for SPA routes."""
+        if scope["type"] == "http":
+            path = scope.get("path", "/")
+            # Try the real static file first
+            try:
+                await _static(scope, receive, send)
+                return
+            except Exception:
+                pass
+            # Not a real file — serve index.html so the SPA router handles it
+            if os.path.isfile(_index_html):
+                response = FileResponse(_index_html, media_type="text/html")
+                await response(scope, receive, send)
+                return
+        await _static(scope, receive, send)
+
+    app.mount("/", _spa_app, name="frontend")
 else:
     @app.get("/")
     async def root():

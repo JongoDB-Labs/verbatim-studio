@@ -1032,12 +1032,22 @@ async def get_recording_properties(
         except OSError:
             pass
 
-    # Try to get storage location name
+    # Try to get storage location name — prefer the recording's own location,
+    # fall back to first active location.  Use .first() because multiple
+    # locations can be active simultaneously.
     storage_location_name = None
-    loc_result = await db.execute(
-        select(StorageLocation).where(StorageLocation.is_active == True)
-    )
-    storage_loc = loc_result.scalar_one_or_none()
+    if recording.storage_location_id:
+        loc_result = await db.execute(
+            select(StorageLocation).where(
+                StorageLocation.id == recording.storage_location_id
+            )
+        )
+        storage_loc = loc_result.scalar_one_or_none()
+    else:
+        loc_result = await db.execute(
+            select(StorageLocation).where(StorageLocation.is_active == True)
+        )
+        storage_loc = loc_result.scalars().first()
     if storage_loc:
         storage_location_name = storage_loc.name
 

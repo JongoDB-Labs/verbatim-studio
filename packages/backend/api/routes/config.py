@@ -58,7 +58,7 @@ class AIStatus(BaseModel):
 
     model_path: str | None
     context_size: int
-    gpu_layers: int
+    gpu_layers: int | None
 
 
 class ConfigStatus(BaseModel):

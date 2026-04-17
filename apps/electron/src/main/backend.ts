@@ -77,14 +77,16 @@ class BackendManager extends EventEmitter {
     const userDataDir = app.getPath('userData');
     let extendedPath: string;
     if (process.platform === 'win32') {
-      // Windows: prepend CUDA DLLs + FFmpeg to PATH
-      const userCudaPath = path.join(userDataDir, 'cuda');
+      // Windows: prepend CUDA DLLs + FFmpeg to PATH.
+      // Prefer bundled paths (Program Files — trusted by Application Control)
+      // over migrated copies in AppData which may be blocked by AppLocker/WDAC.
       const bundledCudaPath = path.join(process.resourcesPath, 'cuda');
-      const cudaPath = fs.existsSync(userCudaPath) ? userCudaPath : bundledCudaPath;
+      const userCudaPath = path.join(userDataDir, 'cuda');
+      const cudaPath = fs.existsSync(bundledCudaPath) ? bundledCudaPath : userCudaPath;
 
-      const userFfmpegPath = path.join(userDataDir, 'ffmpeg');
       const bundledFfmpegPath = path.join(process.resourcesPath, 'ffmpeg');
-      const ffmpegPath = fs.existsSync(userFfmpegPath) ? userFfmpegPath : bundledFfmpegPath;
+      const userFfmpegPath = path.join(userDataDir, 'ffmpeg');
+      const ffmpegPath = fs.existsSync(bundledFfmpegPath) ? bundledFfmpegPath : userFfmpegPath;
 
       extendedPath = [cudaPath, ffmpegPath, process.env.PATH || ''].join(';');
     } else {
@@ -243,12 +245,15 @@ class BackendManager extends EventEmitter {
       const resourcesPath = process.resourcesPath;
 
       if (process.platform === 'win32') {
-        // Prefer Python from user data dir (persists across updates)
-        const userPython = path.join(userDataDir, 'python', 'python.exe');
-        if (fs.existsSync(userPython)) {
-          return userPython;
+        // Prefer bundled Python (Program Files — trusted by Application Control).
+        // The migrated copy in AppData may be blocked by AppLocker/WDAC policies
+        // that prevent DLL execution from user-writable directories.
+        const bundledPython = path.join(resourcesPath, 'python', 'python.exe');
+        if (fs.existsSync(bundledPython)) {
+          return bundledPython;
         }
-        return path.join(resourcesPath, 'python', 'python.exe');
+        // Fall back to migrated copy (stripped update — no Python in bundle)
+        return path.join(userDataDir, 'python', 'python.exe');
       } else {
         const userPython = path.join(userDataDir, 'python', 'bin', 'python3');
         if (fs.existsSync(userPython)) {
