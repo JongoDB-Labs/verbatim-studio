@@ -609,6 +609,18 @@ async def handle_transcription(
         await broadcast("recordings", "status_changed", recording_id)
         await emit_event("transcription.complete", recording_id=recording_id, transcript_id=transcript_id)
 
+        # Run post-transcription automation
+        try:
+            from services.post_transcription_actions import run_post_transcription_actions
+            action_results = await run_post_transcription_actions(
+                recording_id=recording_id,
+                transcript_id=transcript_id,
+            )
+            if action_results:
+                logger.info("Post-transcription actions: %s", action_results)
+        except Exception as e:
+            logger.warning("Post-transcription actions failed: %s", e)
+
         # Auto-queue embedding job if service is available
         from services.embedding import embedding_service
         if embedding_service.is_available():
