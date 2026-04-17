@@ -35,6 +35,9 @@ def register_all_tools(registry: ToolRegistry) -> None:
     from services.tools.entity_extraction_tool import extract_entities_tool
     registry.register(extract_entities_tool)
 
+    from services.tools.translation_tool import translate_transcript_tool
+    registry.register(translate_transcript_tool)
+
     from services.tools.annotation_tools import highlight_segments_tool, add_note_tool
     registry.register(highlight_segments_tool)
     registry.register(add_note_tool)
