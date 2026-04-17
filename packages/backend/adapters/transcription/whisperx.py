@@ -179,11 +179,13 @@ class WhisperXTranscriptionEngine(ITranscriptionEngine):
 
         # Transcribe
         logger.info("Starting transcription...")
-        result = self._model.transcribe(
-            audio,
-            batch_size=options.batch_size,
-            language=options.language,
-        )
+        transcribe_kwargs: dict[str, Any] = {
+            "batch_size": options.batch_size,
+            "language": options.language,
+        }
+        if options.initial_prompt:
+            transcribe_kwargs["initial_prompt"] = options.initial_prompt
+        result = self._model.transcribe(audio, **transcribe_kwargs)
 
         detected_language = result.get("language", options.language or "en")
         logger.info("Transcription complete. Detected language: %s", detected_language)
@@ -249,11 +251,13 @@ class WhisperXTranscriptionEngine(ITranscriptionEngine):
         )
 
         # Transcribe
-        result = self._model.transcribe(
-            audio,
-            batch_size=options.batch_size,
-            language=options.language,
-        )
+        transcribe_kwargs: dict[str, Any] = {
+            "batch_size": options.batch_size,
+            "language": options.language,
+        }
+        if options.initial_prompt:
+            transcribe_kwargs["initial_prompt"] = options.initial_prompt
+        result = self._model.transcribe(audio, **transcribe_kwargs)
 
         detected_language = result.get("language", options.language or "en")
 

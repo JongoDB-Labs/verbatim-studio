@@ -406,6 +406,9 @@ async def handle_transcription(
         if recording is None:
             raise ValueError(f"Recording not found: {recording_id}")
 
+        # Capture project_id for custom dictionary lookup
+        project_id = getattr(recording, "project_id", None)
+
         # Update recording status to processing
         await session.execute(
             update(Recording).where(Recording.id == recording_id).values(status="processing")
@@ -460,12 +463,24 @@ async def handle_transcription(
                 audio_path = preprocessed_path
                 logger.info("Audio preprocessed: %s -> %s", original_audio_path, preprocessed_path)
 
+        # Load custom dictionary for initial_prompt
+        initial_prompt = None
+        try:
+            from services.custom_dictionary import build_initial_prompt, load_dictionary_entries
+            entries = await load_dictionary_entries(project_id=project_id)
+            initial_prompt = build_initial_prompt(entries, project_id=project_id)
+            if initial_prompt:
+                logger.info("Using custom dictionary prompt (%d chars)", len(initial_prompt))
+        except Exception as e:
+            logger.warning("Failed to load custom dictionary: %s", e)
+
         # Run transcription with streaming progress
         options = TranscriptionOptions(
             language=language,
             model_size=effective["model"],
             compute_type=effective["compute_type"],
             batch_size=effective["batch_size"],
+            initial_prompt=initial_prompt,
         )
 
         # Serialize GPU-heavy operations so concurrent uploads don't OOM-crash.

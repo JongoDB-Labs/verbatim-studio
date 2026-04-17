@@ -227,3 +227,7 @@ async def _run_migrations(conn) -> None:
     # Add deleted_at column for trash/recycle-bin support
     from migrations.add_trash_columns import migrate as migrate_trash_columns
     await conn.run_sync(lambda _: migrate_trash_columns(db_path))
+
+    # Add custom_dictionary table for domain-specific transcription terms
+    from migrations.add_custom_dictionary import migrate as migrate_custom_dictionary
+    await conn.run_sync(lambda _: migrate_custom_dictionary(db_path))
