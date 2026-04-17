@@ -547,9 +547,20 @@ async def get_ai_status() -> AIStatusResponse:
     factory = get_factory()
     ai_service = factory.create_ai_service()
 
-    available = await ai_service.is_available()
+    try:
+        available = await ai_service.is_available()
+    except Exception as exc:
+        logger.error("AI availability check failed: %s", exc)
+        available = False
     info = await ai_service.get_service_info()
     models = await ai_service.get_available_models() if available else []
+
+    logger.info(
+        "AI status: available=%s, model_path=%s, deps=%s",
+        available,
+        settings.AI_MODEL_PATH,
+        _check_llm_deps_installed(),
+    )
 
     return AIStatusResponse(
         available=available,

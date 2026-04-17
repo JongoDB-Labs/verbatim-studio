@@ -77,18 +77,30 @@ class BackendManager extends EventEmitter {
     const userDataDir = app.getPath('userData');
     let extendedPath: string;
     if (process.platform === 'win32') {
-      // Windows: prepend CUDA DLLs + FFmpeg to PATH.
+      // Windows: prepend FFmpeg (and optionally CUDA DLLs) to PATH.
       // Prefer bundled paths (Program Files — trusted by Application Control)
       // over migrated copies in AppData which may be blocked by AppLocker/WDAC.
+      //
+      // CUDA DLLs are optional — they enable GPU-accelerated transcription but
+      // Smart App Control (SAC) may block unsigned DLLs. The app works fine
+      // in CPU mode without them. When the user installs GPU acceleration via
+      // Settings, PyTorch brings its own signed CUDA runtime.
       const bundledCudaPath = path.join(process.resourcesPath, 'cuda');
       const userCudaPath = path.join(userDataDir, 'cuda');
-      const cudaPath = fs.existsSync(bundledCudaPath) ? bundledCudaPath : userCudaPath;
+      const cudaPath = fs.existsSync(bundledCudaPath) ? bundledCudaPath
+        : fs.existsSync(userCudaPath) ? userCudaPath : null;
 
       const bundledFfmpegPath = path.join(process.resourcesPath, 'ffmpeg');
       const userFfmpegPath = path.join(userDataDir, 'ffmpeg');
       const ffmpegPath = fs.existsSync(bundledFfmpegPath) ? bundledFfmpegPath : userFfmpegPath;
 
-      extendedPath = [cudaPath, ffmpegPath, process.env.PATH || ''].join(';');
+      const pathParts = [ffmpegPath, process.env.PATH || ''];
+      if (cudaPath) {
+        // Prepend CUDA path — may be blocked by Smart App Control on some systems
+        // but won't break the app (GPU features just fall back to CPU)
+        pathParts.unshift(cudaPath);
+      }
+      extendedPath = pathParts.join(';');
     } else {
       // macOS/Linux: add user data FFmpeg + common binary paths
       const userFfmpegPath = path.join(userDataDir, 'ffmpeg');

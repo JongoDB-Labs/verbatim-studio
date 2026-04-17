@@ -1,10 +1,21 @@
-import { BrowserWindow, shell, app } from 'electron';
+import { BrowserWindow, shell, app, session } from 'electron';
 import path from 'path';
 import { backendManager } from './backend';
 
 export function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, '../preload/index.js');
   console.log('[Window] Preload path:', preloadPath);
+
+  // Grant microphone/camera permissions so live transcription and voice
+  // chat work without "requested device not found" errors on Windows.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    const allowed = ['media', 'mediaKeySystem', 'audioCapture'].includes(permission);
+    console.log(`[Permission] ${permission}: ${allowed ? 'granted' : 'denied'}`);
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    return ['media', 'mediaKeySystem', 'audioCapture'].includes(permission);
+  });
 
   const mainWindow = new BrowserWindow({
     width: 1400,
