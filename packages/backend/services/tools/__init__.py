@@ -15,6 +15,9 @@ def register_all_tools(registry: ToolRegistry) -> None:
     from services.tools.context_tool import context_tool
     registry.register(context_tool)
 
+    from services.tools.semantic_search_tool import semantic_search_tool
+    registry.register(semantic_search_tool)
+
     from services.tools.help_tool import help_tool
     registry.register(help_tool)
 
