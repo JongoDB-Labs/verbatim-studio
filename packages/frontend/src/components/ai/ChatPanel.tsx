@@ -156,10 +156,15 @@ export function ChatPanel({
         }
       } else {
         console.error('Chat error:', error);
+        const detail = error instanceof Error ? error.message : String(error);
+        // Surface actionable errors (e.g. Smart App Control blocking the AI model)
+        const isSacError = detail.includes('Smart App Control') || detail.includes('0xc000001d');
         const errorMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.',
+          content: isSacError
+            ? `The AI model was blocked by Windows Smart App Control. To fix this, open **Windows Security → App & Browser Control → Smart App Control** and set it to **Off**, then restart Verbatim Studio.`
+            : `Sorry, I encountered an error. Please try again.\n\n*${detail}*`,
         };
         setMessages((prev) => [...prev, errorMessage]);
       }

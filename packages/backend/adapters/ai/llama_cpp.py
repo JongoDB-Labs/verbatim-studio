@@ -200,12 +200,33 @@ class LlamaCppAIService(IAIService):
             self._n_gpu_layers,
         )
 
-        self._llm = Llama(
-            model_path=self._model_path,
-            n_ctx=self._n_ctx,
-            n_gpu_layers=self._n_gpu_layers,
-            verbose=False,
-        )
+        try:
+            self._llm = Llama(
+                model_path=self._model_path,
+                n_ctx=self._n_ctx,
+                n_gpu_layers=self._n_gpu_layers,
+                verbose=False,
+            )
+        except OSError as e:
+            error_str = str(e)
+            # Windows Error 0xc000001d = STATUS_ILLEGAL_INSTRUCTION.
+            # This typically means Smart App Control (SAC) or Windows Defender
+            # Application Control (WDAC) is blocking the native llama.dll
+            # from executing.  Provide a clear diagnostic message.
+            if "0xc000001d" in error_str or "-1073741795" in error_str:
+                logger.error(
+                    "llama.cpp native library blocked by Windows security policy "
+                    "(STATUS_ILLEGAL_INSTRUCTION). Smart App Control or WDAC is "
+                    "preventing the AI model from loading. To fix: open Windows "
+                    "Security → App & Browser Control → Smart App Control and "
+                    "set it to Off, then restart Verbatim Studio."
+                )
+                raise OSError(
+                    "AI model blocked by Windows Smart App Control. "
+                    "Open Windows Security → App & Browser Control → "
+                    "Smart App Control → Off, then restart the app."
+                ) from e
+            raise
 
         logger.info(
             "Model loaded successfully — context window: %dK tokens (%d). "
