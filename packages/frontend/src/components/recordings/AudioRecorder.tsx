@@ -124,10 +124,22 @@ export function AudioRecorder({ onRecordingComplete, onCancel, audioBitsPerSecon
       updateAudioLevel();
     } catch (err) {
       console.error('Failed to start recording:', err);
-      if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        setError('Microphone access denied. Please allow microphone access and try again.');
+      if (err instanceof DOMException) {
+        switch (err.name) {
+          case 'NotAllowedError':
+            setError('Microphone access denied. Please allow microphone access in your system settings.');
+            break;
+          case 'NotFoundError':
+            setError('No microphone found. Please connect a microphone and try again.');
+            break;
+          case 'NotReadableError':
+            setError('Microphone is in use by another application. Please close it and try again.');
+            break;
+          default:
+            setError(`Recording failed: ${err.name} — ${err.message}`);
+        }
       } else {
-        setError('Failed to start recording. Please check your microphone.');
+        setError(`Failed to start recording: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     }
   };

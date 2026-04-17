@@ -468,8 +468,9 @@ export async function startUpdate(downloadUrl: string, version: string): Promise
       // Notify the UI that the update is ready
       safeSend('update-ready', { version });
 
-      // Launch the NSIS installer silently and detached
-      const child = spawn(installerPath, ['/S'], {
+      // Launch the NSIS installer silently and detached.
+      // --force-run forces the app to relaunch after install completes.
+      const child = spawn(installerPath, ['/S', '--force-run'], {
         detached: true,
         stdio: 'ignore',
       });
