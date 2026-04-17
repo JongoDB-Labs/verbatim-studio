@@ -51,6 +51,7 @@ function handleInvalidation(
   switch (resource) {
     case 'recordings':
       queryClient.invalidateQueries({ queryKey: queryKeys.recordings.all, ...refetchOptions });
+      queryClient.invalidateQueries({ queryKey: queryKeys.recordings.archived(), ...refetchOptions });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats, ...refetchOptions });
       queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all, ...refetchOptions });
       break;

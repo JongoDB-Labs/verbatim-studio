@@ -76,6 +76,7 @@ export function useDeleteRecording() {
     onSettled: () => {
       // Refetch to ensure consistency (WebSocket will also trigger this)
       queryClient.invalidateQueries({ queryKey: queryKeys.recordings.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.recordings.archived() });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats });
     },
   });
@@ -121,6 +122,7 @@ export function useBulkDeleteRecordings() {
 
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.recordings.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.recordings.archived() });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats });
     },
   });

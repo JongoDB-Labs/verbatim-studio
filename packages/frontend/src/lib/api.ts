@@ -205,6 +205,8 @@ export interface Recording {
   metadata: Record<string, unknown>;
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   tag_ids: string[];
+  is_archived: boolean;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
