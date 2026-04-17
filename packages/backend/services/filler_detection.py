@@ -80,9 +80,6 @@ _SINGLE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 _LIKE_PATTERN: re.Pattern[str] = _word_pattern("like")
 
-# Pattern to find the word immediately before "like"
-_WORD_BEFORE_LIKE = re.compile(r"(\S+)\s+like(?!\w)", re.IGNORECASE)
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
