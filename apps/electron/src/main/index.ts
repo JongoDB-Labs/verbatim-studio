@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, protocol } from 'electron';
 import path from 'path';
 import { createMainWindow, navigateToPath } from './windows';
 import { backendManager } from './backend';
@@ -8,6 +8,14 @@ import { initAutoUpdater } from './updater';
 import { migrateResourcesToUserData } from './resource-migration';
 import { bootstrapBundledModels } from './bootstrap-models';
 import { createSplashWindow, updateSplashStatus, closeSplashWindow, focusSplashWindow } from './splash';
+
+// Mark file:// as a secure context so that navigator.mediaDevices.getUserMedia()
+// works on Windows. Without this, Chromium treats file:// as insecure and hides
+// all audio/video input devices (getUserMedia returns NotFoundError).
+// Must be called before the 'ready' event.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'file', privileges: { secure: true, supportFetchAPI: true, stream: true } },
+]);
 
 // Register verbatim:// protocol for deep linking from browser extension
 if (process.defaultApp) {
