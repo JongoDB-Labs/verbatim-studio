@@ -1,0 +1,37 @@
+name: Sync Release Notes to Public Repo
+
+# Automatically copies release notes from this repo to verbatim-studio-releases
+# whenever a release is created, edited, or published. This ensures the public
+# releases repo (where users download from) always has the polished notes.
+
+on:
+  release:
+    types: [published, edited]
+
+jobs:
+  sync-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync release notes to public releases repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          BODY: ${{ github.event.release.body }}
+        run: |
+          echo "Syncing notes for $TAG to verbatim-studio-releases..."
+
+          # Write body to temp file to avoid shell injection from release notes content
+          TMPFILE=$(mktemp)
+          printf '%s' "$BODY" > "$TMPFILE"
+
+          # Check if the release exists in the target repo
+          if gh release view "$TAG" --repo JongoDB/verbatim-studio-releases > /dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --repo JongoDB/verbatim-studio-releases \
+              --notes-file "$TMPFILE"
+            echo "Updated release notes for $TAG"
+          else
+            echo "Release $TAG does not exist in verbatim-studio-releases (no build artifacts). Skipping."
+          fi
+
+          rm -f "$TMPFILE"
