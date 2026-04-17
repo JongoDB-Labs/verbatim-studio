@@ -7,7 +7,7 @@ import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 import { migrateResourcesToUserData } from './resource-migration';
 import { bootstrapBundledModels } from './bootstrap-models';
-import { createSplashWindow, updateSplashStatus, closeSplashWindow } from './splash';
+import { createSplashWindow, updateSplashStatus, closeSplashWindow, focusSplashWindow } from './splash';
 
 // Register verbatim:// protocol for deep linking from browser extension
 if (process.defaultApp) {
@@ -224,6 +224,10 @@ app.on('second-instance', (_event, argv) => {
     } else if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+    } else {
+      // Main window not ready yet (bootstrap still in progress) —
+      // bring the splash screen to the foreground so the user sees it
+      focusSplashWindow();
     }
   } catch (error) {
     console.error('[Main] Error handling second instance:', error);

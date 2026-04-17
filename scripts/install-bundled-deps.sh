@@ -70,9 +70,17 @@ echo "Installing setuptools with pkg_resources..."
 # =============================================================================
 echo ""
 echo "=== Installing Core Dependencies ==="
+# On Windows, llama-cpp-python needs pre-built CPU wheels from the custom index.
+# Standard PyPI has no pre-built Windows wheels (requires CMake/MSVC to build).
+CORE_EXTRA_ARGS=""
+if [ "$PLATFORM" = "windows" ]; then
+  CORE_EXTRA_ARGS="--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+  echo "  (using pre-built llama-cpp-python CPU wheels for Windows)"
+fi
 "$PYTHON_BIN" -m pip install \
   --target "$SITE_PACKAGES" \
   --upgrade \
+  $CORE_EXTRA_ARGS \
   -r "$REQUIREMENTS_CORE"
 
 # =============================================================================

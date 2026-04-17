@@ -99,6 +99,13 @@ export function createSplashWindow(): BrowserWindow {
 
   splashWindow.once('ready-to-show', () => {
     splashWindow?.show();
+    // On Windows, bring the splash to the foreground reliably —
+    // without this the window may appear behind others on the first click
+    if (process.platform === 'win32') {
+      splashWindow?.setAlwaysOnTop(true);
+      splashWindow?.focus();
+      setTimeout(() => splashWindow?.setAlwaysOnTop(false), 500);
+    }
   });
 
   return splashWindow;
@@ -110,6 +117,12 @@ export function updateSplashStatus(text: string): void {
   splashWindow.webContents
     .executeJavaScript(`document.getElementById('status').textContent='${safe}';`)
     .catch(() => {});
+}
+
+export function focusSplashWindow(): void {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  if (splashWindow.isMinimized()) splashWindow.restore();
+  splashWindow.focus();
 }
 
 export function closeSplashWindow(): void {
