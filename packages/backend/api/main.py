@@ -99,6 +99,7 @@ from api.routes.quality_review import router as quality_review_router
 from api.routes.voice import router as voice_router
 from api.routes.filler_detection import router as filler_router
 from api.routes.dictionary import router as dictionary_router
+from api.routes.calendar import router as calendar_router
 from core.config import settings
 from persistence import init_db
 from core.plugins import load_plugins, get_registry
@@ -256,6 +257,7 @@ app.include_router(quality_review_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")
 app.include_router(filler_router, prefix="/api")
 app.include_router(dictionary_router, prefix="/api")
+app.include_router(calendar_router, prefix="/api")
 
 
 @app.get("/api/plugins/manifest")
