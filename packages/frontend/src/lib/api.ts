@@ -1152,6 +1152,9 @@ export interface TranscriptionSettings {
   external_api_key_masked: string | null;
   is_enterprise: boolean;
 
+  noise_reduction: boolean;
+  normalize_audio: boolean;
+
   available_models: string[];
   available_devices: string[];
   available_compute_types: string[];
@@ -1167,6 +1170,8 @@ export interface TranscriptionSettingsUpdate {
   batch_size?: number;
   diarize?: boolean;
   hf_token?: string;
+  noise_reduction?: boolean;
+  normalize_audio?: boolean;
   // External WhisperX (enterprise feature)
   external_url?: string;
   external_api_key?: string;
@@ -1194,6 +1199,68 @@ export interface WebSearchSettings {
 export interface WebSearchSettingsUpdate {
   provider?: string;
   api_key?: string;
+}
+
+// Filler Detection Types
+export interface FillerMatch {
+  word: string;
+  start_char: number;
+  end_char: number;
+  type: 'single' | 'phrase' | 'context';
+}
+
+export interface SegmentFillers {
+  segment_id: string;
+  segment_index: number;
+  text: string;
+  fillers: FillerMatch[];
+}
+
+export interface FillerSummary {
+  total_fillers: number;
+  segments_with_fillers: number;
+  total_segments: number;
+  filler_counts: Record<string, number>;
+}
+
+export interface FillerDetectionResponse {
+  transcript_id: string;
+  segments: SegmentFillers[];
+  summary: FillerSummary;
+}
+
+// Custom Dictionary Types
+export interface DictionaryEntry {
+  id: string;
+  term: string;
+  category: string;
+  project_id: string | null;
+  created_at: string;
+}
+
+export interface DictionaryListResponse {
+  entries: DictionaryEntry[];
+}
+
+// Calendar Types
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start_time: string | null;
+  end_time: string | null;
+  meeting_url: string | null;
+  has_video_link: boolean;
+  attendees: string[] | null;
+  description: string | null;
+}
+
+// Post-Transcription Settings
+export interface PostTranscriptionSettings {
+  auto_summarize: boolean;
+  auto_export: {
+    enabled: boolean;
+    format: string;
+  };
 }
 
 // System Info Types
@@ -3176,6 +3243,61 @@ class ApiClient {
           }),
         },
       ),
+  };
+
+  // Filler Detection
+  fillerDetection = {
+    analyze: (transcriptId: string) =>
+      this.request<FillerDetectionResponse>(`/api/transcripts/${transcriptId}/fillers`, {
+        method: 'POST',
+      }),
+  };
+
+  // Custom Dictionary
+  dictionary = {
+    list: (projectId?: string) => {
+      const params = projectId ? `?project_id=${projectId}` : '';
+      return this.request<DictionaryListResponse>(`/api/dictionary${params}`);
+    },
+
+    add: (term: string, category: string = 'general', projectId?: string) =>
+      this.request<DictionaryEntry>('/api/dictionary', {
+        method: 'POST',
+        body: JSON.stringify({ term, category, project_id: projectId }),
+      }),
+
+    remove: (entryId: string) =>
+      this.request<{ deleted: boolean }>(`/api/dictionary/${entryId}`, {
+        method: 'DELETE',
+      }),
+
+    clear: (projectId?: string) => {
+      const params = projectId ? `?project_id=${projectId}` : '';
+      return this.request<{ deleted: number }>(`/api/dictionary${params}`, {
+        method: 'DELETE',
+      });
+    },
+  };
+
+  // Calendar
+  calendar = {
+    events: (maxResults: number = 10) =>
+      this.request<CalendarEvent[]>(`/api/calendar/events?max_results=${maxResults}`),
+  };
+
+  // Post-Transcription Settings
+  postTranscription = {
+    get: () =>
+      this.request<PostTranscriptionSettings>('/api/config/post-transcription').catch(() => ({
+        auto_summarize: false,
+        auto_export: { enabled: false, format: 'txt' },
+      })),
+
+    update: (data: Partial<PostTranscriptionSettings>) =>
+      this.request<PostTranscriptionSettings>('/api/config/post-transcription', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
   };
 }
 
