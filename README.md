@@ -188,6 +188,12 @@ All AI runs on your machine. Download and manage models directly from the settin
   <img src="docs/screenshots/settings-ai.png" alt="AI Model Management" width="100%">
 </p>
 
+### Chrome Extension
+
+Bring Verbatim Studio into your browser — record audio, capture screens, chat with Max, upload files, and search your library without leaving your tab. The extension connects to your local desktop app, so everything stays private.
+
+[Install from Chrome Web Store](https://chromewebstore.google.com/detail/verbatim-studio/jpknobicnnjnjcgdfaglnjnjmgijlahm)
+
 ---
 
 ## Installation
