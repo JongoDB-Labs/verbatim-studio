@@ -30,8 +30,11 @@ async def _get_google_access_token() -> str:
         ):
             return info["tokens"]["access_token"]
 
+    # Return 422 (not 401) — missing OAuth is a configuration issue, not
+    # an authentication failure.  A 401 here triggers the global auth
+    # interceptor in the frontend and shows the enterprise login page.
     raise HTTPException(
-        status_code=401,
+        status_code=422,
         detail="No Google OAuth credentials configured. "
         "Please connect your Google account in Settings > Integrations.",
     )
@@ -56,7 +59,7 @@ async def get_upcoming_events(
         events = await svc.get_upcoming_events(max_results=max_results)
     except PermissionError:
         raise HTTPException(
-            status_code=401,
+            status_code=422,
             detail="Google OAuth token is expired or invalid. Please re-authenticate.",
         )
     except RuntimeError as exc:

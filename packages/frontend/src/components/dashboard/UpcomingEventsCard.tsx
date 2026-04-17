@@ -19,7 +19,7 @@ export function UpcomingEventsCard() {
       setError(null);
       setNeedsAuth(false);
     } catch (err: any) {
-      if (err?.message?.includes('401') || err?.message?.includes('credentials')) {
+      if (err?.message?.includes('401') || err?.message?.includes('422') || err?.message?.includes('credentials')) {
         setNeedsAuth(true);
       } else {
         setError('Could not load calendar');
