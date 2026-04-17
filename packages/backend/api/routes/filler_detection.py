@@ -89,7 +89,9 @@ async def detect_transcript_fillers(
     seg_lookup = {seg.id: seg for seg in db_segments}
 
     for seg_id, matches in filler_map.items():
-        seg = seg_lookup[seg_id]
+        seg = seg_lookup.get(seg_id)
+        if seg is None:
+            continue
         fillers = [
             FillerMatchResponse(
                 word=m.word,
