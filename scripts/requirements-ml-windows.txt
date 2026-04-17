@@ -56,4 +56,6 @@ numpy==2.0.2
 livekit-api>=1.1.0
 livekit-agents>=1.5.0
 livekit-plugins-silero>=1.5.0
+livekit-protocol>=1.1.0
+livekit>=1.1.0
 # kokoro-onnx>=0.4.0         # on-demand install (onnxruntime ~200MB)
