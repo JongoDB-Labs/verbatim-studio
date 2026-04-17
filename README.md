@@ -113,6 +113,9 @@ Out of the box, only transcription uses your NVIDIA GPU (via CTranslate2). To ac
 - **Automatic speaker identification** — Know who said what without manual tagging
 - **Live transcription** — Real-time speech-to-text from your microphone
 - **Video support** — Drop in MP4, MOV, WebM, or MKV files and get transcripts automatically
+- **Audio enhancement** — Noise reduction and volume normalization improve accuracy on noisy recordings
+- **Custom dictionary** — Add domain-specific terms (medical, legal, brand names) to boost transcription accuracy
+- **Filler word detection** — Identify and analyze verbal fillers (um, uh, like, you know) across your transcripts
 
 <p align="center">
   <img src="docs/screenshots/transcript-editor.png" alt="Transcript Editor with Speaker Diarization and AI Analysis" width="100%">
@@ -138,6 +141,8 @@ Max isn't just a chatbot—it's a research tool that actually understands your c
 - **OCR built-in** — Extract text from scanned documents and images automatically
 - **Smart delegation** — Granite Tiny handles quick replies; main LLM tackles complex questions
 - **Tool calling** — Max can search your library, export transcripts, and more
+- **Transcript translation** — Translate transcripts to 25+ languages directly from the transcript view or chat
+- **Filler word analysis** — Ask Max to analyze filler word usage patterns in any transcript
 
 All powered by IBM Granite, running 100% locally. No API keys. No usage limits. No data leaving your machine.
 
@@ -179,6 +184,8 @@ Upload PDFs and images for automatic text extraction. The built-in OCR model (Qw
 - **Bulk operations** — Select multiple files and act on them at once
 - **Flexible storage** — Keep files local, on network drives, or synced with Google Drive, OneDrive, and Dropbox
 - **Full exports** — TXT, SRT, VTT, DOCX, PDF, JSON, or complete backup archives
+- **Post-transcription automation** — Auto-summarize and auto-export when transcription completes
+- **Google Calendar integration** — View upcoming meetings with video links on your dashboard
 
 ### Local AI Models
 
@@ -324,7 +331,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## Roadmap
 
-### Current Release (v0.62.x)
+### Current Release (v0.63.x)
 
 **Core Platform**
 - [x] Native macOS desktop app (Apple Silicon optimized)
@@ -362,6 +369,15 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 - [x] Export to TXT, SRT, VTT, DOCX, PDF, JSON
 - [x] AI summary and speaker statistics in exports
 - [x] Map-reduce summarization for long transcripts
+
+**New in v0.63.0**
+- [x] Filler word detection and analysis (um, uh, like, you know)
+- [x] Audio noise reduction and volume normalization
+- [x] Custom dictionary for domain-specific transcription accuracy
+- [x] Transcript translation to 25+ languages via Max
+- [x] Google Calendar integration with upcoming meetings on dashboard
+- [x] Post-transcription automation (auto-summarize, auto-export)
+- [x] Translate button in transcript view
 
 ### Planned
 
