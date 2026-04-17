@@ -543,3 +543,110 @@ async def delete_oauth_credentials_endpoint(provider: str) -> dict[str, bool]:
 
     deleted = await delete_oauth_credentials(provider)
     return {"deleted": deleted}
+
+
+# --- Trash Settings ---
+
+
+class TrashSettingsResponse(BaseModel):
+    """Trash/recycle-bin configuration."""
+
+    auto_purge_days: int
+
+
+class TrashSettingsUpdate(BaseModel):
+    """Update trash settings."""
+
+    auto_purge_days: int | None = None
+
+
+@router.get("/trash", response_model=TrashSettingsResponse)
+async def get_trash_config() -> TrashSettingsResponse:
+    """Get trash auto-purge settings."""
+    from services.trash import get_trash_settings
+
+    settings = await get_trash_settings()
+    return TrashSettingsResponse(**settings)
+
+
+@router.put("/trash", response_model=TrashSettingsResponse)
+async def update_trash_config(body: TrashSettingsUpdate) -> TrashSettingsResponse:
+    """Update trash auto-purge settings."""
+    from services.trash import VALID_PURGE_OPTIONS, save_trash_settings
+
+    updates: dict = {}
+
+    if body.auto_purge_days is not None:
+        if body.auto_purge_days not in VALID_PURGE_OPTIONS:
+            raise HTTPException(
+                400,
+                f"Invalid auto_purge_days: {body.auto_purge_days}. "
+                f"Must be one of: {VALID_PURGE_OPTIONS}",
+            )
+        updates["auto_purge_days"] = body.auto_purge_days
+
+    if not updates:
+        raise HTTPException(400, "No valid fields provided")
+
+    result = await save_trash_settings(updates)
+    return TrashSettingsResponse(**result)
+
+
+@router.post("/trash/empty")
+async def empty_trash() -> dict:
+    """Permanently delete all items in trash."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from api.routes.sync import broadcast
+    from persistence.database import get_session_factory
+    from persistence.models import Document, Project, Recording
+    from services.storage import StorageService
+
+    storage = StorageService()
+    purged = 0
+
+    async with get_session_factory()() as session:
+        # Delete all trashed recordings
+        result = await session.execute(
+            select(Recording).where(Recording.is_archived == True)
+        )
+        for rec in result.scalars().all():
+            if rec.file_path:
+                try:
+                    await storage.delete_file(rec.file_path, rec.storage_location_id)
+                except Exception:
+                    pass
+            await session.delete(rec)
+            purged += 1
+
+        # Delete all trashed documents
+        result = await session.execute(
+            select(Document).where(Document.is_archived == True)
+        )
+        for doc in result.scalars().all():
+            if doc.file_path:
+                try:
+                    await storage.delete_file(doc.file_path, doc.storage_location_id)
+                except Exception:
+                    pass
+            await session.delete(doc)
+            purged += 1
+
+        # Delete all trashed projects
+        result = await session.execute(
+            select(Project).where(Project.is_archived == True)
+        )
+        for project in result.scalars().all():
+            await session.delete(project)
+            purged += 1
+
+        if purged:
+            await session.commit()
+
+    await broadcast("recordings", "deleted")
+    await broadcast("documents", "deleted")
+    await broadcast("projects", "deleted")
+
+    return {"purged": purged, "message": f"Permanently deleted {purged} item(s)"}

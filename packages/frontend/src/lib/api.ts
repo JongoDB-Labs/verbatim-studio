@@ -1787,6 +1787,9 @@ class ApiClient {
     unarchive: (id: string) =>
       this.request<{ message: string }>(`/api/recordings/${id}/unarchive`, { method: 'PATCH' }),
 
+    permanentDelete: (id: string) =>
+      this.request<MessageResponse>(`/api/recordings/${id}/permanent`, { method: 'DELETE' }),
+
     listArchived: (params?: { search?: string; page?: number; page_size?: number }) => {
       const searchParams = new URLSearchParams();
       if (params?.search) searchParams.set('search', params.search);
@@ -2544,6 +2547,9 @@ class ApiClient {
     unarchive: (id: string) =>
       this.request<{ message: string; id: string }>(`/api/projects/${id}/unarchive`, { method: 'PATCH' }),
 
+    permanentDelete: (id: string) =>
+      this.request<MessageResponse>(`/api/projects/${id}/permanent`, { method: 'DELETE' }),
+
     getSections: (id: string) =>
       this.request<{ recordings: number; documents: number; notes: number }>(`/api/projects/${id}/sections`),
 
@@ -2715,6 +2721,9 @@ class ApiClient {
     unarchive: (id: string) =>
       this.request<{ message: string }>(`/api/documents/${id}/unarchive`, { method: 'PATCH' }),
 
+    permanentDelete: (id: string) =>
+      this.request<MessageResponse>(`/api/documents/${id}/permanent`, { method: 'DELETE' }),
+
     listArchived: (params?: { search?: string; page?: number; page_size?: number }) => {
       const searchParams = new URLSearchParams();
       if (params?.search) searchParams.set('search', params.search);
@@ -2870,6 +2879,21 @@ class ApiClient {
     deleteOAuthCredentials: (provider: string) =>
       this.request<{ deleted: boolean }>(`/api/config/oauth-credentials/${provider}`, {
         method: 'DELETE',
+      }),
+
+    getTrashSettings: () =>
+      this.request<{ auto_purge_days: number }>('/api/config/trash'),
+
+    updateTrashSettings: (data: { auto_purge_days: number }) =>
+      this.request<{ auto_purge_days: number }>('/api/config/trash', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }),
+
+    emptyTrash: () =>
+      this.request<{ purged: number; message: string }>('/api/config/trash/empty', {
+        method: 'POST',
       }),
   };
 

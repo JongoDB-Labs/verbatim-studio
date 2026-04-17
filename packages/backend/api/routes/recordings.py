@@ -4,7 +4,7 @@ import asyncio
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -151,6 +151,7 @@ class RecordingResponse(BaseModel):
     status: str
     tag_ids: list[str] = Field(default_factory=list)
     is_archived: bool = False
+    deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -229,6 +230,7 @@ def _recording_to_response(
         status=recording.status,
         tag_ids=tag_ids if tag_ids is not None else [],
         is_archived=recording.is_archived,
+        deleted_at=recording.deleted_at,
         created_at=recording.created_at,
         updated_at=recording.updated_at,
     )
@@ -850,21 +852,27 @@ async def bulk_delete_recordings(
     body: BulkIdsRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
-    """Delete multiple recordings and their files."""
+    """Soft-delete multiple recordings (move to trash)."""
     result = await db.execute(select(Recording).where(Recording.id.in_(body.ids)))
     recordings = result.scalars().all()
+    now = datetime.now(timezone.utc)
 
     for recording in recordings:
         if recording.file_path:
             try:
-                await storage_service.delete_file(recording.file_path, recording.storage_location_id)
+                new_path = await storage_service.move_to_trash(
+                    recording.file_path, recording.storage_location_id
+                )
+                if new_path:
+                    recording.file_path = str(new_path)
             except Exception as e:
-                logger.warning(f"Failed to delete file {recording.file_path}: {e}")
-        await db.delete(recording)
+                logger.warning(f"Failed to move file to trash {recording.file_path}: {e}")
+        recording.is_archived = True
+        recording.deleted_at = now
 
     await db.commit()
     await broadcast("recordings", "deleted")
-    return MessageResponse(message=f"Deleted {len(recordings)} recording(s)")
+    return MessageResponse(message=f"Moved {len(recordings)} recording(s) to trash")
 
 
 @router.post("/bulk-assign", response_model=MessageResponse)
@@ -1134,17 +1142,10 @@ async def delete_recording(
     recording_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
-    """Delete a recording and its associated file.
+    """Soft-delete a recording (move to trash).
 
-    Args:
-        recording_id: The recording's unique ID.
-        db: Database session.
-
-    Returns:
-        Confirmation message.
-
-    Raises:
-        HTTPException: If recording not found.
+    The file is moved to the _trash folder and can be restored later.
+    Use DELETE /{recording_id}/permanent to permanently destroy.
     """
     result = await db.execute(select(Recording).where(Recording.id == recording_id))
     recording = result.scalar_one_or_none()
@@ -1155,23 +1156,55 @@ async def delete_recording(
             detail=f"Recording not found: {recording_id}",
         )
 
-    # Delete the file from storage
+    # Move file to trash folder
+    if recording.file_path:
+        try:
+            new_path = await storage_service.move_to_trash(
+                recording.file_path, recording.storage_location_id
+            )
+            if new_path:
+                recording.file_path = str(new_path)
+        except Exception as e:
+            logger.warning(f"Failed to move file to trash {recording.file_path}: {e}")
+
+    recording.is_archived = True
+    recording.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+    await broadcast("recordings", "deleted", recording_id)
+    await emit_event("recording.deleted", recording_id=recording_id)
+
+    return MessageResponse(
+        message="Recording moved to trash",
+        id=recording_id,
+    )
+
+
+@router.delete("/{recording_id}/permanent", response_model=MessageResponse)
+async def permanently_delete_recording(
+    recording_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Permanently delete a trashed recording and its file."""
+    result = await db.execute(select(Recording).where(Recording.id == recording_id))
+    recording = result.scalar_one_or_none()
+
+    if recording is None:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    if not recording.is_archived:
+        raise HTTPException(status_code=400, detail="Recording must be in trash before permanent deletion")
+
     if recording.file_path:
         try:
             await storage_service.delete_file(recording.file_path, recording.storage_location_id)
         except Exception as e:
             logger.warning(f"Failed to delete file {recording.file_path}: {e}")
 
-    # Delete the database record
     await db.delete(recording)
     await db.commit()
     await broadcast("recordings", "deleted", recording_id)
-    await emit_event("recording.deleted", recording_id=recording_id)
 
-    return MessageResponse(
-        message="Recording deleted successfully",
-        id=recording_id,
-    )
+    return MessageResponse(message="Recording permanently deleted", id=recording_id)
 
 
 @router.post("/{recording_id}/transcribe", response_model=TranscribeResponse)
@@ -1371,15 +1404,28 @@ async def archive_recording(
     db: Annotated[AsyncSession, Depends(get_db)],
     recording_id: str,
 ) -> MessageResponse:
-    """Archive a recording (soft-hide from listing)."""
+    """Archive a recording (moves to trash)."""
     result = await db.execute(select(Recording).where(Recording.id == recording_id))
     recording = result.scalar_one_or_none()
     if not recording:
         raise HTTPException(status_code=404, detail="Recording not found")
+
+    # Move file to trash folder
+    if recording.file_path and not recording.is_archived:
+        try:
+            new_path = await storage_service.move_to_trash(
+                recording.file_path, recording.storage_location_id
+            )
+            if new_path:
+                recording.file_path = str(new_path)
+        except Exception as e:
+            logger.warning(f"Failed to move file to trash: {e}")
+
     recording.is_archived = True
+    recording.deleted_at = recording.deleted_at or datetime.now(timezone.utc)
     await db.commit()
     await broadcast("recordings", "updated", recording_id)
-    return MessageResponse(message="Recording archived", id=recording_id)
+    return MessageResponse(message="Recording moved to trash", id=recording_id)
 
 
 @router.patch("/{recording_id}/unarchive", response_model=MessageResponse)
@@ -1387,12 +1433,25 @@ async def unarchive_recording(
     db: Annotated[AsyncSession, Depends(get_db)],
     recording_id: str,
 ) -> MessageResponse:
-    """Unarchive a recording."""
+    """Restore a recording from trash."""
     result = await db.execute(select(Recording).where(Recording.id == recording_id))
     recording = result.scalar_one_or_none()
     if not recording:
         raise HTTPException(status_code=404, detail="Recording not found")
+
+    # Restore file from trash folder
+    if recording.file_path and recording.is_archived:
+        try:
+            restored_path = await storage_service.restore_from_trash(
+                recording.file_path, recording.storage_location_id
+            )
+            if restored_path:
+                recording.file_path = str(restored_path)
+        except Exception as e:
+            logger.warning(f"Failed to restore file from trash: {e}")
+
     recording.is_archived = False
+    recording.deleted_at = None
     await db.commit()
     await broadcast("recordings", "updated", recording_id)
-    return MessageResponse(message="Recording unarchived", id=recording_id)
+    return MessageResponse(message="Recording restored", id=recording_id)

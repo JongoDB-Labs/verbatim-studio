@@ -1,7 +1,7 @@
 """Document management endpoints."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -60,6 +60,7 @@ class DocumentResponse(BaseModel):
     created_at: str
     updated_at: str
     is_archived: bool = False
+    deleted_at: str | None = None
     # Extracted content (only included when requested or for single doc)
     extracted_text: str | None = None
     extracted_markdown: str | None = None
@@ -111,6 +112,7 @@ def _doc_to_response(
         page_count=doc.page_count,
         metadata=doc.metadata_,
         is_archived=doc.is_archived,
+        deleted_at=doc.deleted_at.isoformat() if doc.deleted_at else None,
         created_at=doc.created_at.isoformat(),
         updated_at=doc.updated_at.isoformat(),
         extracted_text=doc.extracted_text if include_content else None,
@@ -423,21 +425,27 @@ async def bulk_delete_documents(
     body: BulkIdsRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
-    """Delete multiple documents and their files."""
+    """Soft-delete multiple documents (move to trash)."""
     result = await db.execute(select(Document).where(Document.id.in_(body.ids)))
     docs = result.scalars().all()
+    now = datetime.now(timezone.utc)
 
     for doc in docs:
         if doc.file_path:
             try:
-                await storage_service.delete_file(doc.file_path, doc.storage_location_id)
+                new_path = await storage_service.move_to_trash(
+                    doc.file_path, doc.storage_location_id
+                )
+                if new_path:
+                    doc.file_path = str(new_path)
             except Exception as e:
-                logger.warning(f"Failed to delete file {doc.file_path}: {e}")
-        await db.delete(doc)
+                logger.warning(f"Failed to move file to trash {doc.file_path}: {e}")
+        doc.is_archived = True
+        doc.deleted_at = now
 
     await db.commit()
     await broadcast("documents", "deleted")
-    return MessageResponse(message=f"Deleted {len(docs)} document(s)")
+    return MessageResponse(message=f"Moved {len(docs)} document(s) to trash")
 
 
 @router.post("/bulk-assign", response_model=MessageResponse)
@@ -626,22 +634,54 @@ async def delete_document(
     db: Annotated[AsyncSession, Depends(get_db)],
     document_id: str,
 ) -> MessageResponse:
-    """Delete a document and its file."""
+    """Soft-delete a document (move to trash)."""
     doc = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Delete file from storage
-    try:
-        await storage_service.delete_file(doc.file_path, doc.storage_location_id)
-    except Exception as e:
-        logger.warning(f"Failed to delete file {doc.file_path}: {e}")
+    # Move file to trash folder
+    if doc.file_path:
+        try:
+            new_path = await storage_service.move_to_trash(
+                doc.file_path, doc.storage_location_id
+            )
+            if new_path:
+                doc.file_path = str(new_path)
+        except Exception as e:
+            logger.warning(f"Failed to move file to trash {doc.file_path}: {e}")
+
+    doc.is_archived = True
+    doc.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await broadcast("documents", "deleted", document_id)
+    return MessageResponse(message="Document moved to trash", id=document_id)
+
+
+@router.delete("/{document_id}/permanent", response_model=MessageResponse)
+async def permanently_delete_document(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    document_id: str,
+) -> MessageResponse:
+    """Permanently delete a trashed document and its file."""
+    doc = await db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not doc.is_archived:
+        raise HTTPException(status_code=400, detail="Document must be in trash before permanent deletion")
+
+    if doc.file_path:
+        try:
+            await storage_service.delete_file(doc.file_path, doc.storage_location_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete file {doc.file_path}: {e}")
 
     await db.delete(doc)
     await db.commit()
 
     await broadcast("documents", "deleted", document_id)
-    return MessageResponse(message="Document deleted", id=document_id)
+    return MessageResponse(message="Document permanently deleted", id=document_id)
 
 
 class DocumentPropertiesResponse(BaseModel):
@@ -962,14 +1002,26 @@ async def archive_document(
     db: Annotated[AsyncSession, Depends(get_db)],
     document_id: str,
 ) -> MessageResponse:
-    """Archive a document (soft-hide from listing)."""
+    """Archive a document (moves to trash)."""
     doc = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.file_path and not doc.is_archived:
+        try:
+            new_path = await storage_service.move_to_trash(
+                doc.file_path, doc.storage_location_id
+            )
+            if new_path:
+                doc.file_path = str(new_path)
+        except Exception as e:
+            logger.warning(f"Failed to move file to trash: {e}")
+
     doc.is_archived = True
+    doc.deleted_at = doc.deleted_at or datetime.now(timezone.utc)
     await db.commit()
     await broadcast("documents", "updated", document_id)
-    return MessageResponse(message="Document archived", id=document_id)
+    return MessageResponse(message="Document moved to trash", id=document_id)
 
 
 @router.patch("/{document_id}/unarchive", response_model=MessageResponse)
@@ -977,11 +1029,23 @@ async def unarchive_document(
     db: Annotated[AsyncSession, Depends(get_db)],
     document_id: str,
 ) -> MessageResponse:
-    """Unarchive a document."""
+    """Restore a document from trash."""
     doc = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.file_path and doc.is_archived:
+        try:
+            restored_path = await storage_service.restore_from_trash(
+                doc.file_path, doc.storage_location_id
+            )
+            if restored_path:
+                doc.file_path = str(restored_path)
+        except Exception as e:
+            logger.warning(f"Failed to restore file from trash: {e}")
+
     doc.is_archived = False
+    doc.deleted_at = None
     await db.commit()
     await broadcast("documents", "updated", document_id)
-    return MessageResponse(message="Document unarchived", id=document_id)
+    return MessageResponse(message="Document restored", id=document_id)

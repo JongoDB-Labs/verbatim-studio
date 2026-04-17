@@ -433,9 +433,9 @@ export function ProjectDetailPage({
         >
           <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md mx-4">
             <div className="px-5 py-4">
-              <h2 className="text-lg font-semibold text-foreground">Delete Project</h2>
+              <h2 className="text-lg font-semibold text-foreground">Move Project to Trash</h2>
               <p className="text-sm text-muted-foreground mt-2">
-                Are you sure you want to delete "{project.name}"?
+                Move "{project.name}" to trash? You can restore it later.
               </p>
               {recordings.length > 0 && (
                 <div className="mt-4 space-y-3">
@@ -465,8 +465,8 @@ export function ProjectDetailPage({
                         className="mt-0.5"
                       />
                       <div>
-                        <p className="text-sm font-medium text-destructive">Delete all files</p>
-                        <p className="text-xs text-muted-foreground">Permanently delete all recordings and documents in this project</p>
+                        <p className="text-sm font-medium text-destructive">Also trash all files</p>
+                        <p className="text-xs text-muted-foreground">Move all recordings and documents to trash along with the project</p>
                       </div>
                     </label>
                   </div>

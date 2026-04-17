@@ -455,6 +455,133 @@ class StorageService:
             except FileNotFoundError:
                 return False
 
+    async def move_to_trash(
+        self,
+        file_path: Path | str,
+        storage_location_id: str | None = None,
+    ) -> Path | str | None:
+        """Move a file to the _trash folder, preserving its relative path.
+
+        Returns the new path, or None if the file didn't exist.
+        """
+        adapter, storage_type, _ = await self._resolve_adapter(storage_location_id)
+
+        if storage_type == "cloud":
+            old_path = str(file_path)
+            new_path = f"_trash/{old_path}"
+            try:
+                content = await adapter.read_file(old_path)
+                parts = new_path.rsplit("/", 1)
+                if len(parts) == 2:
+                    await adapter.ensure_directory(parts[0])
+                await adapter.write_file(new_path, content)
+                await adapter.delete_file(old_path)
+                logger.info("Moved cloud file to trash: %s -> %s", old_path, new_path)
+                return new_path
+            except Exception as e:
+                logger.warning("Failed to move cloud file to trash %s: %s", old_path, e)
+                return None
+        else:
+            storage_root = await get_active_storage_path()
+            if storage_root is None:
+                storage_root = self.media_dir
+
+            source = Path(file_path)
+            if not source.exists() and not source.is_absolute():
+                source = self.get_full_path(str(file_path))
+
+            if not source.exists():
+                logger.warning("File not found for trash move: %s", source)
+                return None
+
+            # Compute relative path from storage root, then put under _trash/
+            try:
+                relative = source.relative_to(storage_root)
+            except ValueError:
+                relative = Path(source.name)
+
+            trash_dest = storage_root / "_trash" / relative
+            await aiofiles.os.makedirs(trash_dest.parent, exist_ok=True)
+
+            # Handle collision
+            dest = trash_dest
+            counter = 1
+            while dest.exists():
+                dest = trash_dest.with_name(f"{trash_dest.stem}_{counter}{trash_dest.suffix}")
+                counter += 1
+
+            await aiofiles.os.rename(source, dest)
+            # Clean up empty parent directory
+            await self._pm.delete_folder_if_empty(source.parent)
+            logger.info("Moved file to trash: %s -> %s", source, dest)
+            return dest
+
+    async def restore_from_trash(
+        self,
+        trash_path: Path | str,
+        storage_location_id: str | None = None,
+    ) -> Path | str | None:
+        """Restore a file from _trash back to its original location.
+
+        Returns the restored path, or None if the trash file didn't exist.
+        """
+        adapter, storage_type, _ = await self._resolve_adapter(storage_location_id)
+
+        if storage_type == "cloud":
+            old_path = str(trash_path)
+            if old_path.startswith("_trash/"):
+                new_path = old_path[len("_trash/"):]
+            else:
+                new_path = old_path
+            try:
+                content = await adapter.read_file(old_path)
+                parts = new_path.rsplit("/", 1)
+                if len(parts) == 2:
+                    await adapter.ensure_directory(parts[0])
+                await adapter.write_file(new_path, content)
+                await adapter.delete_file(old_path)
+                logger.info("Restored cloud file from trash: %s -> %s", old_path, new_path)
+                return new_path
+            except Exception as e:
+                logger.warning("Failed to restore cloud file from trash %s: %s", old_path, e)
+                return None
+        else:
+            storage_root = await get_active_storage_path()
+            if storage_root is None:
+                storage_root = self.media_dir
+
+            source = Path(trash_path)
+            if not source.exists() and not source.is_absolute():
+                source = self.get_full_path(str(trash_path))
+
+            if not source.exists():
+                logger.warning("Trash file not found for restore: %s", source)
+                return None
+
+            # Compute the original location by stripping _trash/ prefix
+            trash_root = storage_root / "_trash"
+            try:
+                relative = source.relative_to(trash_root)
+            except ValueError:
+                # File was never moved to _trash — it's still at its original location
+                logger.info("File not in _trash, no restore needed: %s", source)
+                return source
+
+            restored_dest = storage_root / relative
+            await aiofiles.os.makedirs(restored_dest.parent, exist_ok=True)
+
+            # Handle collision
+            dest = restored_dest
+            counter = 1
+            while dest.exists():
+                dest = restored_dest.with_stem(f"{restored_dest.stem}_{counter}")
+                counter += 1
+
+            await aiofiles.os.rename(source, dest)
+            await self._pm.delete_folder_if_empty(source.parent)
+            logger.info("Restored file from trash: %s -> %s", source, dest)
+            return dest
+
     async def get_file_size(self, file_path: Path | str) -> int | None:
         """Get the size of a file in bytes.
 

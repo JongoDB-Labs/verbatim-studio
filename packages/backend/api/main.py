@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import os
 import sys
 
@@ -184,9 +185,14 @@ async def lifespan(app: FastAPI):
     file_watcher = FileWatcherService(settings.MEDIA_DIR)
     file_watcher.start()
 
+    # Start trash auto-purge background task
+    from services.trash import auto_purge_loop
+    purge_task = asyncio.create_task(auto_purge_loop())
+
     yield
 
     # Shutdown
+    purge_task.cancel()
     if file_watcher:
         file_watcher.stop()
     job_queue.shutdown(wait=True)

@@ -223,3 +223,7 @@ async def _run_migrations(conn) -> None:
     # Add is_archived column to recordings and documents tables
     from migrations.add_archive_columns import migrate as migrate_archive_columns
     await conn.run_sync(lambda _: migrate_archive_columns(db_path))
+
+    # Add deleted_at column for trash/recycle-bin support
+    from migrations.add_trash_columns import migrate as migrate_trash_columns
+    await conn.run_sync(lambda _: migrate_trash_columns(db_path))

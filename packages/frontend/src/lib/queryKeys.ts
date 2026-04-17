@@ -101,4 +101,9 @@ export const queryKeys = {
     all: ['tags'] as const,
     list: () => ['tags', 'list'] as const,
   },
+
+  // Trash
+  trash: {
+    settings: ['trash', 'settings'] as const,
+  },
 };

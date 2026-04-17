@@ -60,7 +60,7 @@ export function BulkActionBar({
             {/* Bulk Delete */}
             {confirmDelete ? (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-destructive">Delete {selectedCount}?</span>
+                <span className="text-xs text-destructive">Move {selectedCount} to trash?</span>
                 <button
                   onClick={() => { onDelete(); setConfirmDelete(false); }}
                   className="rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"

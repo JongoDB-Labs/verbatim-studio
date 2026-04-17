@@ -229,6 +229,62 @@ function KeybindingEditor() {
   );
 }
 
+function TrashSettings() {
+  const [autoPurgeDays, setAutoPurgeDays] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.config.getTrashSettings().then(s => setAutoPurgeDays(s.auto_purge_days)).catch(() => {});
+  }, []);
+
+  const handleChange = async (value: number) => {
+    setAutoPurgeDays(value);
+    setSaving(true);
+    try {
+      await api.config.updateTrashSettings({ auto_purge_days: value });
+    } catch {
+      // revert on failure
+      api.config.getTrashSettings().then(s => setAutoPurgeDays(s.auto_purge_days)).catch(() => {});
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (autoPurgeDays === null) return null;
+
+  return (
+    <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Trash</h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Configure how long deleted items are kept before permanent removal</p>
+      </div>
+      <div className="px-5 py-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="sm:max-w-md">
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Auto-remove deleted items</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Items in trash will be permanently deleted after the selected period.
+            </p>
+          </div>
+          <div className="sm:w-64">
+            <select
+              value={autoPurgeDays}
+              onChange={e => handleChange(Number(e.target.value))}
+              disabled={saving}
+              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
+            >
+              <option value={30}>After 30 days</option>
+              <option value={60}>After 60 days</option>
+              <option value={90}>After 90 days</option>
+              <option value={0}>Never (manual only)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: SettingsPageProps) {
   const [settings, setSettings] = useState(() => getStoredSettings());
   const [saved, setSaved] = useState(false);
@@ -4755,6 +4811,9 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
           </div>
         </div>
       </div>
+
+      {/* Trash Settings Section */}
+      <TrashSettings />
         </>
       )}
 

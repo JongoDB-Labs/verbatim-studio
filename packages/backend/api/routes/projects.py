@@ -1,6 +1,7 @@
 """Project management endpoints."""
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -71,6 +72,7 @@ class ProjectResponse(BaseModel):
     metadata: dict
     recording_count: int
     is_archived: bool
+    deleted_at: str | None = None
     sort_order: int
     icon: str | None
     color: str | None
@@ -207,6 +209,7 @@ async def list_projects(
                 metadata=project.metadata_,
                 recording_count=recording_count,
                 is_archived=project.is_archived,
+                deleted_at=project.deleted_at.isoformat() if project.deleted_at else None,
                 sort_order=project.sort_order,
                 icon=project.icon,
                 color=project.color,
@@ -404,9 +407,12 @@ async def update_project(
             # Rename the project folder
             new_folder = await storage_service.rename_project_folder(old_name, new_name)
 
-            # Update file paths for all recordings in this project
+            # Update file paths for non-trashed recordings in this project
             rec_result = await db.execute(
-                select(Recording).where(Recording.project_id == project_id)
+                select(Recording).where(
+                    Recording.project_id == project_id,
+                    Recording.is_archived == False,
+                )
             )
             for rec in rec_result.scalars():
                 if rec.file_path:
@@ -421,9 +427,12 @@ async def update_project(
                         new_path = Path(new_folder) / old_path.name
                         rec.file_path = str(new_path)
 
-            # Update file paths for all documents in this project
+            # Update file paths for non-trashed documents in this project
             doc_result = await db.execute(
-                select(Document).where(Document.project_id == project_id)
+                select(Document).where(
+                    Document.project_id == project_id,
+                    Document.is_archived == False,
+                )
             )
             for doc in doc_result.scalars():
                 if doc.file_path:
@@ -513,14 +522,14 @@ async def update_project(
 async def delete_project(
     db: Annotated[AsyncSession, Depends(get_db)],
     project_id: str,
-    delete_files: Annotated[bool, Query(description="Delete all files in project folder")] = False,
+    delete_files: Annotated[bool, Query(description="Also trash all files in project")] = False,
 ) -> MessageResponse:
-    """Delete a project.
+    """Soft-delete a project (move to trash).
 
     Args:
         project_id: The project ID to delete.
-        delete_files: If True, delete all files in the project folder.
-                     If False (default), move files to storage root.
+        delete_files: If True, also move all recordings/documents in this project to trash.
+                     If False (default), detach items from the project (move to root).
     """
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -528,47 +537,50 @@ async def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    project_name = project.name
+    now = datetime.now(timezone.utc)
 
     if delete_files:
-        # Delete all recordings and their files
+        # Also trash all recordings in this project
         rec_result = await db.execute(
-            select(Recording).where(Recording.project_id == project_id)
+            select(Recording).where(
+                Recording.project_id == project_id,
+                Recording.is_archived == False,
+            )
         )
         for rec in rec_result.scalars():
             if rec.file_path:
                 try:
-                    await storage_service.delete_file(rec.file_path, rec.storage_location_id)
+                    new_path = await storage_service.move_to_trash(
+                        rec.file_path, rec.storage_location_id
+                    )
+                    if new_path:
+                        rec.file_path = str(new_path)
                 except Exception as e:
-                    logger.warning(f"Could not delete file for recording {rec.id}: {e}")
-            await db.delete(rec)
+                    logger.warning(f"Could not move file to trash for recording {rec.id}: {e}")
+            rec.is_archived = True
+            rec.deleted_at = now
 
-        # Delete all documents and their files
+        # Also trash all documents in this project
         doc_result = await db.execute(
-            select(Document).where(Document.project_id == project_id)
+            select(Document).where(
+                Document.project_id == project_id,
+                Document.is_archived == False,
+            )
         )
         for doc in doc_result.scalars():
             if doc.file_path:
                 try:
-                    await storage_service.delete_file(doc.file_path, doc.storage_location_id)
+                    new_path = await storage_service.move_to_trash(
+                        doc.file_path, doc.storage_location_id
+                    )
+                    if new_path:
+                        doc.file_path = str(new_path)
                 except Exception as e:
-                    logger.warning(f"Could not delete file for document {doc.id}: {e}")
-            await db.delete(doc)
-
-        # Delete project
-        await db.delete(project)
-        await db.commit()
-        await broadcast("projects", "deleted", project_id)
-
-        # Delete project folder with any remaining contents
-        try:
-            await storage_service.delete_project_folder(project_name, delete_contents=True)
-        except Exception as e:
-            logger.warning(f"Could not delete folder for project: {e}")
-
-        return MessageResponse(message="Project and all files deleted", id=project_id)
+                    logger.warning(f"Could not move file to trash for document {doc.id}: {e}")
+            doc.is_archived = True
+            doc.deleted_at = now
     else:
-        # Move recordings to root and clear project_id
+        # Detach items from project (move to root)
         rec_result = await db.execute(
             select(Recording).where(Recording.project_id == project_id)
         )
@@ -583,7 +595,6 @@ async def delete_project(
                     logger.warning(f"Could not move file for recording {rec.id}: {e}")
             rec.project_id = None
 
-        # Move documents to root and clear project_id
         doc_result = await db.execute(
             select(Document).where(Document.project_id == project_id)
         )
@@ -598,18 +609,93 @@ async def delete_project(
                     logger.warning(f"Could not move file for document {doc.id}: {e}")
             doc.project_id = None
 
-        # Delete project
-        await db.delete(project)
-        await db.commit()
-        await broadcast("projects", "deleted", project_id)
+    # Soft-delete the project itself
+    project.is_archived = True
+    project.deleted_at = now
+    await db.commit()
+    await broadcast("projects", "deleted", project_id)
 
-        # Delete project folder (should be empty now)
-        try:
-            await storage_service.delete_project_folder(project_name, delete_contents=False)
-        except Exception as e:
-            logger.warning(f"Could not delete folder for project: {e}")
+    return MessageResponse(message="Project moved to trash", id=project_id)
 
-        return MessageResponse(message="Project deleted, files moved to root", id=project_id)
+
+@router.delete("/{project_id}/permanent", response_model=MessageResponse)
+async def permanently_delete_project(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str,
+) -> MessageResponse:
+    """Permanently delete a trashed project."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.is_archived:
+        raise HTTPException(status_code=400, detail="Project must be in trash before permanent deletion")
+
+    project_name = project.name
+
+    # Permanently delete only trashed recordings still in this project
+    rec_result = await db.execute(
+        select(Recording).where(
+            Recording.project_id == project_id,
+            Recording.is_archived == True,
+        )
+    )
+    for rec in rec_result.scalars():
+        if rec.file_path:
+            try:
+                await storage_service.delete_file(rec.file_path, rec.storage_location_id)
+            except Exception as e:
+                logger.warning(f"Could not delete file for recording {rec.id}: {e}")
+        await db.delete(rec)
+
+    # Detach any non-trashed recordings from the project
+    live_rec_result = await db.execute(
+        select(Recording).where(
+            Recording.project_id == project_id,
+            Recording.is_archived == False,
+        )
+    )
+    for rec in live_rec_result.scalars():
+        rec.project_id = None
+
+    # Permanently delete only trashed documents still in this project
+    doc_result = await db.execute(
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.is_archived == True,
+        )
+    )
+    for doc in doc_result.scalars():
+        if doc.file_path:
+            try:
+                await storage_service.delete_file(doc.file_path, doc.storage_location_id)
+            except Exception as e:
+                logger.warning(f"Could not delete file for document {doc.id}: {e}")
+        await db.delete(doc)
+
+    # Detach any non-trashed documents from the project
+    live_doc_result = await db.execute(
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.is_archived == False,
+        )
+    )
+    for doc in live_doc_result.scalars():
+        doc.project_id = None
+
+    await db.delete(project)
+    await db.commit()
+    await broadcast("projects", "deleted", project_id)
+
+    # Clean up project folder
+    try:
+        await storage_service.delete_project_folder(project_name, delete_contents=True)
+    except Exception as e:
+        logger.warning(f"Could not delete folder for project: {e}")
+
+    return MessageResponse(message="Project permanently deleted", id=project_id)
 
 
 @router.post("/{project_id}/recordings/{recording_id}", response_model=MessageResponse)
@@ -745,15 +831,16 @@ async def archive_project(
     db: Annotated[AsyncSession, Depends(get_db)],
     project_id: str,
 ) -> MessageResponse:
-    """Archive a project (soft-hide from sidebar)."""
+    """Archive a project (moves to trash)."""
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     project.is_archived = True
+    project.deleted_at = project.deleted_at or datetime.now(timezone.utc)
     await db.commit()
     await broadcast("projects", "updated", project_id)
-    return MessageResponse(message="Project archived", id=project_id)
+    return MessageResponse(message="Project moved to trash", id=project_id)
 
 
 @router.patch("/{project_id}/unarchive", response_model=MessageResponse)
@@ -761,15 +848,16 @@ async def unarchive_project(
     db: Annotated[AsyncSession, Depends(get_db)],
     project_id: str,
 ) -> MessageResponse:
-    """Unarchive a project."""
+    """Restore a project from trash."""
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     project.is_archived = False
+    project.deleted_at = None
     await db.commit()
     await broadcast("projects", "updated", project_id)
-    return MessageResponse(message="Project unarchived", id=project_id)
+    return MessageResponse(message="Project restored", id=project_id)
 
 
 class ProjectSections(BaseModel):
