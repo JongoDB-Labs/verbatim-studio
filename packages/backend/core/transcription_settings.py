@@ -22,6 +22,9 @@ DEFAULTS: dict[str, Any] = {
     "batch_size": 16,
     "diarize": True,
     "hf_token": None,
+    # Audio preprocessing
+    "noise_reduction": False,  # Pre-process audio to reduce background noise
+    "normalize_audio": False,  # Normalize audio volume before transcription
     # External WhisperX service (enterprise feature)
     "external_url": None,
     "external_api_key": None,

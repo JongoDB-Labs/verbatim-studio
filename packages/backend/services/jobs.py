@@ -443,6 +443,23 @@ async def handle_transcription(
             audio_path = recording.file_path
 
     try:
+        # Track preprocessing state for cleanup in finally block
+        original_audio_path = audio_path
+        preprocessed_path = None
+
+        # Pre-process audio (noise reduction / normalization) if enabled
+        if effective.get("noise_reduction") or effective.get("normalize_audio"):
+            from services.audio_preprocessing import preprocess_audio, AudioPreprocessOptions
+
+            pp_opts = AudioPreprocessOptions(
+                noise_reduction=effective.get("noise_reduction", False),
+                normalize=effective.get("normalize_audio", False),
+            )
+            preprocessed_path = preprocess_audio(audio_path, pp_opts)
+            if preprocessed_path != audio_path:
+                audio_path = preprocessed_path
+                logger.info("Audio preprocessed: %s -> %s", original_audio_path, preprocessed_path)
+
         # Run transcription with streaming progress
         options = TranscriptionOptions(
             language=language,
@@ -642,6 +659,11 @@ async def handle_transcription(
         raise
 
     finally:
+        # Clean up preprocessed audio temp file
+        if preprocessed_path and preprocessed_path != original_audio_path:
+            Path(preprocessed_path).unlink(missing_ok=True)
+            logger.debug("Cleaned up preprocessed audio: %s", preprocessed_path)
+
         # Clean up temp audio file if used
         if temp_audio_file:
             Path(temp_audio_file.name).unlink(missing_ok=True)
