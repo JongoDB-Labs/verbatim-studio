@@ -650,3 +650,49 @@ async def empty_trash() -> dict:
     await broadcast("projects", "deleted")
 
     return {"purged": purged, "message": f"Permanently deleted {purged} item(s)"}
+
+
+# --- Post-Transcription Settings ---
+
+
+@router.get("/post-transcription")
+async def get_post_transcription_settings():
+    """Get post-transcription automation settings."""
+    from sqlalchemy import select
+
+    from persistence.database import get_session_factory
+    from persistence.models import Setting
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == "post_transcription")
+        )
+        setting = result.scalar_one_or_none()
+        if not setting:
+            return {
+                "auto_summarize": False,
+                "auto_export": {"enabled": False, "format": "txt"},
+            }
+        return setting.value
+
+
+@router.put("/post-transcription")
+async def update_post_transcription_settings(data: dict):
+    """Update post-transcription automation settings."""
+    from sqlalchemy import select
+
+    from persistence.database import get_session_factory
+    from persistence.models import Setting
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == "post_transcription")
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            setting.value = data
+        else:
+            setting = Setting(key="post_transcription", value=data)
+            session.add(setting)
+        await session.commit()
+        return data

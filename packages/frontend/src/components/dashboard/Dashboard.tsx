@@ -12,6 +12,7 @@ import { UploadDocumentDialog } from '@/components/documents/UploadDocumentDialo
 import { TourSection } from '@/components/onboarding/TourSection';
 import { ModelDownloadPrompt } from '@/components/downloads/ModelDownloadPrompt';
 import { useDownloadStore } from '@/stores/downloadStore';
+import { UpcomingEventsCard } from './UpcomingEventsCard';
 
 interface DashboardProps {
   onNavigateToRecordings?: () => void;
@@ -501,6 +502,9 @@ export function Dashboard({ onNavigateToRecordings, onNavigateToProjects, onNavi
           </div>
         </div>
       </div>
+
+      {/* Upcoming Meetings */}
+      <UpcomingEventsCard />
 
       {/* Recent Recordings & Projects */}
       <div className="grid gap-4 lg:grid-cols-2">
