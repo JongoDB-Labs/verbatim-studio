@@ -219,6 +219,8 @@ Guidelines:
 - For transcript analysis: quote specific passages when relevant
 - When comparing transcripts, label which one (e.g., "In Transcript A...")
 - If asked about something not in attached content, say so
+
+When a project is active, you receive a Project Index — a summary of all recordings and documents in that project. This is a table of contents, not the full content. When you need specific transcript text, quotes, or document details, use the get_context tool to retrieve them. Always cite the recording title and timestamp when referencing transcript content.
 """
 
 
@@ -789,60 +791,25 @@ async def chat_multi_stream(
         context_parts.append(f"=== Uploaded File {label} ===\n{request.file_context}\n")
         label_index += 1
 
-    # Auto-inject project context (when no manual attachments/files)
-    # Loads all transcripts and documents from scoped project(s) directly
-    if active_project_ids and not request.recording_ids and not request.document_ids and not request.file_context:
+    # Auto-inject project index (when no manual attachments/files)
+    if active_project_ids:
         try:
-            # Load all recordings with transcripts from scoped projects
-            rec_query = (
-                select(Recording)
-                .where(
-                    Recording.project_id.in_(active_project_ids),
-                    Recording.is_archived == False,
+            from services.project_index import build_project_index
+            project_index = await build_project_index(db, active_project_ids)
+            if project_index:
+                context_parts.append(
+                    "=== Project Index ===\n"
+                    "Below is a summary of all content in the active project. "
+                    "Use the get_context or project_search tools to retrieve "
+                    "specific transcript segments or document details when needed.\n\n"
+                    f"{project_index}\n"
                 )
-            )
-            rec_result = await db.execute(rec_query)
-            project_recordings = rec_result.scalars().all()
-
-            for recording in project_recordings:
-                label = chr(65 + label_index)
-                try:
-                    transcript_result = await db.execute(
-                        select(Transcript).where(Transcript.recording_id == recording.id)
-                    )
-                    transcript = transcript_result.scalar_one_or_none()
-                    if not transcript:
-                        continue
-                    text = await get_transcript_text(db, transcript.id)
-                    context_parts.append(f"=== Transcript {label}: {recording.title} ===\n{text}\n")
-                    label_index += 1
-                except Exception as e:
-                    logger.warning("Auto-context: could not load transcript for recording %s: %s", recording.id, e)
-
-            # Load all documents from scoped projects
-            doc_query = (
-                select(Document)
-                .where(
-                    Document.project_id.in_(active_project_ids),
-                    Document.is_archived == False,
+                logger.info(
+                    "Project index: injected %d chars from %d project(s)",
+                    len(project_index), len(active_project_ids),
                 )
-            )
-            doc_result = await db.execute(doc_query)
-            project_documents = doc_result.scalars().all()
-
-            for doc in project_documents:
-                label = chr(65 + label_index)
-                if doc.extracted_text:
-                    context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_text}\n")
-                    label_index += 1
-                elif doc.extracted_markdown:
-                    context_parts.append(f"=== Document {label}: {doc.title} ===\n{doc.extracted_markdown}\n")
-                    label_index += 1
-
-            if label_index > 0:
-                logger.info("Project auto-context: loaded %d item(s) from %d project(s)", label_index, len(active_project_ids))
         except Exception as e:
-            logger.warning("Project auto-context failed: %s", e)
+            logger.warning("Project index build failed: %s", e)
 
     # Build system message
     system_content = MAX_SYSTEM_PROMPT_GENERAL if request.general_mode else MAX_SYSTEM_PROMPT
