@@ -29,6 +29,9 @@ def register_all_tools(registry: ToolRegistry) -> None:
     registry.register(summarize_transcript_tool)
     registry.register(quality_review_tool)
 
+    from services.tools.filler_tool import detect_fillers_tool
+    registry.register(detect_fillers_tool)
+
     from services.tools.entity_extraction_tool import extract_entities_tool
     registry.register(extract_entities_tool)
 
