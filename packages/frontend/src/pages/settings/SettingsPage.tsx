@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate } from '@/lib/api';
+import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate, type DictionaryEntry, type PostTranscriptionSettings } from '@/lib/api';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useKeybindingStore, DEFAULT_ACTIONS, formatCombo, type KeyCombo, type ActionCategory } from '@/stores/keybindingStore';
 import { StorageTypeSelector } from '@/components/storage/StorageTypeSelector';
@@ -303,6 +303,18 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [showHfToken, setShowHfToken] = useState(false);
   const [hfTokenInput, setHfTokenInput] = useState('');
 
+  // Custom Dictionary state
+  const [dictEntries, setDictEntries] = useState<DictionaryEntry[]>([]);
+  const [dictTerm, setDictTerm] = useState('');
+  const [dictCategory, setDictCategory] = useState('general');
+  const [dictLoading, setDictLoading] = useState(false);
+
+  // Post-Transcription Automation state
+  const [postTxSettings, setPostTxSettings] = useState<PostTranscriptionSettings>({
+    auto_summarize: false,
+    auto_export: { enabled: false, format: 'txt' },
+  });
+
   // AI / LLM model state
   const [aiModels, setAiModels] = useState<AIModel[]>([]);
   const [aiDownloading, setAiDownloading] = useState<string | null>(null);
@@ -440,6 +452,24 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const defaultPlaybackSpeed = settings.defaultPlaybackSpeed || 1;
   const autoTranscribe = settings.autoTranscribe ?? false;
 
+  const loadDictionary = useCallback(async () => {
+    try {
+      const data = await api.dictionary.list();
+      setDictEntries(data.entries);
+    } catch {
+      setDictEntries([]);
+    }
+  }, []);
+
+  const loadPostTxSettings = useCallback(async () => {
+    try {
+      const data = await api.postTranscription.get();
+      setPostTxSettings(data);
+    } catch {
+      // Use defaults
+    }
+  }, []);
+
   const loadStorageLocations = useCallback(() => {
     api.storageLocations.list()
       .then((r) => setStorageLocations(r.items))
@@ -450,6 +480,8 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   useEffect(() => {
     api.archive.info().then(setArchiveInfo).catch(console.error);
     api.config.getTranscription().then(setTxSettings).catch(console.error);
+    loadDictionary();
+    loadPostTxSettings();
     api.ai.listModels().then((r) => setAiModels(r.models)).catch(console.error);
     api.config.getAI().then(setAiSettings).catch(console.error);
     api.ocr.listModels().then((r) => setOcrModels(r.models)).catch(console.error);
@@ -478,7 +510,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       api.system.gpuStatus().then(setGpuStatus).catch(console.error);
     }
     loadStorageLocations();
-  }, [loadStorageLocations]);
+  }, [loadStorageLocations, loadDictionary, loadPostTxSettings]);
 
   // Load update settings on mount
   useEffect(() => {
@@ -703,6 +735,51 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       setTxSaving(false);
     }
   }, [hfTokenInput]);
+
+  // Dictionary handlers
+  const handleAddDictTerm = async () => {
+    if (!dictTerm.trim()) return;
+    setDictLoading(true);
+    try {
+      await api.dictionary.add(dictTerm.trim(), dictCategory);
+      setDictTerm('');
+      await loadDictionary();
+    } catch (err) {
+      console.error('Failed to add dictionary term:', err);
+    } finally {
+      setDictLoading(false);
+    }
+  };
+
+  const handleRemoveDictTerm = async (id: string) => {
+    try {
+      await api.dictionary.remove(id);
+      setDictEntries((prev) => prev.filter((e) => e.id !== id));
+    } catch (err) {
+      console.error('Failed to remove dictionary term:', err);
+    }
+  };
+
+  const handleClearDict = async () => {
+    if (!confirm('Remove all dictionary terms?')) return;
+    try {
+      await api.dictionary.clear();
+      setDictEntries([]);
+    } catch (err) {
+      console.error('Failed to clear dictionary:', err);
+    }
+  };
+
+  // Post-Transcription settings handler
+  const updatePostTxSetting = async (key: string, value: any) => {
+    const updated = { ...postTxSettings, [key]: value };
+    setPostTxSettings(updated);
+    try {
+      await api.postTranscription.update(updated);
+    } catch (err) {
+      console.error('Failed to save post-transcription settings:', err);
+    }
+  };
 
   const saveWebSearchSettings = useCallback(async () => {
     setWebSearchSaving(true);
@@ -1611,6 +1688,182 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
             </label>
+          </SettingSection>
+        </div>
+      </div>
+
+      {/* Audio Enhancement */}
+      {txSettings && (
+        <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Audio Enhancement</h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Pre-process audio before transcription to improve accuracy</p>
+          </div>
+          <div className="px-5 py-4 space-y-1">
+            <SettingSection
+              title="Noise reduction"
+              description="Reduce background noise using FFmpeg audio filters before transcription"
+            >
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={txSettings.noise_reduction ?? false}
+                  onChange={(e) => updateTxSetting('noise_reduction', e.target.checked)}
+                  disabled={txSaving}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+              </label>
+            </SettingSection>
+
+            <SettingSection
+              title="Volume normalization"
+              description="Normalize audio volume to a consistent level (EBU R128)"
+            >
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={txSettings.normalize_audio ?? false}
+                  onChange={(e) => updateTxSetting('normalize_audio', e.target.checked)}
+                  disabled={txSaving}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+              </label>
+            </SettingSection>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Dictionary */}
+      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Custom Dictionary</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Add domain-specific terms to improve transcription accuracy</p>
+        </div>
+        <div className="px-5 py-4">
+          {/* Add term form */}
+          <div className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={dictTerm}
+              onChange={(e) => setDictTerm(e.target.value)}
+              placeholder="Add a term (e.g., Kubernetes, HIPAA)"
+              className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && dictTerm.trim()) {
+                  handleAddDictTerm();
+                }
+              }}
+            />
+            <select
+              value={dictCategory}
+              onChange={(e) => setDictCategory(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            >
+              <option value="general">General</option>
+              <option value="tech">Tech</option>
+              <option value="medical">Medical</option>
+              <option value="legal">Legal</option>
+              <option value="names">Names</option>
+            </select>
+            <button
+              onClick={handleAddDictTerm}
+              disabled={!dictTerm.trim() || dictLoading}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Add
+            </button>
+          </div>
+
+          {/* Entries list */}
+          {dictEntries.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">No dictionary terms added yet</p>
+          ) : (
+            <div className="space-y-1 max-h-64 overflow-y-auto">
+              {dictEntries.map((entry) => (
+                <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 group">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.term}</span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">{entry.category}</span>
+                  </div>
+                  <button
+                    onClick={() => handleRemoveDictTerm(entry.id)}
+                    className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-opacity"
+                    title="Remove term"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {dictEntries.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
+              <span className="text-xs text-gray-500 dark:text-gray-400">{dictEntries.length} term{dictEntries.length !== 1 ? 's' : ''}</span>
+              <button
+                onClick={handleClearDict}
+                className="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Post-Transcription Automation */}
+      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Post-Transcription Automation</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Actions to run automatically after each transcription completes</p>
+        </div>
+        <div className="px-5 py-4 space-y-1">
+          <SettingSection
+            title="Auto-summarize"
+            description="Automatically generate a summary with key points and action items"
+          >
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={postTxSettings.auto_summarize}
+                onChange={(e) => updatePostTxSetting('auto_summarize', e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+            </label>
+          </SettingSection>
+
+          <SettingSection
+            title="Auto-export"
+            description="Automatically export transcript after processing"
+          >
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={postTxSettings.auto_export.enabled}
+                  onChange={(e) => updatePostTxSetting('auto_export', { ...postTxSettings.auto_export, enabled: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+              </label>
+              {postTxSettings.auto_export.enabled && (
+                <select
+                  value={postTxSettings.auto_export.format}
+                  onChange={(e) => updatePostTxSetting('auto_export', { ...postTxSettings.auto_export, format: e.target.value })}
+                  className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                >
+                  <option value="txt">TXT</option>
+                  <option value="srt">SRT</option>
+                  <option value="vtt">VTT</option>
+                  <option value="docx">DOCX</option>
+                  <option value="pdf">PDF</option>
+                </select>
+              )}
+            </div>
           </SettingSection>
         </div>
       </div>
