@@ -54,7 +54,10 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
   useEffect(() => {
     api.voice.status()
       .then((status) => {
-        setTtsAvailable(status.tts_available && status.livekit_available);
+        // TTS is usable if the model is downloaded — livekit deps can be
+        // installed on-demand when starting a session (Windows) or are
+        // already bundled (macOS).  Don't block the UI on missing livekit.
+        setTtsAvailable(status.tts_available);
         setMissingDeps(status.missing_deps || []);
         if (status.voices && status.voices.length > 0) {
           setVoices(status.voices);
