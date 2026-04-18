@@ -268,7 +268,7 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400 text-center max-w-[280px]">
             {missingDeps.length > 0
-              ? `Missing dependencies: ${missingDeps.join(', ')}. Install them and download a TTS model in Settings.`
+              ? 'Download a text-to-speech model in Settings \u2192 AI Models to enable voice chat. Required dependencies will be installed automatically.'
               : 'Download a text-to-speech model in Settings \u2192 AI Models to enable voice chat.'}
           </p>
 

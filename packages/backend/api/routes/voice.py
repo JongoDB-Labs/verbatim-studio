@@ -230,6 +230,8 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
         # On non-macOS, install voice deps on-demand (not bundled — too large for NSIS)
         if sys.platform != "darwin":
             voice_deps = [
+                ("livekit-protocol", "livekit.protocol", "livekit-protocol>=1.1.0"),
+                ("livekit", "livekit.rtc", "livekit>=1.1.0"),
                 ("livekit-api", "livekit.api", "livekit-api>=1.1.0"),
                 ("livekit-agents", "livekit.agents", "livekit-agents>=1.5.0"),
                 ("livekit-plugins-silero", "livekit.plugins.silero", "livekit-plugins-silero>=1.5.0"),

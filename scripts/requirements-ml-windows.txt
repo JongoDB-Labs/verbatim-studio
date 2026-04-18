@@ -51,11 +51,13 @@ sentence-transformers==3.4.1
 numpy==2.0.2
 
 # =============================================================================
-# Voice assistant dependencies
+# Voice assistant dependencies — on-demand install on Windows.
+# livekit-rtc native DLL (~50MB) pushes the NSIS installer past its size limit.
+# These are installed automatically when the user downloads a TTS model.
 # =============================================================================
-livekit-api>=1.1.0
-livekit-agents>=1.5.0
-livekit-plugins-silero>=1.5.0
-livekit-protocol>=1.1.0
-livekit>=1.1.0
+# livekit-api>=1.1.0
+# livekit-agents>=1.5.0
+# livekit-plugins-silero>=1.5.0
+# livekit-protocol>=1.1.0
+# livekit>=1.1.0
 # kokoro-onnx>=0.4.0         # on-demand install (onnxruntime ~200MB)
