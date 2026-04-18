@@ -275,6 +275,10 @@ export async function isPythonEnvCurrent(): Promise<boolean> {
  * Install missing Python packages from bundled requirements files into
  * the user data Python environment. Used by stripped updates where
  * Python isn't re-bundled but the requirements changed.
+ *
+ * IMPORTANT: Does NOT use --upgrade to avoid re-downloading already
+ * installed packages (torch alone is 2GB+). Only truly missing
+ * packages are installed. This keeps startup fast (~5-10s vs minutes).
  */
 async function reconcileDeps(
   pythonDir: string,
@@ -303,10 +307,14 @@ async function reconcileDeps(
   onProgress?.('Installing updated dependencies\u2026');
 
   try {
+    // No --upgrade: pip skips already-installed packages and only installs
+    // truly missing ones. This is critical for fast startup — the full
+    // requirements file includes torch (2GB+) and dozens of ML packages
+    // that are already present from the original full install.
     const { stdout, stderr } = await execFileAsync(
       pythonBin,
-      ['-m', 'pip', 'install', '--upgrade', '-r', reqFile],
-      { timeout: 600_000 }, // 10 minutes
+      ['-m', 'pip', 'install', '-r', reqFile],
+      { timeout: 300_000 }, // 5 minutes
     );
     if (stdout) console.log('[Migration] pip stdout:', stdout.slice(-500));
     if (stderr) console.log('[Migration] pip stderr:', stderr.slice(-500));
