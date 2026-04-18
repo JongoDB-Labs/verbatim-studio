@@ -11,8 +11,12 @@
 import { app } from 'electron';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { existsSync, lstatSync, readFileSync, readlinkSync } from 'fs';
 import { chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'fs/promises';
+
+const execFileAsync = promisify(execFile);
 
 const TEMP_MIGRATION_SUFFIX = '.migrating';
 
@@ -63,6 +67,18 @@ export async function migrateResourcesToUserData(
   if (!hasBundledPython) {
     if (hasUserPython && !hasBrokenSymlink) {
       console.log('[Migration] Update variant — using existing Python from user data');
+
+      // Check if requirements changed since last migration. If so, install
+      // missing packages into the existing user data Python. This handles
+      // the case where a stripped update adds new dependencies (e.g. livekit)
+      // that weren't in the original full install.
+      const depsChanged = await haveDepsChanged(userDataDir);
+      if (depsChanged) {
+        console.log('[Migration] Dependencies changed in update — reconciling packages');
+        onProgress?.('Updating Python packages\u2026');
+        await reconcileDeps(userPythonDir, onProgress);
+        await writePythonEnvVersion(userDataDir);
+      }
     } else {
       // This happens when a user upgrades from a pre-migration version using a
       // stripped update. They need the full installer to bootstrap the Python env.
@@ -253,4 +269,50 @@ async function writePythonEnvVersion(userDataDir: string): Promise<void> {
 export async function isPythonEnvCurrent(): Promise<boolean> {
   const userDataDir = app.getPath('userData');
   return !(await haveDepsChanged(userDataDir));
+}
+
+/**
+ * Install missing Python packages from bundled requirements files into
+ * the user data Python environment. Used by stripped updates where
+ * Python isn't re-bundled but the requirements changed.
+ */
+async function reconcileDeps(
+  pythonDir: string,
+  onProgress?: (message: string) => void,
+): Promise<void> {
+  const pythonBin = process.platform === 'win32'
+    ? path.join(pythonDir, 'python.exe')
+    : path.join(pythonDir, 'bin', 'python3');
+
+  if (!existsSync(pythonBin)) {
+    console.error('[Migration] Cannot reconcile deps — Python binary not found:', pythonBin);
+    return;
+  }
+
+  // Find the bundled requirements file for this platform
+  const reqFile = process.platform === 'win32'
+    ? path.join(process.resourcesPath, 'requirements-ml-windows.txt')
+    : path.join(process.resourcesPath, 'requirements-ml.txt');
+
+  if (!existsSync(reqFile)) {
+    console.log('[Migration] No bundled requirements file — skipping dep reconciliation');
+    return;
+  }
+
+  console.log(`[Migration] Installing missing deps from ${path.basename(reqFile)}`);
+  onProgress?.('Installing updated dependencies\u2026');
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      pythonBin,
+      ['-m', 'pip', 'install', '--upgrade', '-r', reqFile],
+      { timeout: 600_000 }, // 10 minutes
+    );
+    if (stdout) console.log('[Migration] pip stdout:', stdout.slice(-500));
+    if (stderr) console.log('[Migration] pip stderr:', stderr.slice(-500));
+    console.log('[Migration] Dependency reconciliation complete');
+  } catch (err) {
+    console.error('[Migration] Failed to reconcile deps:', err);
+    // Non-fatal — the app will still work, just without the new deps
+  }
 }
