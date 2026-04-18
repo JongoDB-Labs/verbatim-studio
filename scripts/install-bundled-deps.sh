@@ -99,9 +99,14 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
   echo "Installing for Apple Silicon (includes mlx-whisper)..."
 
   # Step 1: Install the pinned packages without their dependencies
-  # This ensures we get EXACTLY the versions we specify
+  # This ensures we get EXACTLY the versions we specify.
+  # --upgrade is needed because multiple livekit-* packages share the
+  # livekit/ namespace directory — without it, pip --target skips
+  # packages whose namespace dir already exists from an earlier package
+  # in the same install command.
   "$PYTHON_BIN" -m pip install \
     --target "$SITE_PACKAGES" \
+    --upgrade \
     --no-deps \
     -r "$REQUIREMENTS_ML"
 
@@ -143,10 +148,10 @@ elif [ "$PLATFORM" = "windows" ]; then
   REQUIREMENTS_ML_WIN="$SCRIPT_DIR/requirements-ml-windows.txt"
 
   # Step 1: Install the pinned packages without their dependencies
-  # No --extra-index-url needed: CPU torch comes from standard PyPI
-  # GPU transcription uses CTranslate2's native CUDA bindings (not PyTorch CUDA)
+  # --upgrade needed for namespace package merging (see macOS step 1 comment)
   "$PYTHON_BIN" -m pip install \
     --target "$SITE_PACKAGES" \
+    --upgrade \
     --no-deps \
     -r "$REQUIREMENTS_ML_WIN"
 
