@@ -106,9 +106,13 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
     -r "$REQUIREMENTS_ML"
 
   # Step 2: Install missing sub-dependencies, but use requirements-ml.txt as constraints
-  # This prevents pip from upgrading our pinned packages
+  # This prevents pip from upgrading our pinned packages.
+  # --upgrade is required because --target won't overwrite namespace packages
+  # (e.g. livekit/) installed in step 1, causing sub-packages like
+  # livekit.protocol to be silently skipped.
   "$PYTHON_BIN" -m pip install \
     --target "$SITE_PACKAGES" \
+    --upgrade \
     --constraint "$REQUIREMENTS_ML" \
     -r "$REQUIREMENTS_ML"
 
@@ -146,9 +150,11 @@ elif [ "$PLATFORM" = "windows" ]; then
     --no-deps \
     -r "$REQUIREMENTS_ML_WIN"
 
-  # Step 2: Install missing sub-dependencies with constraints
+  # Step 2: Install missing sub-dependencies with constraints.
+  # --upgrade needed so --target overwrites namespace packages from step 1.
   "$PYTHON_BIN" -m pip install \
     --target "$SITE_PACKAGES" \
+    --upgrade \
     --constraint "$REQUIREMENTS_ML_WIN" \
     -r "$REQUIREMENTS_ML_WIN"
 
