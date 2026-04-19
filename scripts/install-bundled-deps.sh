@@ -4,8 +4,10 @@ set -e
 # Install Python dependencies for bundling (core + ML)
 # Usage: ./install-bundled-deps.sh [python-dir]
 #
-# IMPORTANT: This script uses STRICT version pins from requirements-ml.txt
-# to prevent pip from pulling incompatible package versions.
+# Installs directly into the standalone Python (no --target) because:
+# 1. We own the entire Python installation — no system contamination risk
+# 2. pip --target breaks namespace packages (livekit/, google/) by not
+#    merging subdirectories from multiple distributions
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -41,7 +43,7 @@ if [ ! -f "$PYTHON_BIN" ]; then
   exit 1
 fi
 
-# Site-packages directory (inside the Python installation)
+# Site-packages directory (for verification only — pip installs to default location)
 if [ "$PLATFORM" = "windows" ]; then
   SITE_PACKAGES="$PYTHON_DIR/Lib/site-packages"
 else
@@ -78,7 +80,6 @@ if [ "$PLATFORM" = "windows" ]; then
   echo "  (using pre-built llama-cpp-python CPU wheels for Windows)"
 fi
 "$PYTHON_BIN" -m pip install \
-  --target "$SITE_PACKAGES" \
   --upgrade \
   $CORE_EXTRA_ARGS \
   -r "$REQUIREMENTS_CORE"
@@ -91,49 +92,30 @@ echo ""
 echo "=== Installing ML Dependencies (Strict Pins) ==="
 echo "Using exact versions from requirements-ml.txt to prevent compatibility issues"
 
-# Install ML dependencies directly from requirements file
-# --no-deps first pass to install exact versions without letting pip pull newer deps
-# Then a second pass to resolve any missing sub-dependencies
-
 if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
   echo "Installing for Apple Silicon (includes mlx-whisper)..."
 
   # Step 1: Install the pinned packages without their dependencies
   # This ensures we get EXACTLY the versions we specify.
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
     --no-deps \
     -r "$REQUIREMENTS_ML"
 
-  # Step 2: Install missing sub-dependencies, but use requirements-ml.txt as constraints
-  # This prevents pip from upgrading our pinned packages.
+  # Step 2: Install sub-dependencies, constrained to our pinned versions
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
     --constraint "$REQUIREMENTS_ML" \
     -r "$REQUIREMENTS_ML"
 
-  # Step 3: Namespace packages — pip --target fundamentally cannot merge
-  # multiple distributions into the same namespace directory. Install
-  # WITHOUT --target so pip uses the standard install mechanism, which
-  # correctly creates all subdirectories (e.g. livekit/{protocol,api,...},
-  # google/{api_core,auth,oauth2,...}).
-  echo "Fixing namespace packages (livekit, google)..."
-  "$PYTHON_BIN" -m pip install --force-reinstall --no-deps \
-    livekit-protocol livekit livekit-api livekit-agents livekit-plugins-silero \
-    google-api-core google-api-python-client google-auth google-auth-oauthlib googleapis-common-protos
-
-  # Step 4: Install mlx-audio separately (requires huggingface_hub>=1.0 which
+  # Step 3: Install mlx-audio separately (requires huggingface_hub>=1.0 which
   # conflicts with whisperx's pin). Using --no-deps to avoid pulling in
   # conflicting transitive deps — the necessary deps are already installed.
   echo "Installing mlx-audio (voice TTS) without conflicting deps..."
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
     --no-deps \
     "mlx-audio>=0.4.0"
 
   # Install mlx-audio's unique deps that aren't already present
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
     --no-deps \
     "mlx-lm>=0.31.0" \
     "sounddevice>=0.5.0" \
@@ -149,18 +131,12 @@ elif [ "$PLATFORM" = "windows" ]; then
   REQUIREMENTS_ML_WIN="$SCRIPT_DIR/requirements-ml-windows.txt"
 
   # Step 1: Install the pinned packages without their dependencies
-  # --upgrade needed for namespace package merging (see macOS step 1 comment)
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
-    --upgrade \
     --no-deps \
     -r "$REQUIREMENTS_ML_WIN"
 
-  # Step 2: Install missing sub-dependencies with constraints.
-  # --upgrade needed so --target overwrites namespace packages from step 1.
+  # Step 2: Install sub-dependencies with constraints
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
-    --upgrade \
     --constraint "$REQUIREMENTS_ML_WIN" \
     -r "$REQUIREMENTS_ML_WIN"
 
@@ -171,15 +147,11 @@ else
   TEMP_REQUIREMENTS=$(mktemp)
   grep -v "mlx-whisper" "$REQUIREMENTS_ML" > "$TEMP_REQUIREMENTS"
 
-  # Step 1: Install the pinned packages without their dependencies
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
     --no-deps \
     -r "$TEMP_REQUIREMENTS"
 
-  # Step 2: Install missing sub-dependencies with constraints
   "$PYTHON_BIN" -m pip install \
-    --target "$SITE_PACKAGES" \
     --constraint "$TEMP_REQUIREMENTS" \
     -r "$TEMP_REQUIREMENTS"
 
@@ -187,8 +159,8 @@ else
 fi
 
 # =============================================================================
-# Restore setuptools <72 if --target installs overwrote it with a newer version
-# (torch depends on setuptools, --target may pull 82.0+ which lacks pkg_resources)
+# Restore setuptools <72 if installs overwrote it with a newer version
+# (torch depends on setuptools, pip may pull 82.0+ which lacks pkg_resources)
 # =============================================================================
 echo ""
 echo "=== Ensuring pkg_resources is available ==="
@@ -199,23 +171,20 @@ echo "=== Ensuring pkg_resources is available ==="
 }
 
 # =============================================================================
-# Verify critical version constraints using pip list (reliable with --path)
+# Verify critical version constraints
 # =============================================================================
 echo ""
 echo "=== Verifying Installed Versions ==="
 
-# Get all package versions in one call for efficiency
-PACKAGE_LIST=$("$PYTHON_BIN" -m pip list --path "$SITE_PACKAGES" --format=freeze 2>/dev/null)
+PACKAGE_LIST=$("$PYTHON_BIN" -m pip list --format=freeze 2>/dev/null)
 
 verify_version() {
   local package=$1
   local expected=$2
-  # pip list uses underscores, but package names might use hyphens
   local pattern=$(echo "$package" | sed 's/-/_/g; s/\./_/g')
   local actual=$(echo "$PACKAGE_LIST" | grep -i "^${pattern}==" | cut -d'=' -f3 | head -1)
 
   if [ -z "$actual" ]; then
-    # Try with original name (hyphens)
     pattern=$(echo "$package" | sed 's/_/-/g')
     actual=$(echo "$PACKAGE_LIST" | grep -i "^${pattern}==" | cut -d'=' -f3 | head -1)
   fi
@@ -234,7 +203,6 @@ verify_version() {
 
 FAILED=0
 
-# Core package checks (document processing) - just verify installed
 check_installed() {
   local package=$1
   local pattern=$(echo "$package" | sed 's/-/_/g; s/\./_/g')
@@ -252,8 +220,7 @@ check_installed "python_docx" || FAILED=1
 check_installed "openpyxl" || FAILED=1
 check_installed "python_pptx" || FAILED=1
 
-# Critical ML version checks (CUDA builds have +cu126 suffix)
-# CPU PyTorch on all platforms (GPU via CTranslate2 CUDA, not PyTorch CUDA)
+# Critical ML version checks
 verify_version "torch" "2.8.0" || FAILED=1
 verify_version "torchaudio" "2.8.0" || FAILED=1
 verify_version "huggingface_hub" "0.36.1" || FAILED=1
@@ -266,6 +233,11 @@ verify_version "pyannote.metrics" "3.2.1" || FAILED=1
 verify_version "whisperx" "3.3.4" || FAILED=1
 verify_version "numpy" "2.0.2" || FAILED=1
 
+# LiveKit (voice chat)
+check_installed "livekit_api" || FAILED=1
+check_installed "livekit_protocol" || FAILED=1
+check_installed "livekit_agents" || FAILED=1
+
 # Apple Silicon specific
 if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
   verify_version "mlx-whisper" "0.4.3" || FAILED=1
@@ -273,18 +245,26 @@ fi
 
 echo ""
 
+# Verify namespace packages resolve correctly
+echo "=== Verifying Namespace Packages ==="
+"$PYTHON_BIN" -c "from livekit.api import AccessToken; print('✓ livekit.api')" 2>/dev/null || { echo "✗ livekit.api"; FAILED=1; }
+"$PYTHON_BIN" -c "from livekit.protocol import agent_dispatch; print('✓ livekit.protocol')" 2>/dev/null || { echo "✗ livekit.protocol"; FAILED=1; }
+"$PYTHON_BIN" -c "from google.oauth2.credentials import Credentials; print('✓ google.oauth2')" 2>/dev/null || { echo "✗ google.oauth2"; FAILED=1; }
+"$PYTHON_BIN" -c "import google.api_core; print('✓ google.api_core')" 2>/dev/null || { echo "✗ google.api_core"; FAILED=1; }
+
 if [ $FAILED -eq 1 ]; then
-  echo "=== VERSION MISMATCH DETECTED ==="
-  echo "Some packages have incorrect versions. This may cause compatibility issues."
+  echo ""
+  echo "=== VERSION MISMATCH OR MISSING PACKAGES ==="
+  echo "Some packages have incorrect versions or failed to install."
   echo "Check the pip install output above for dependency resolution messages."
   echo ""
-  # Don't fail the build, but warn loudly
 fi
 
+echo ""
 echo "=== Done ==="
 echo "Dependencies installed to: $SITE_PACKAGES"
 echo ""
 
 # List key installed packages
 echo "Key packages installed:"
-"$PYTHON_BIN" -m pip list --path "$SITE_PACKAGES" 2>/dev/null | grep -E "torch|whisper|pyannote|mlx|transformers|huggingface|sentence|numpy" || true
+"$PYTHON_BIN" -m pip list 2>/dev/null | grep -E "torch|whisper|pyannote|mlx|transformers|huggingface|sentence|numpy|livekit" || true
