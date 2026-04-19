@@ -272,13 +272,14 @@ export async function isPythonEnvCurrent(): Promise<boolean> {
 }
 
 /**
- * Install missing Python packages from bundled requirements files into
- * the user data Python environment. Used by stripped updates where
- * Python isn't re-bundled but the requirements changed.
+ * Install specific missing Python packages into the user data Python
+ * environment. Used by stripped updates where Python isn't re-bundled
+ * but the requirements changed.
  *
- * IMPORTANT: Does NOT use --upgrade to avoid re-downloading already
- * installed packages (torch alone is 2GB+). Only truly missing
- * packages are installed. This keeps startup fast (~5-10s vs minutes).
+ * IMPORTANT: Does NOT pip install the full requirements file — that
+ * causes cascading dependency conflicts (e.g. protobuf downgrade
+ * breaks google-auth). Instead, installs only the known missing
+ * packages with --no-deps to avoid disturbing existing packages.
  */
 async function reconcileDeps(
   pythonDir: string,
@@ -293,28 +294,54 @@ async function reconcileDeps(
     return;
   }
 
-  // Find the bundled requirements file for this platform
-  const reqFile = process.platform === 'win32'
-    ? path.join(process.resourcesPath, 'requirements-ml-windows.txt')
-    : path.join(process.resourcesPath, 'requirements-ml.txt');
+  // Packages that were added after the initial release and need to be
+  // installed in existing user data Python environments. Each entry is
+  // [import_path, pip_spec] — only installed if the import fails.
+  // Namespace packages that pip --target breaks. Check both livekit
+  // (voice chat) and google (OAuth/calendar/storage).
+  const missingPackages: Array<[string, string]> = [
+    ['livekit.protocol', 'livekit-protocol>=1.1.0'],
+    ['livekit.rtc', 'livekit>=1.1.0'],
+    ['livekit.api', 'livekit-api>=1.1.0'],
+    ['livekit.agents', 'livekit-agents>=1.5.0'],
+    ['livekit.plugins.silero', 'livekit-plugins-silero>=1.5.0'],
+    ['google.api_core', 'google-api-core'],
+    ['google.oauth2', 'google-auth'],
+    ['googleapiclient', 'google-api-python-client'],
+  ];
 
-  if (!existsSync(reqFile)) {
-    console.log('[Migration] No bundled requirements file — skipping dep reconciliation');
+  // Check which packages are actually missing
+  const toInstall: string[] = [];
+  for (const [importPath, spec] of missingPackages) {
+    try {
+      const { stderr } = await execFileAsync(
+        pythonBin,
+        ['-c', `import ${importPath}`],
+        { timeout: 10_000 },
+      );
+      // Import succeeded — package is present
+    } catch {
+      toInstall.push(spec);
+    }
+  }
+
+  if (toInstall.length === 0) {
+    console.log('[Migration] All packages present — no reconciliation needed');
     return;
   }
 
-  console.log(`[Migration] Installing missing deps from ${path.basename(reqFile)}`);
-  onProgress?.('Installing updated dependencies\u2026');
+  console.log(`[Migration] Installing ${toInstall.length} missing packages: ${toInstall.join(', ')}`);
+  onProgress?.(`Installing ${toInstall.length} missing dependencies\u2026`);
 
   try {
-    // No --upgrade: pip skips already-installed packages and only installs
-    // truly missing ones. This is critical for fast startup — the full
-    // requirements file includes torch (2GB+) and dozens of ML packages
-    // that are already present from the original full install.
+    // Use --force-reinstall --no-deps: force-reinstall is needed because
+    // pip --target may have left stale dist-info metadata that makes pip
+    // think packages are installed when the actual namespace dirs are
+    // missing. --no-deps avoids disturbing existing package versions.
     const { stdout, stderr } = await execFileAsync(
       pythonBin,
-      ['-m', 'pip', 'install', '-r', reqFile],
-      { timeout: 300_000 }, // 5 minutes
+      ['-m', 'pip', 'install', '--force-reinstall', '--no-deps', ...toInstall],
+      { timeout: 120_000 }, // 2 minutes
     );
     if (stdout) console.log('[Migration] pip stdout:', stdout.slice(-500));
     if (stderr) console.log('[Migration] pip stderr:', stderr.slice(-500));

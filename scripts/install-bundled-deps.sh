@@ -100,28 +100,29 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
 
   # Step 1: Install the pinned packages without their dependencies
   # This ensures we get EXACTLY the versions we specify.
-  # --upgrade is needed because multiple livekit-* packages share the
-  # livekit/ namespace directory — without it, pip --target skips
-  # packages whose namespace dir already exists from an earlier package
-  # in the same install command.
   "$PYTHON_BIN" -m pip install \
     --target "$SITE_PACKAGES" \
-    --upgrade \
     --no-deps \
     -r "$REQUIREMENTS_ML"
 
   # Step 2: Install missing sub-dependencies, but use requirements-ml.txt as constraints
   # This prevents pip from upgrading our pinned packages.
-  # --upgrade is required because --target won't overwrite namespace packages
-  # (e.g. livekit/) installed in step 1, causing sub-packages like
-  # livekit.protocol to be silently skipped.
   "$PYTHON_BIN" -m pip install \
     --target "$SITE_PACKAGES" \
-    --upgrade \
     --constraint "$REQUIREMENTS_ML" \
     -r "$REQUIREMENTS_ML"
 
-  # Step 3: Install mlx-audio separately (requires huggingface_hub>=1.0 which
+  # Step 3: Namespace packages — pip --target fundamentally cannot merge
+  # multiple distributions into the same namespace directory. Install
+  # WITHOUT --target so pip uses the standard install mechanism, which
+  # correctly creates all subdirectories (e.g. livekit/{protocol,api,...},
+  # google/{api_core,auth,oauth2,...}).
+  echo "Fixing namespace packages (livekit, google)..."
+  "$PYTHON_BIN" -m pip install --force-reinstall --no-deps \
+    livekit-protocol livekit livekit-api livekit-agents livekit-plugins-silero \
+    google-api-core google-api-python-client google-auth google-auth-oauthlib googleapis-common-protos
+
+  # Step 4: Install mlx-audio separately (requires huggingface_hub>=1.0 which
   # conflicts with whisperx's pin). Using --no-deps to avoid pulling in
   # conflicting transitive deps — the necessary deps are already installed.
   echo "Installing mlx-audio (voice TTS) without conflicting deps..."
