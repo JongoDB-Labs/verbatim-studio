@@ -109,10 +109,12 @@ rm -f "$RESOURCES_DIR/backend/"*.db* 2>/dev/null || true
 # Remove __pycache__ directories
 find "$RESOURCES_DIR/backend" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# Copy ML requirements for on-demand installation
-if [ -f "$SCRIPT_DIR/requirements-ml.txt" ]; then
-  cp "$SCRIPT_DIR/requirements-ml.txt" "$RESOURCES_DIR/"
-fi
+# Copy ML requirements for on-demand installation and dep reconciliation
+for reqfile in requirements-ml.txt requirements-ml-windows.txt; do
+  if [ -f "$SCRIPT_DIR/$reqfile" ]; then
+    cp "$SCRIPT_DIR/$reqfile" "$RESOURCES_DIR/"
+  fi
+done
 
 # Download and copy FFmpeg binaries
 echo "Setting up FFmpeg..."
@@ -129,6 +131,23 @@ if [ -d "$FFMPEG_DIR" ]; then
   ls -la "$RESOURCES_DIR/ffmpeg"
 else
   echo "Warning: FFmpeg binaries not found, video processing may not work"
+fi
+
+# Download LiveKit server binary (voice chat requires a local LiveKit server)
+echo "Setting up LiveKit server..."
+LIVEKIT_DIR="$PROJECT_ROOT/build/resources/bin"
+if [ ! -f "$LIVEKIT_DIR/livekit-server" ] && [ ! -f "$LIVEKIT_DIR/livekit-server.exe" ]; then
+  echo "Downloading LiveKit server..."
+  "$SCRIPT_DIR/download-livekit.sh" || echo "Warning: LiveKit download failed — voice chat will not be available"
+fi
+
+if [ -d "$LIVEKIT_DIR" ]; then
+  echo "Copying LiveKit binary..."
+  mkdir -p "$RESOURCES_DIR/bin"
+  cp -R "$LIVEKIT_DIR/"* "$RESOURCES_DIR/bin/" 2>/dev/null || true
+  ls -la "$RESOURCES_DIR/bin"
+else
+  echo "Warning: LiveKit binary not found, voice chat will not be available"
 fi
 
 echo ""
