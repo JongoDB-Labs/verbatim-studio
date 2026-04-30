@@ -105,13 +105,15 @@ install_lightning_shim() {
   echo "=== Installing lightning namespace shim ==="
   echo "(workaround for quarantined PyPI 'lightning' package)"
 
-  "$PYTHON_BIN" -m pip install --no-deps \
-    "pytorch-lightning>=2.0.1,<3" "lightning-fabric>=2.0.1,<3" "lightning-utilities" \
-    "torchmetrics" || {
-      echo "WARNING: Could not install pytorch-lightning shim deps — continuing anyway"
-    }
+  # Only install lightning-fabric — the one piece pyannote.audio actually uses
+  # at runtime (for cloud_io._load). pytorch_lightning + torchmetrics would
+  # add ~50MB and push the Windows NSIS installer past its archive size limit.
+  # We stub `lightning.pytorch` instead (training APIs we never call).
+  "$PYTHON_BIN" -m pip install --no-deps "lightning-fabric>=2.0.1,<3" || {
+    echo "WARNING: Could not install lightning-fabric — continuing anyway"
+  }
 
-  # Build a stub `lightning` namespace that aliases pytorch_lightning + lightning_fabric
+  # Build a stub `lightning` namespace
   local shim_dir="$site/lightning"
   rm -rf "$shim_dir"
   mkdir -p "$shim_dir/pytorch" "$shim_dir/fabric"
@@ -119,25 +121,41 @@ install_lightning_shim() {
   cat > "$shim_dir/__init__.py" <<'EOF'
 """Stub for the quarantined upstream `lightning` umbrella package.
 
-Re-exports pytorch_lightning + lightning_fabric so transitive dependents
-(pyannote.audio, etc.) can import from the `lightning` namespace.
+Re-exports lightning_fabric (used by pyannote.audio at runtime) and
+provides import-time stubs for lightning.pytorch (training APIs that
+we never invoke at runtime).
 """
-import pytorch_lightning as pytorch  # noqa: F401
-import lightning_fabric as fabric    # noqa: F401
-
+import lightning_fabric as fabric  # noqa: F401
 __version__ = "2.5.5"
 EOF
 
   cat > "$shim_dir/pytorch/__init__.py" <<'EOF'
-"""lightning.pytorch -> pytorch_lightning alias."""
-from pytorch_lightning import *  # noqa: F401,F403
-from pytorch_lightning import (
-    Callback,
-    LightningDataModule,
-    LightningModule,
-    Trainer,
-    seed_everything,
-)
+"""lightning.pytorch stub.
+
+pyannote.audio's cli/train.py imports `seed_everything` from this
+namespace, but the training CLI is never executed in Verbatim Studio
+(we only use pyannote.audio's inference pipelines). All names here
+satisfy import-time `from lightning.pytorch import X` without needing
+the heavy pytorch_lightning package installed.
+
+Calling any of these will raise — caught only if training were attempted.
+"""
+
+def _training_disabled(*args, **kwargs):
+    raise RuntimeError(
+        "lightning.pytorch is stubbed in this build — training APIs not available"
+    )
+
+class _StubModule:
+    def __init__(self, *a, **kw):
+        _training_disabled()
+
+# Minimum surface that pyannote.audio (and friends) import at module load
+seed_everything = _training_disabled
+LightningModule = _StubModule
+LightningDataModule = _StubModule
+Trainer = _StubModule
+Callback = _StubModule
 EOF
 
   cat > "$shim_dir/fabric/__init__.py" <<'EOF'
@@ -146,8 +164,7 @@ from lightning_fabric import *  # noqa: F401,F403
 EOF
 
   # Plant a dist-info so pip thinks `lightning==2.5.5` is installed.
-  # This satisfies pyannote-audio's `lightning>=2.0.1` constraint without
-  # pip trying to fetch the quarantined package.
+  # This satisfies pyannote-audio's `lightning>=2.0.1` constraint.
   local dist_info="$site/lightning-2.5.5.dist-info"
   rm -rf "$dist_info"
   mkdir -p "$dist_info"
@@ -163,7 +180,6 @@ Generator: install-bundled-deps.sh
 Root-Is-Purelib: true
 Tag: py3-none-any
 EOF
-  : > "$dist_info/INSTALLER"
   echo "lightning-shim" > "$dist_info/INSTALLER"
   : > "$dist_info/RECORD"
 
