@@ -99,9 +99,10 @@ def _cleanup_model() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Preset voices
+# Preset voices — depends on engine, populated dynamically at runtime
 # ---------------------------------------------------------------------------
-_PRESET_VOICES: list[dict] = [
+# Qwen3-TTS preset voices (ignored — Qwen3 uses voice cloning via reference audio)
+_QWEN3_PRESET_VOICES: list[dict] = [
     {"id": "serena", "name": "Serena", "description": "Calm female voice"},
     {"id": "vivian", "name": "Vivian", "description": "Warm female voice"},
     {"id": "ryan", "name": "Ryan", "description": "Natural male English voice"},
@@ -111,6 +112,29 @@ _PRESET_VOICES: list[dict] = [
     {"id": "ono_anna", "name": "Ono Anna", "description": "Japanese female voice"},
     {"id": "sohee", "name": "Sohee", "description": "Korean female voice"},
 ]
+
+# Kokoro 82M preset voices (mlx-audio loads voice .pt files from voices/ subdir)
+_KOKORO_PRESET_VOICES: list[dict] = [
+    # American female
+    {"id": "af_heart", "name": "Heart", "description": "American female (warm)"},
+    {"id": "af_bella", "name": "Bella", "description": "American female"},
+    {"id": "af_sarah", "name": "Sarah", "description": "American female"},
+    {"id": "af_nicole", "name": "Nicole", "description": "American female (intimate)"},
+    {"id": "af_nova", "name": "Nova", "description": "American female (energetic)"},
+    # American male
+    {"id": "am_adam", "name": "Adam", "description": "American male"},
+    {"id": "am_michael", "name": "Michael", "description": "American male"},
+    # British female
+    {"id": "bf_emma", "name": "Emma", "description": "British female"},
+    {"id": "bf_isabella", "name": "Isabella", "description": "British female"},
+    # British male
+    {"id": "bm_lewis", "name": "Lewis", "description": "British male"},
+    {"id": "bm_george", "name": "George", "description": "British male"},
+]
+
+# Backwards-compatible alias for code that imports _PRESET_VOICES directly.
+# Voice route prefers `list_voices()` on the active service when available.
+_PRESET_VOICES = _QWEN3_PRESET_VOICES
 
 
 # ---------------------------------------------------------------------------
@@ -172,32 +196,135 @@ class Qwen3TTSService(ITTSService):
         self._ensure_loaded()
 
         if self._engine == "kokoro":
-            return self._synthesize_kokoro(text)
+            return self._synthesize_kokoro(text, voice)
         else:
-            return self._synthesize_qwen3(text)
+            return self._synthesize_qwen3(text, voice)
 
-    def _synthesize_kokoro(self, text: str) -> bytes:
-        """Synthesize via Kokoro 82M — ultra-fast."""
+    # -- Kokoro voice handling ----------------------------------------------
+
+    _KOKORO_DEFAULT_VOICE = "af_heart"
+
+    def _resolve_kokoro_voice(self, voice: str | None) -> str:
+        """Resolve a frontend voice ID to a Kokoro voice file name.
+
+        Accepts native Kokoro voice IDs (af_heart, bm_lewis, etc.) directly.
+        Returns the default voice when the requested one isn't available.
+        """
+        if not voice:
+            return self._KOKORO_DEFAULT_VOICE
+
+        # If the voice file exists in the model's voices/ dir, use it directly
+        voices_dir = Path(self._model_path) / "voices"
+        for ext in (".pt", ".safetensors"):
+            if (voices_dir / f"{voice}{ext}").exists():
+                return voice
+
+        # Frontend may send Qwen3 preset names (serena, vivian, etc.) when
+        # the engine doesn't match — fall back to the default voice.
+        logger.warning(
+            "Kokoro voice '%s' not found in %s, using default '%s'",
+            voice, voices_dir, self._KOKORO_DEFAULT_VOICE,
+        )
+        return self._KOKORO_DEFAULT_VOICE
+
+    def _synthesize_kokoro(self, text: str, voice: str | None) -> bytes:
+        """Synthesize via Kokoro 82M — ultra-fast.
+
+        Uses the voice file from the model's voices/ subdirectory.
+        Voice ID prefix determines language: 'a*' = American, 'b*' = British.
+        """
+        resolved_voice = self._resolve_kokoro_voice(voice)
+        # Kokoro voice IDs encode language in the prefix (a/b/e/f/h/i/j/p/z)
+        lang_code = resolved_voice[0] if resolved_voice else "a"
+
+        logger.info(
+            "Kokoro synthesize: voice=%s, lang_code=%s, text=%r",
+            resolved_voice, lang_code, text[:60],
+        )
+
         results = list(self._model.generate(
             text=text,
-            voice="bm_lewis",    # British male voice
-            lang_code="b",       # 'b' = British English
+            voice=resolved_voice,
+            lang_code=lang_code,
             speed=1.1,
         ))
+
+        if not results:
+            logger.error("Kokoro generate returned no results for text=%r", text[:60])
+            return b""
 
         audio = results[0].audio
         audio_np = np.array(audio, dtype=np.float32)
 
-        if audio_np.max() > 0:
-            audio_np = audio_np / max(abs(audio_np.max()), abs(audio_np.min()))
+        peak = max(abs(audio_np.max()), abs(audio_np.min()))
+        if peak > 0:
+            audio_np = audio_np / peak
         audio_int16 = (audio_np * 32767).astype(np.int16)
 
-        return self._to_wav(audio_int16)
+        wav_bytes = self._to_wav(audio_int16)
+        logger.debug(
+            "Kokoro synth complete: %d samples, peak=%.3f, %d wav bytes",
+            len(audio_np), peak, len(wav_bytes),
+        )
+        return wav_bytes
 
-    def _synthesize_qwen3(self, text: str) -> bytes:
-        """Synthesize via Qwen3-TTS 1.7B — higher quality with voice cloning."""
-        ref_audio_path = str(Path(self._model_path).parent / "max_voice_ref.wav")
-        ref_text = "I'm very sorry I can't be with you all today and such an important gathering. Some have speculated that I've seen more of the natural world than anyone else."
+    # -- Qwen3 voice cloning ------------------------------------------------
+
+    # Where to look for user-provided voice clone files. Search in order.
+    def _find_voice_clone(self, voice: str | None) -> tuple[Path | None, str | None]:
+        """Locate a reference audio file for Qwen3 voice cloning.
+
+        Search order:
+          1. {models_dir}/tts/voice_clones/{voice}.wav (user-uploaded by name)
+          2. {models_dir}/tts/voice_clones/default.wav (any uploaded clone)
+          3. First .wav in {models_dir}/tts/voice_clones/
+          4. {model_path}/voice_clone.wav (legacy location next to model)
+          5. {model_path}/../max_voice_ref.wav (legacy hardcoded path)
+
+        Returns:
+            (path_or_None, transcript_or_None). Transcript loaded from
+            sibling .txt file if present.
+        """
+        candidates: list[Path] = []
+
+        tts_root = Path(self._model_path).parent  # {models_dir}/tts
+        clones_dir = tts_root / "voice_clones"
+
+        if voice:
+            candidates.append(clones_dir / f"{voice}.wav")
+        candidates.append(clones_dir / "default.wav")
+
+        if clones_dir.is_dir():
+            for child in sorted(clones_dir.glob("*.wav")):
+                if child not in candidates:
+                    candidates.append(child)
+
+        # Legacy locations for backward compatibility
+        candidates.append(Path(self._model_path) / "voice_clone.wav")
+        candidates.append(tts_root / "max_voice_ref.wav")
+
+        for path in candidates:
+            if path.is_file():
+                # Look for an adjacent transcript file (same basename + .txt)
+                txt_path = path.with_suffix(".txt")
+                ref_text = None
+                if txt_path.is_file():
+                    try:
+                        ref_text = txt_path.read_text(encoding="utf-8").strip()
+                    except OSError:
+                        ref_text = None
+                return path, ref_text
+
+        return None, None
+
+    def _synthesize_qwen3(self, text: str, voice: str | None) -> bytes:
+        """Synthesize via Qwen3-TTS 1.7B — voice cloning via reference audio.
+
+        Without a reference audio file Qwen3 generates a different random
+        voice for every utterance.  Discovers reference audio in
+        {models_dir}/tts/voice_clones/ — see :meth:`_find_voice_clone`.
+        """
+        ref_audio, ref_text = self._find_voice_clone(voice)
 
         generate_kwargs: dict = {
             "text": text,
@@ -205,20 +332,42 @@ class Qwen3TTSService(ITTSService):
             "speed": 1.3,
         }
 
-        if Path(ref_audio_path).exists():
-            generate_kwargs["ref_audio"] = ref_audio_path
-            generate_kwargs["ref_text"] = ref_text
+        if ref_audio is not None:
+            generate_kwargs["ref_audio"] = str(ref_audio)
+            if ref_text:
+                generate_kwargs["ref_text"] = ref_text
+            logger.info(
+                "Qwen3 synthesize with voice clone: %s (ref_text=%s)",
+                ref_audio.name, "yes" if ref_text else "no",
+            )
+        else:
+            logger.warning(
+                "Qwen3 synthesize WITHOUT voice clone — voice will be random. "
+                "Upload a reference WAV via POST /api/voice/clone or place one in "
+                "%s/voice_clones/{name}.wav",
+                Path(self._model_path).parent,
+            )
 
         results = list(self._model.generate(**generate_kwargs))
+
+        if not results:
+            logger.error("Qwen3 generate returned no results for text=%r", text[:60])
+            return b""
 
         audio = results[0].audio
         audio_np = np.array(audio, dtype=np.float32)
 
-        if audio_np.max() > 0:
-            audio_np = audio_np / max(abs(audio_np.max()), abs(audio_np.min()))
+        peak = max(abs(audio_np.max()), abs(audio_np.min()))
+        if peak > 0:
+            audio_np = audio_np / peak
         audio_int16 = (audio_np * 32767).astype(np.int16)
 
-        return self._to_wav(audio_int16)
+        wav_bytes = self._to_wav(audio_int16)
+        logger.debug(
+            "Qwen3 synth complete: %d samples, peak=%.3f, %d wav bytes",
+            len(audio_np), peak, len(wav_bytes),
+        )
+        return wav_bytes
 
     @staticmethod
     def _to_wav(audio_int16: np.ndarray) -> bytes:
@@ -253,8 +402,10 @@ class Qwen3TTSService(ITTSService):
         yield full_audio
 
     async def list_voices(self) -> list[dict]:
-        """Return the built-in preset voices."""
-        return list(_PRESET_VOICES)
+        """Return preset voices appropriate for the current engine."""
+        if self._engine == "kokoro":
+            return list(_KOKORO_PRESET_VOICES)
+        return list(_QWEN3_PRESET_VOICES)
 
     async def is_available(self) -> bool:
         """Return ``True`` if the model is loaded and ready."""

@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -130,13 +130,23 @@ async def voice_status() -> VoiceStatusResponse:
         tts_available = _is_tts_model_downloaded(active_id)
 
         if tts_available:
-            # Return preset voices from the platform-appropriate adapter
+            # Return preset voices appropriate for the active engine.
+            # Kokoro and Qwen3 have different voice IDs, so we ask the
+            # adapter directly rather than reading platform-level constants.
             if sys.platform == "darwin":
-                from adapters.ai.qwen3_tts import _PRESET_VOICES
+                from adapters.ai.qwen3_tts import (
+                    _KOKORO_PRESET_VOICES,
+                    _QWEN3_PRESET_VOICES,
+                )
+
+                catalog_entry = TTS_CATALOG.get(active_id, {})
+                if catalog_entry.get("engine") == "kokoro":
+                    voices = list(_KOKORO_PRESET_VOICES)
+                else:
+                    voices = list(_QWEN3_PRESET_VOICES)
             else:
                 from adapters.ai.kokoro_onnx_tts import _PRESET_VOICES
-
-            voices = list(_PRESET_VOICES)
+                voices = list(_PRESET_VOICES)
 
     # Check for required dependencies
     missing_deps: list[str] = []
@@ -713,3 +723,103 @@ async def create_voice_session(
         url=LIVEKIT_URL,
         room_name=room_name,
     )
+
+
+# ── Voice clone management ────────────────────────────────────────────
+
+
+def _voice_clones_dir() -> Path:
+    """Directory where uploaded reference voice files are stored."""
+    return settings.MODELS_DIR / "tts" / "voice_clones"
+
+
+class VoiceCloneInfo(BaseModel):
+    """Metadata for an uploaded voice clone."""
+
+    name: str
+    filename: str
+    size_bytes: int
+    has_transcript: bool
+
+
+@router.get("/clones", response_model=list[VoiceCloneInfo])
+async def list_voice_clones() -> list[VoiceCloneInfo]:
+    """List uploaded reference audio files for voice cloning."""
+    clones_dir = _voice_clones_dir()
+    if not clones_dir.is_dir():
+        return []
+
+    items: list[VoiceCloneInfo] = []
+    for wav in sorted(clones_dir.glob("*.wav")):
+        items.append(VoiceCloneInfo(
+            name=wav.stem,
+            filename=wav.name,
+            size_bytes=wav.stat().st_size,
+            has_transcript=wav.with_suffix(".txt").is_file(),
+        ))
+    return items
+
+
+@router.post("/clones", response_model=VoiceCloneInfo)
+async def upload_voice_clone(
+    name: Annotated[str, Form(description="Voice ID (alphanumeric, e.g. 'max')")],
+    audio: Annotated[UploadFile, File(description="Reference audio (WAV, 5-30s recommended)")],
+    transcript: Annotated[str | None, Form(description="Spoken text in the audio (improves cloning quality)")] = None,
+) -> VoiceCloneInfo:
+    """Upload a reference audio file for voice cloning (Qwen3-TTS).
+
+    The clone is stored at {models_dir}/tts/voice_clones/{name}.wav and
+    becomes available immediately for new voice sessions when the user
+    selects matching voice ID.
+    """
+    # Sanitize name — only allow simple identifiers to prevent path traversal
+    if not name or not name.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(400, "name must be alphanumeric (underscores and hyphens allowed)")
+
+    clones_dir = _voice_clones_dir()
+    clones_dir.mkdir(parents=True, exist_ok=True)
+
+    wav_path = clones_dir / f"{name}.wav"
+    txt_path = clones_dir / f"{name}.txt"
+
+    contents = await audio.read()
+    if len(contents) < 1024:
+        raise HTTPException(400, "audio file too small (need at least 5s of speech)")
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(400, "audio file too large (max 50 MB)")
+
+    wav_path.write_bytes(contents)
+
+    if transcript:
+        txt_path.write_text(transcript.strip(), encoding="utf-8")
+    elif txt_path.is_file():
+        txt_path.unlink()  # Remove stale transcript
+
+    logger.info("Voice clone uploaded: %s (%d bytes)", wav_path, len(contents))
+
+    return VoiceCloneInfo(
+        name=name,
+        filename=wav_path.name,
+        size_bytes=wav_path.stat().st_size,
+        has_transcript=txt_path.is_file(),
+    )
+
+
+@router.delete("/clones/{name}")
+async def delete_voice_clone(name: str) -> dict[str, bool]:
+    """Delete an uploaded voice clone."""
+    if not name.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(400, "invalid name")
+
+    clones_dir = _voice_clones_dir()
+    wav_path = clones_dir / f"{name}.wav"
+    txt_path = clones_dir / f"{name}.txt"
+
+    if not wav_path.is_file():
+        raise HTTPException(404, f"voice clone '{name}' not found")
+
+    wav_path.unlink()
+    txt_path.unlink(missing_ok=True)
+
+    logger.info("Voice clone deleted: %s", name)
+    return {"deleted": True}

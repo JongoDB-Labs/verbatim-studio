@@ -541,10 +541,20 @@ class VerbatimVoiceAgent:
                     break
                 try:
                     audio_chunk = await self.tts.synthesize(sentence)
-                    if audio_chunk and publish_fn:
+                    if not audio_chunk:
+                        logger.error(
+                            "TTS produced empty audio for sentence: %r", sentence[:80]
+                        )
+                    elif not publish_fn:
+                        logger.warning("TTS produced %d bytes but no publish_fn", len(audio_chunk))
+                    else:
+                        logger.info(
+                            "TTS produced %d bytes for sentence: %r — publishing",
+                            len(audio_chunk), sentence[:60],
+                        )
                         await publish_fn(audio_chunk)
                 except Exception:
-                    logger.warning("TTS failed for sentence: %s", sentence[:50])
+                    logger.exception("TTS failed for sentence: %r", sentence[:80])
                 tts_queue.task_done()
 
         tts_task = asyncio.create_task(tts_worker())
@@ -1098,6 +1108,10 @@ async def connect_agent_to_room(
             import io
             import wave
 
+            if not wav_data:
+                logger.error("_publish_audio_response called with empty wav_data")
+                return
+
             try:
                 with wave.open(io.BytesIO(wav_data), "rb") as wf:
                     sr = wf.getframerate()
@@ -1105,21 +1119,43 @@ async def connect_agent_to_room(
                     sw = wf.getsampwidth()
                     raw = wf.readframes(wf.getnframes())
 
+                logger.debug(
+                    "Publishing audio: sr=%d, nch=%d, sw=%d, raw_bytes=%d",
+                    sr, nch, sw, len(raw),
+                )
+
+                if sw != 2:
+                    logger.error(
+                        "Unsupported sample width %d (expected 2). Skipping.", sw
+                    )
+                    return
+
                 # Convert to the agent's sample rate if needed
                 samples = np.frombuffer(raw, dtype=np.int16)
-
                 if nch > 1:
                     samples = samples[::nch]  # Take first channel
 
                 if sr != AGENT_SAMPLE_RATE:
-                    # Simple resampling via linear interpolation
                     ratio = AGENT_SAMPLE_RATE / sr
                     new_len = int(len(samples) * ratio)
                     indices = np.linspace(0, len(samples) - 1, new_len)
                     samples = np.interp(indices, np.arange(len(samples)), samples.astype(np.float32)).astype(np.int16)
+                    logger.debug("Resampled %d → %d samples", new_len, len(samples))
+
+                # Verify audio has actual content (not silent)
+                rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+                peak = int(np.max(np.abs(samples))) if len(samples) > 0 else 0
+                if peak == 0:
+                    logger.error("TTS audio is completely silent — peak=0")
+                    return
+                if rms < 50:
+                    logger.warning(
+                        "TTS audio is very quiet: rms=%.1f peak=%d", rms, peak
+                    )
 
                 # Publish in chunks (20ms frames)
-                chunk_samples = AGENT_SAMPLE_RATE // 50  # 20ms at sample rate
+                chunk_samples = AGENT_SAMPLE_RATE // 50  # 20ms
+                frame_count = 0
                 for i in range(0, len(samples), chunk_samples):
                     chunk = samples[i:i + chunk_samples]
                     if len(chunk) < chunk_samples:
@@ -1134,9 +1170,13 @@ async def connect_agent_to_room(
                     frame.data[:len(chunk)] = memoryview(chunk)
 
                     await source.capture_frame(frame)
+                    frame_count += 1
 
                 await source.wait_for_playout()
-                logger.info("Agent audio response published")
+                logger.info(
+                    "Agent audio published: %d frames, %.2fs, rms=%.1f peak=%d",
+                    frame_count, len(samples) / AGENT_SAMPLE_RATE, rms, peak,
+                )
 
             except Exception:
                 logger.exception("Failed to publish audio response")
