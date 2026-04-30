@@ -79,6 +79,9 @@ export async function migrateResourcesToUserData(
         await reconcileDeps(userPythonDir, onProgress);
         await writePythonEnvVersion(userDataDir);
       }
+
+      // Voice clones may have been added/updated in the stripped update too
+      await migrateVoiceClones(userDataDir, onProgress);
     } else {
       // This happens when a user upgrades from a pre-migration version using a
       // stripped update. They need the full installer to bootstrap the Python env.
@@ -158,10 +161,59 @@ export async function migrateResourcesToUserData(
     );
   }
 
+  // Migrate bundled voice clones (Max assistant reference voice for Qwen3).
+  // File-level merge: never overwrite a user-uploaded clone with the same name.
+  await migrateVoiceClones(userDataDir, onProgress);
+
   // Write version marker for future dependency update detection
   await writePythonEnvVersion(userDataDir);
 
   return true;
+}
+
+/**
+ * Copy bundled voice clone files into user data, preserving any
+ * user-uploaded files with matching names. Runs on every full install
+ * (not just first launch) so updated bundled clones reach existing users
+ * — but user uploads always take precedence.
+ */
+async function migrateVoiceClones(
+  userDataDir: string,
+  onProgress?: (message: string) => void,
+): Promise<void> {
+  const bundledDir = path.join(process.resourcesPath, 'voice_clones');
+  if (!existsSync(bundledDir)) {
+    return;
+  }
+
+  const userDir = path.join(userDataDir, 'models', 'tts', 'voice_clones');
+  await mkdir(userDir, { recursive: true });
+
+  const { readdir } = await import('fs/promises');
+  let files: string[];
+  try {
+    files = await readdir(bundledDir);
+  } catch {
+    return;
+  }
+
+  let copied = 0;
+  for (const name of files) {
+    if (!name.endsWith('.wav') && !name.endsWith('.txt')) continue;
+    const src = path.join(bundledDir, name);
+    const dest = path.join(userDir, name);
+    if (existsSync(dest)) {
+      // Don't overwrite user-uploaded clone with the same name
+      continue;
+    }
+    await cp(src, dest);
+    copied++;
+  }
+
+  if (copied > 0) {
+    console.log(`[Migration] Migrated ${copied} bundled voice clone(s) to ${userDir}`);
+    onProgress?.('Setting up assistant voice…');
+  }
 }
 
 /**

@@ -99,41 +99,20 @@ def _cleanup_model() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Preset voices — depends on engine, populated dynamically at runtime
+# Single voice per engine — Max is the Verbatim Studio assistant identity.
+# Qwen3 clones from a bundled reference WAV; Kokoro uses a single preset.
 # ---------------------------------------------------------------------------
-# Qwen3-TTS preset voices (ignored — Qwen3 uses voice cloning via reference audio)
+# Qwen3 always speaks as "Max" via the bundled voice_clones/max.wav reference
 _QWEN3_PRESET_VOICES: list[dict] = [
-    {"id": "serena", "name": "Serena", "description": "Calm female voice"},
-    {"id": "vivian", "name": "Vivian", "description": "Warm female voice"},
-    {"id": "ryan", "name": "Ryan", "description": "Natural male English voice"},
-    {"id": "aiden", "name": "Aiden", "description": "Young male voice"},
-    {"id": "dylan", "name": "Dylan", "description": "Male voice (Beijing accent)"},
-    {"id": "eric", "name": "Eric", "description": "Male voice (Sichuan accent)"},
-    {"id": "ono_anna", "name": "Ono Anna", "description": "Japanese female voice"},
-    {"id": "sohee", "name": "Sohee", "description": "Korean female voice"},
+    {"id": "max", "name": "Max", "description": "Verbatim assistant voice (cloned)"},
 ]
 
-# Kokoro 82M preset voices (mlx-audio loads voice .pt files from voices/ subdir)
+# Kokoro fallback for systems without Qwen3 — single American male voice
 _KOKORO_PRESET_VOICES: list[dict] = [
-    # American female
-    {"id": "af_heart", "name": "Heart", "description": "American female (warm)"},
-    {"id": "af_bella", "name": "Bella", "description": "American female"},
-    {"id": "af_sarah", "name": "Sarah", "description": "American female"},
-    {"id": "af_nicole", "name": "Nicole", "description": "American female (intimate)"},
-    {"id": "af_nova", "name": "Nova", "description": "American female (energetic)"},
-    # American male
-    {"id": "am_adam", "name": "Adam", "description": "American male"},
-    {"id": "am_michael", "name": "Michael", "description": "American male"},
-    # British female
-    {"id": "bf_emma", "name": "Emma", "description": "British female"},
-    {"id": "bf_isabella", "name": "Isabella", "description": "British female"},
-    # British male
-    {"id": "bm_lewis", "name": "Lewis", "description": "British male"},
-    {"id": "bm_george", "name": "George", "description": "British male"},
+    {"id": "am_adam", "name": "Max", "description": "Verbatim assistant voice"},
 ]
 
 # Backwards-compatible alias for code that imports _PRESET_VOICES directly.
-# Voice route prefers `list_voices()` on the active service when available.
 _PRESET_VOICES = _QWEN3_PRESET_VOICES
 
 
@@ -270,61 +249,37 @@ class Qwen3TTSService(ITTSService):
 
     # -- Qwen3 voice cloning ------------------------------------------------
 
-    # Where to look for user-provided voice clone files. Search in order.
-    def _find_voice_clone(self, voice: str | None) -> tuple[Path | None, str | None]:
-        """Locate a reference audio file for Qwen3 voice cloning.
+    def _find_max_voice(self) -> tuple[Path | None, str | None]:
+        """Locate the bundled "Max" reference audio for Qwen3 cloning.
 
-        Search order:
-          1. {models_dir}/tts/voice_clones/{voice}.wav (user-uploaded by name)
-          2. {models_dir}/tts/voice_clones/default.wav (any uploaded clone)
-          3. First .wav in {models_dir}/tts/voice_clones/
-          4. {model_path}/voice_clone.wav (legacy location next to model)
-          5. {model_path}/../max_voice_ref.wav (legacy hardcoded path)
-
-        Returns:
-            (path_or_None, transcript_or_None). Transcript loaded from
-            sibling .txt file if present.
+        The Max voice is the single Verbatim assistant identity, bundled
+        with the app at build time and migrated to user data on first
+        launch. Returns (path, transcript) — transcript loaded from
+        sibling max.txt if present.
         """
-        candidates: list[Path] = []
-
         tts_root = Path(self._model_path).parent  # {models_dir}/tts
-        clones_dir = tts_root / "voice_clones"
+        wav_path = tts_root / "voice_clones" / "max.wav"
 
-        if voice:
-            candidates.append(clones_dir / f"{voice}.wav")
-        candidates.append(clones_dir / "default.wav")
+        if not wav_path.is_file():
+            return None, None
 
-        if clones_dir.is_dir():
-            for child in sorted(clones_dir.glob("*.wav")):
-                if child not in candidates:
-                    candidates.append(child)
-
-        # Legacy locations for backward compatibility
-        candidates.append(Path(self._model_path) / "voice_clone.wav")
-        candidates.append(tts_root / "max_voice_ref.wav")
-
-        for path in candidates:
-            if path.is_file():
-                # Look for an adjacent transcript file (same basename + .txt)
-                txt_path = path.with_suffix(".txt")
-                ref_text = None
-                if txt_path.is_file():
-                    try:
-                        ref_text = txt_path.read_text(encoding="utf-8").strip()
-                    except OSError:
-                        ref_text = None
-                return path, ref_text
-
-        return None, None
+        txt_path = wav_path.with_suffix(".txt")
+        ref_text = None
+        if txt_path.is_file():
+            try:
+                ref_text = txt_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+        return wav_path, ref_text
 
     def _synthesize_qwen3(self, text: str, voice: str | None) -> bytes:
-        """Synthesize via Qwen3-TTS 1.7B — voice cloning via reference audio.
+        """Synthesize via Qwen3-TTS 1.7B — always clones the bundled Max voice.
 
-        Without a reference audio file Qwen3 generates a different random
-        voice for every utterance.  Discovers reference audio in
-        {models_dir}/tts/voice_clones/ — see :meth:`_find_voice_clone`.
+        Without the reference audio Qwen3 generates a different random
+        voice for every utterance, so the bundled max.wav is required
+        for the assistant to have a consistent identity.
         """
-        ref_audio, ref_text = self._find_voice_clone(voice)
+        ref_audio, ref_text = self._find_max_voice()
 
         generate_kwargs: dict = {
             "text": text,
@@ -337,14 +292,15 @@ class Qwen3TTSService(ITTSService):
             if ref_text:
                 generate_kwargs["ref_text"] = ref_text
             logger.info(
-                "Qwen3 synthesize with voice clone: %s (ref_text=%s)",
+                "Qwen3 synthesize as Max (ref=%s, ref_text=%s)",
                 ref_audio.name, "yes" if ref_text else "no",
             )
         else:
-            logger.warning(
-                "Qwen3 synthesize WITHOUT voice clone — voice will be random. "
-                "Upload a reference WAV via POST /api/voice/clone or place one in "
-                "%s/voice_clones/{name}.wav",
+            logger.error(
+                "Qwen3 voice reference missing at %s/voice_clones/max.wav — "
+                "voice will be random. The bundled max.wav should have been "
+                "migrated on first launch; reinstall the app or place the "
+                "file manually.",
                 Path(self._model_path).parent,
             )
 

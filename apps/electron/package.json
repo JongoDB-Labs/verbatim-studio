@@ -109,6 +109,14 @@
         "filter": [
           "livekit-server*"
         ]
+      },
+      {
+        "from": "../../build/resources/voice_clones",
+        "to": "voice_clones",
+        "filter": [
+          "*.wav",
+          "*.txt"
+        ]
       }
     ],
     "mac": {

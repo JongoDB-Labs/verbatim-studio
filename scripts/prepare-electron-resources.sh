@@ -150,6 +150,27 @@ else
   echo "Warning: LiveKit binary not found, voice chat will not be available"
 fi
 
+# Bundle voice clones — the Max assistant's reference voice for Qwen3 cloning.
+# Files in assets/voice_clones/ (excluding README) are copied into the bundle
+# and migrated to user data on first launch.
+echo "Setting up voice clones..."
+VOICE_CLONES_SRC="$PROJECT_ROOT/assets/voice_clones"
+if [ -d "$VOICE_CLONES_SRC" ]; then
+  mkdir -p "$RESOURCES_DIR/voice_clones"
+  # Copy WAV and TXT files only (skip README and other docs)
+  find "$VOICE_CLONES_SRC" -maxdepth 1 \( -name "*.wav" -o -name "*.txt" \) \
+    -exec cp {} "$RESOURCES_DIR/voice_clones/" \;
+  CLONE_COUNT=$(find "$RESOURCES_DIR/voice_clones" -name "*.wav" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$CLONE_COUNT" -gt 0 ]; then
+    echo "Bundled $CLONE_COUNT voice clone(s):"
+    ls -la "$RESOURCES_DIR/voice_clones"
+  else
+    echo "Warning: No .wav files in $VOICE_CLONES_SRC — Qwen3 voice will be random until user uploads one"
+  fi
+else
+  echo "Warning: $VOICE_CLONES_SRC does not exist — skipping voice clone bundling"
+fi
+
 echo ""
 echo "=== Done ==="
 echo "Resources prepared at: $RESOURCES_DIR"
