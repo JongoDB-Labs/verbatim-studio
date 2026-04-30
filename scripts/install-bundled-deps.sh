@@ -246,6 +246,36 @@ else
 fi
 
 # =============================================================================
+# Strip bundle bloat — required to fit Windows NSIS archive size limit.
+# Removes ~500MB of caches/tests without affecting runtime imports.
+# Verified safe: all critical imports (torch, pyannote.audio, lightning,
+# whisperx, mlx, livekit) work after these deletions.
+# =============================================================================
+echo ""
+echo "=== Stripping bundle bloat ==="
+SIZE_BEFORE=$(du -sh "$SITE_PACKAGES" 2>/dev/null | cut -f1)
+
+# 1. __pycache__ (~378 MB) — Python regenerates these on first import
+find "$SITE_PACKAGES" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# 2. Top-level tests/ dirs (~160 MB) — only at depth 2-3 (don't touch
+#    nested test data files that packages might import)
+find "$SITE_PACKAGES" -mindepth 2 -maxdepth 3 -type d \( -name "tests" -o -name "test" \) \
+  -exec rm -rf {} + 2>/dev/null || true
+
+# 3. Google API discovery cache (~85 MB) — keep only Calendar (the one we use)
+DISC_DIR="$SITE_PACKAGES/googleapiclient/discovery_cache/documents"
+if [ -d "$DISC_DIR" ]; then
+  find "$DISC_DIR" -name "*.json" ! -name "calendar.*.json" -delete 2>/dev/null || true
+fi
+
+# 4. .pyi type stubs (small but adds up) — runtime doesn't need them
+find "$SITE_PACKAGES" -name "*.pyi" -delete 2>/dev/null || true
+
+SIZE_AFTER=$(du -sh "$SITE_PACKAGES" 2>/dev/null | cut -f1)
+echo "Site-packages: $SIZE_BEFORE → $SIZE_AFTER"
+
+# =============================================================================
 # Restore setuptools <72 if installs overwrote it with a newer version
 # (torch depends on setuptools, pip may pull 82.0+ which lacks pkg_resources)
 # =============================================================================
