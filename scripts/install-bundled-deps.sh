@@ -92,6 +92,84 @@ echo ""
 echo "=== Installing ML Dependencies (Strict Pins) ==="
 echo "Using exact versions from requirements-ml.txt to prevent compatibility issues"
 
+# Install a `lightning` namespace shim BEFORE the deps step.
+# pyannote-audio==3.3.2 declares `lightning>=2.0.1` as a runtime dep, but the
+# upstream `lightning` PyPI package was quarantined (security action) — pip
+# can no longer find any version. We install pytorch-lightning + lightning-fabric
+# (still on PyPI) and create a stub `lightning` package that re-exports the
+# pieces pyannote-audio actually imports. With the shim in place, pip's
+# constraint check during step 2 sees `lightning` as already installed.
+install_lightning_shim() {
+  local site=$1
+  echo ""
+  echo "=== Installing lightning namespace shim ==="
+  echo "(workaround for quarantined PyPI 'lightning' package)"
+
+  "$PYTHON_BIN" -m pip install --no-deps \
+    "pytorch-lightning>=2.0.1,<3" "lightning-fabric>=2.0.1,<3" "lightning-utilities" \
+    "torchmetrics" || {
+      echo "WARNING: Could not install pytorch-lightning shim deps — continuing anyway"
+    }
+
+  # Build a stub `lightning` namespace that aliases pytorch_lightning + lightning_fabric
+  local shim_dir="$site/lightning"
+  rm -rf "$shim_dir"
+  mkdir -p "$shim_dir/pytorch" "$shim_dir/fabric"
+
+  cat > "$shim_dir/__init__.py" <<'EOF'
+"""Stub for the quarantined upstream `lightning` umbrella package.
+
+Re-exports pytorch_lightning + lightning_fabric so transitive dependents
+(pyannote.audio, etc.) can import from the `lightning` namespace.
+"""
+import pytorch_lightning as pytorch  # noqa: F401
+import lightning_fabric as fabric    # noqa: F401
+
+__version__ = "2.5.5"
+EOF
+
+  cat > "$shim_dir/pytorch/__init__.py" <<'EOF'
+"""lightning.pytorch -> pytorch_lightning alias."""
+from pytorch_lightning import *  # noqa: F401,F403
+from pytorch_lightning import (
+    Callback,
+    LightningDataModule,
+    LightningModule,
+    Trainer,
+    seed_everything,
+)
+EOF
+
+  cat > "$shim_dir/fabric/__init__.py" <<'EOF'
+"""lightning.fabric -> lightning_fabric alias."""
+from lightning_fabric import *  # noqa: F401,F403
+EOF
+
+  # Plant a dist-info so pip thinks `lightning==2.5.5` is installed.
+  # This satisfies pyannote-audio's `lightning>=2.0.1` constraint without
+  # pip trying to fetch the quarantined package.
+  local dist_info="$site/lightning-2.5.5.dist-info"
+  rm -rf "$dist_info"
+  mkdir -p "$dist_info"
+  cat > "$dist_info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: lightning
+Version: 2.5.5
+Summary: Local stub for the quarantined upstream `lightning` package.
+EOF
+  cat > "$dist_info/WHEEL" <<'EOF'
+Wheel-Version: 1.0
+Generator: install-bundled-deps.sh
+Root-Is-Purelib: true
+Tag: py3-none-any
+EOF
+  : > "$dist_info/INSTALLER"
+  echo "lightning-shim" > "$dist_info/INSTALLER"
+  : > "$dist_info/RECORD"
+
+  echo "lightning shim installed at $shim_dir"
+}
+
 if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
   echo "Installing for Apple Silicon (includes mlx-whisper)..."
 
@@ -100,6 +178,10 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
   "$PYTHON_BIN" -m pip install \
     --no-deps \
     -r "$REQUIREMENTS_ML"
+
+  # Step 1.5: Install the lightning namespace shim before pip resolves
+  # pyannote-audio's transitive deps. See install_lightning_shim().
+  install_lightning_shim "$SITE_PACKAGES"
 
   # Step 2: Install sub-dependencies, constrained to our pinned versions
   "$PYTHON_BIN" -m pip install \
@@ -135,6 +217,9 @@ elif [ "$PLATFORM" = "windows" ]; then
     --no-deps \
     -r "$REQUIREMENTS_ML_WIN"
 
+  # Step 1.5: Install lightning namespace shim (see install_lightning_shim())
+  install_lightning_shim "$SITE_PACKAGES"
+
   # Step 2: Install sub-dependencies with constraints
   "$PYTHON_BIN" -m pip install \
     --constraint "$REQUIREMENTS_ML_WIN" \
@@ -150,6 +235,9 @@ else
   "$PYTHON_BIN" -m pip install \
     --no-deps \
     -r "$TEMP_REQUIREMENTS"
+
+  # Lightning shim (see install_lightning_shim())
+  install_lightning_shim "$SITE_PACKAGES"
 
   "$PYTHON_BIN" -m pip install \
     --constraint "$TEMP_REQUIREMENTS" \
