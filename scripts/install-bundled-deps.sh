@@ -105,13 +105,18 @@ install_lightning_shim() {
   echo "=== Installing lightning namespace shim ==="
   echo "(workaround for quarantined PyPI 'lightning' package)"
 
-  # Only install lightning-fabric — the one piece pyannote.audio actually uses
-  # at runtime (for cloud_io._load). pytorch_lightning + torchmetrics would
-  # add ~50MB and push the Windows NSIS installer past its archive size limit.
-  # We stub `lightning.pytorch` instead (training APIs we never call).
-  "$PYTHON_BIN" -m pip install --no-deps "lightning-fabric>=2.0.1,<3" || {
-    echo "WARNING: Could not install lightning-fabric — continuing anyway"
-  }
+  # pyannote.audio imports BOTH:
+  #   - lightning_fabric.utilities.cloud_io (core/model.py)
+  #   - pytorch_lightning.utilities.memory (core/inference.py)
+  # Both are pure-Python and small (~1.5 MB combined). Install with --no-deps
+  # so we don't pull in torchmetrics/typer etc here — those come in via
+  # step 2's constrained resolve when actually needed by pyannote-audio.
+  "$PYTHON_BIN" -m pip install --no-deps \
+    "lightning-fabric>=2.0.1,<3" \
+    "pytorch-lightning>=2.0.1,<3" \
+    "lightning-utilities" || {
+      echo "WARNING: Could not install lightning shim base packages — continuing anyway"
+    }
 
   # Build a stub `lightning` namespace
   local shim_dir="$site/lightning"
@@ -130,32 +135,10 @@ __version__ = "2.5.5"
 EOF
 
   cat > "$shim_dir/pytorch/__init__.py" <<'EOF'
-"""lightning.pytorch stub.
-
-pyannote.audio's cli/train.py imports `seed_everything` from this
-namespace, but the training CLI is never executed in Verbatim Studio
-(we only use pyannote.audio's inference pipelines). All names here
-satisfy import-time `from lightning.pytorch import X` without needing
-the heavy pytorch_lightning package installed.
-
-Calling any of these will raise — caught only if training were attempted.
-"""
-
-def _training_disabled(*args, **kwargs):
-    raise RuntimeError(
-        "lightning.pytorch is stubbed in this build — training APIs not available"
-    )
-
-class _StubModule:
-    def __init__(self, *a, **kw):
-        _training_disabled()
-
-# Minimum surface that pyannote.audio (and friends) import at module load
-seed_everything = _training_disabled
-LightningModule = _StubModule
-LightningDataModule = _StubModule
-Trainer = _StubModule
-Callback = _StubModule
+"""lightning.pytorch -> pytorch_lightning alias."""
+from pytorch_lightning import *  # noqa: F401,F403
+# Re-export submodules that pyannote.audio imports
+from pytorch_lightning import utilities  # noqa: F401
 EOF
 
   cat > "$shim_dir/fabric/__init__.py" <<'EOF'
