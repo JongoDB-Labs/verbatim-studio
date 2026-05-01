@@ -155,6 +155,19 @@ export function VoiceChatPanel({ onClose, recordingIds, documentIds, webSearchEn
           const text = new TextDecoder().decode(payload);
           const data = JSON.parse(text);
 
+          // Agent has joined and subscribed to our mic — pipeline is live
+          if (data.type === 'agent-ready') {
+            setError(null);
+            setTranscript((prev) => [...prev, 'Max joined — start speaking.']);
+            return;
+          }
+
+          // Agent watchdog: never received user audio in 10s
+          if (data.type === 'agent-error') {
+            setError(data.message || 'Voice agent failed to start.');
+            return;
+          }
+
           if (data.type === 'transcript') {
             if (data.role === 'user') {
               voiceMessagesRef.current.push({ role: 'user', content: data.content });

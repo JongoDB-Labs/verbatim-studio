@@ -971,6 +971,16 @@ async def connect_agent_to_room(
     connected = asyncio.Event()
     connected.set()
 
+    async def _publish_data(payload: dict) -> None:
+        """Send a JSON message on the room's data channel (best-effort)."""
+        try:
+            await room.local_participant.publish_data(
+                json.dumps(payload).encode(),
+                reliable=True,
+            )
+        except Exception:
+            logger.debug("publish_data failed", exc_info=True)
+
     try:
         await room.connect(url, token)
         logger.info("Voice agent connected to room %s", room_name)
@@ -986,16 +996,51 @@ async def connect_agent_to_room(
         MIN_AUDIO_MS = 1200  # minimum audio to process
         speaking_state = {"active": False, "cooldown_until": 0.0}  # echo suppression
 
+        # Track whether we successfully started consuming user audio.
+        # Set to True the first time track_subscribed fires for a user audio
+        # track. The frontend uses this to show "Max is listening" — if it
+        # never arrives the user sees a clear "Agent didn't join" error
+        # instead of silently speaking into a void.
+        agent_ready_sent = {"value": False}
+
         @room.on("track_subscribed")
         def on_track_subscribed(track, publication, participant):
             if track.kind == rtc.TrackKind.KIND_AUDIO:
                 logger.info("Subscribed to audio from %s", participant.identity)
                 asyncio.ensure_future(_process_audio_track(track))
+                if not agent_ready_sent["value"]:
+                    agent_ready_sent["value"] = True
+                    asyncio.ensure_future(
+                        _publish_data({"type": "agent-ready", "room": room_name})
+                    )
 
         @room.on("disconnected")
         def on_disconnected():
             logger.info("Room %s disconnected", room_name)
             connected.clear()
+
+        # If we don't subscribe to a user audio track within 10s, send a
+        # clear failure signal so the UI surfaces it instead of waiting
+        # silently. This catches: user mic publish failed, NAT/firewall
+        # blocking RTC, agent SDK errors after connect, etc.
+        async def _ready_watchdog() -> None:
+            await asyncio.sleep(10)
+            if not agent_ready_sent["value"] and connected.is_set():
+                logger.warning(
+                    "Agent watchdog: no user audio track within 10s in room %s",
+                    room_name,
+                )
+                await _publish_data({
+                    "type": "agent-error",
+                    "room": room_name,
+                    "message": (
+                        "Couldn't hear your microphone. Check that mic permission "
+                        "is granted and that no other app is using the microphone, "
+                        "then restart the voice session."
+                    ),
+                })
+
+        asyncio.create_task(_ready_watchdog())
 
         async def _process_audio_track(track):
             """Read audio frames from user, detect speech, run agent pipeline."""
