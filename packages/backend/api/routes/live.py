@@ -27,6 +27,7 @@ from persistence.models import (
     Tag,
     Transcript,
 )
+from services.transcript_filter import is_hallucination
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +371,23 @@ async def live_transcribe(websocket: WebSocket):
 
                     # Process segments with time offset applied
                     for i, seg in enumerate(result.segments):
+                        # Drop Whisper hallucinations (silence/music/short
+                        # noise produces "Thanks for watching!", repeated
+                        # words, etc.). Centralised in transcript_filter
+                        # so live, voice chat, and post-hoc transcription
+                        # share the same logic.
+                        seg_duration = (seg.end - seg.start) if seg.end and seg.start else None
+                        if is_hallucination(
+                            seg.text,
+                            confidence=seg.confidence,
+                            duration=seg_duration,
+                        ):
+                            logger.debug(
+                                "Filtered hallucinated segment: %r (conf=%s, dur=%s)",
+                                seg.text[:60], seg.confidence, seg_duration,
+                            )
+                            continue
+
                         speaker = None
                         if diarized_segments and i < len(diarized_segments):
                             speaker = diarized_segments[i].get("speaker")

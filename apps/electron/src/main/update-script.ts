@@ -85,23 +85,59 @@ if [[ "$APP_PATH" != *.app ]]; then
   fail "Invalid app path - must end with .app"
 fi
 
-# Remove old app
-echo "Removing old version..."
+# Atomic swap: stage the new app at <APP_PATH>.new, verify it's complete,
+# then swap with the old one in two mv calls. If anything fails before the
+# swap, the old app stays in place — the user is never bricked. If the
+# verify-after-swap fails, we restore from .bak.
+APP_DIR="$(dirname "$APP_PATH")"
+APP_BASENAME="$(basename "$APP_PATH")"
+NEW_PATH="$APP_DIR/$APP_BASENAME.new"
+BAK_PATH="$APP_DIR/$APP_BASENAME.bak"
+
+# Clean up any stragglers from a previous failed update
+rm -rf "$NEW_PATH" "$BAK_PATH" 2>/dev/null || true
+
+# Copy new app to staging path
+echo "Staging new version at $NEW_PATH..."
+cp -R "$SOURCE_APP" "$NEW_PATH" || fail "Failed to copy new version. Check disk space and permissions."
+
+# Remove quarantine on the staged copy
+xattr -rd com.apple.quarantine "$NEW_PATH" 2>/dev/null || true
+
+# Verify the staged copy is structurally a valid .app bundle
+if [ ! -d "$NEW_PATH/Contents/MacOS" ] || [ ! -f "$NEW_PATH/Contents/Info.plist" ]; then
+  rm -rf "$NEW_PATH" 2>/dev/null || true
+  fail "Staged update is missing app bundle structure — keeping current version."
+fi
+
+# Atomic swap: old → .bak, new → live, then remove .bak
+echo "Swapping in new version..."
 if [ -d "$APP_PATH" ]; then
-  rm -rf "$APP_PATH" || fail "Failed to remove old version. Check permissions."
+  mv "$APP_PATH" "$BAK_PATH" || fail "Failed to move old version aside. Check permissions."
 fi
 
-# Copy new app
-echo "Installing new version..."
-cp -R "$SOURCE_APP" "$APP_PATH" || fail "Failed to copy new version. Check disk space and permissions."
-
-# Remove quarantine attribute (for unsigned apps)
-xattr -rd com.apple.quarantine "$APP_PATH" 2>/dev/null || true
-
-# Verify installation
-if [ ! -d "$APP_PATH" ]; then
-  fail "Installation verification failed"
+if ! mv "$NEW_PATH" "$APP_PATH"; then
+  # Swap failed — restore the old app
+  echo "Swap failed, restoring previous version..."
+  if [ -d "$BAK_PATH" ]; then
+    mv "$BAK_PATH" "$APP_PATH" 2>/dev/null || true
+  fi
+  rm -rf "$NEW_PATH" 2>/dev/null || true
+  fail "Failed to install new version (swap). Previous version restored."
 fi
+
+# Final verification before discarding the backup
+if [ ! -d "$APP_PATH/Contents/MacOS" ]; then
+  echo "Post-swap verification failed, restoring previous version..."
+  rm -rf "$APP_PATH" 2>/dev/null || true
+  if [ -d "$BAK_PATH" ]; then
+    mv "$BAK_PATH" "$APP_PATH" 2>/dev/null || true
+  fi
+  fail "Installed app is incomplete. Previous version restored."
+fi
+
+# Now safe to remove the backup
+rm -rf "$BAK_PATH" 2>/dev/null || true
 
 echo "Update installed successfully!"
 

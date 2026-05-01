@@ -1,7 +1,8 @@
 import { app, BrowserWindow } from 'electron';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
-import { createWriteStream, existsSync, lstatSync, readlinkSync } from 'fs';
+import { createHash } from 'crypto';
+import { createReadStream, createWriteStream, existsSync, lstatSync, readlinkSync } from 'fs';
 import { mkdir, rm } from 'fs/promises';
 import path from 'path';
 import https from 'https';
@@ -167,6 +168,121 @@ function fetchGitHubReleases(): Promise<GitHubRelease[]> {
     req.on('error', reject);
     req.end();
   });
+}
+
+/**
+ * Compute SHA-256 of a local file as a hex string.
+ */
+function sha256File(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Fetch SHA256SUMS from a GitHub release asset and return a map of
+ * filename → expected hash. Returns null if the manifest isn't published
+ * (older releases). The expected format is one line per file:
+ *   <hash>  <filename>
+ * (matching `shasum -a 256` output).
+ */
+function fetchChecksumsManifest(release: GitHubRelease): Promise<Record<string, string> | null> {
+  const asset = release.assets.find(
+    (a) => a.name === 'SHA256SUMS' || a.name === 'SHA256SUMS.txt'
+  );
+  if (!asset) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const headers: Record<string, string> = {
+      'User-Agent': `${APP_NAME}/${app.getVersion()}`,
+      Accept: 'application/octet-stream',
+    };
+    const pat = getGithubPat();
+    if (pat) headers['Authorization'] = `token ${pat}`;
+
+    const followRedirects = (url: string, depth = 0): void => {
+      if (depth > 5) return resolve(null);
+      const urlObj = new URL(url);
+      const req = https.request(
+        {
+          hostname: urlObj.hostname,
+          path: urlObj.pathname + urlObj.search,
+          method: 'GET',
+          headers,
+        },
+        (res) => {
+          if ([301, 302, 307, 308].includes(res.statusCode || 0)) {
+            const next = res.headers.location;
+            if (next) return followRedirects(next, depth + 1);
+            return resolve(null);
+          }
+          if (res.statusCode !== 200) {
+            return resolve(null);
+          }
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            const map: Record<string, string> = {};
+            for (const line of body.split('\n')) {
+              const m = line.trim().match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/);
+              if (m) map[m[2].trim()] = m[1].toLowerCase();
+            }
+            resolve(Object.keys(map).length > 0 ? map : null);
+          });
+        },
+      );
+      req.on('error', () => resolve(null));
+      req.setTimeout(15000, () => {
+        req.destroy();
+        resolve(null);
+      });
+      req.end();
+    };
+    followRedirects(asset.browser_download_url);
+  });
+}
+
+/**
+ * Verify a downloaded file against the release's SHA256SUMS manifest.
+ *
+ * Returns true if the hash matches OR if no manifest is published
+ * (legacy release behavior — caller logs a warning). Throws if the
+ * manifest exists but the hash doesn't match — in that case the
+ * downloaded file MUST NOT be installed.
+ */
+async function verifyDownloadChecksum(
+  release: GitHubRelease,
+  assetName: string,
+  filePath: string,
+): Promise<boolean> {
+  const manifest = await fetchChecksumsManifest(release);
+  if (!manifest) {
+    console.warn(
+      '[Updater] No SHA256SUMS published for this release — skipping checksum verification.',
+    );
+    return true;
+  }
+
+  const expected = manifest[assetName];
+  if (!expected) {
+    console.warn(`[Updater] ${assetName} not listed in SHA256SUMS — skipping verification.`);
+    return true;
+  }
+
+  const actual = await sha256File(filePath);
+  if (actual.toLowerCase() === expected.toLowerCase()) {
+    console.log(`[Updater] Checksum verified: ${assetName} (sha256=${actual.slice(0, 12)}…)`);
+    return true;
+  }
+
+  throw new Error(
+    `Checksum mismatch for ${assetName}: expected ${expected}, got ${actual}. ` +
+    `The downloaded file may be corrupt or tampered with.`,
+  );
 }
 
 /**
@@ -449,6 +565,19 @@ export async function startUpdate(downloadUrl: string, version: string): Promise
   console.log(`[Updater] Starting update to ${version}`);
 
   const fallbackUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO_PUBLIC}/releases/tag/v${version}`;
+  const assetName = decodeURIComponent(downloadUrl.split('/').pop() || '');
+
+  // Fetch the matching release ahead of time so we can verify the
+  // downloaded artifact's checksum (when the release publishes a
+  // SHA256SUMS manifest). Falling back to no-verify keeps existing
+  // releases working.
+  let matchingRelease: GitHubRelease | null = null;
+  try {
+    const releases = await fetchGitHubReleases();
+    matchingRelease = releases.find((r) => r.tag_name === `v${version}` || r.tag_name === version) || null;
+  } catch (err) {
+    console.warn('[Updater] Could not fetch release for checksum verification:', err);
+  }
 
   try {
     // Create temp directory
@@ -462,6 +591,19 @@ export async function startUpdate(downloadUrl: string, version: string): Promise
       await downloadFile(downloadUrl, installerPath, (percent) => {
         safeSend('update-downloading', { percent });
       });
+
+      // Verify the download against the release's published checksums.
+      // Throws if a manifest exists and the hash doesn't match — we then
+      // delete the corrupt download and surface an error instead of
+      // running a tampered installer.
+      if (matchingRelease) {
+        try {
+          await verifyDownloadChecksum(matchingRelease, assetName, installerPath);
+        } catch (err) {
+          await rm(installerPath, { force: true });
+          throw err;
+        }
+      }
 
       console.log('[Updater] Download complete, launching installer...');
 
@@ -496,6 +638,16 @@ export async function startUpdate(downloadUrl: string, version: string): Promise
       await downloadFile(downloadUrl, dmgPath, (percent) => {
         safeSend('update-downloading', { percent });
       });
+
+      // Verify download against published checksums (see startUpdate header)
+      if (matchingRelease) {
+        try {
+          await verifyDownloadChecksum(matchingRelease, assetName, dmgPath);
+        } catch (err) {
+          await rm(dmgPath, { force: true });
+          throw err;
+        }
+      }
 
       console.log('[Updater] Download complete, removing quarantine...');
 

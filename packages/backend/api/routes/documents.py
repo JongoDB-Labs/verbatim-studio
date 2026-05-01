@@ -740,12 +740,22 @@ async def get_document_properties(
         except OSError:
             pass
 
-    # Try to get storage location name
+    # Try to get storage location name — prefer the document's own location,
+    # fall back to first active location.  Use .first() because multiple
+    # locations can be active simultaneously (mirrors recordings endpoint).
     storage_location_name = None
-    loc_result = await db.execute(
-        select(StorageLocation).where(StorageLocation.is_active == True)
-    )
-    storage_loc = loc_result.scalar_one_or_none()
+    if doc.storage_location_id:
+        loc_result = await db.execute(
+            select(StorageLocation).where(
+                StorageLocation.id == doc.storage_location_id
+            )
+        )
+        storage_loc = loc_result.scalar_one_or_none()
+    else:
+        loc_result = await db.execute(
+            select(StorageLocation).where(StorageLocation.is_active == True)
+        )
+        storage_loc = loc_result.scalars().first()
     if storage_loc:
         storage_location_name = storage_loc.name
 

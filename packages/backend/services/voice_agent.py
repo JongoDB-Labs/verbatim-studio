@@ -442,19 +442,13 @@ class VerbatimVoiceAgent:
         if not user_text.strip():
             return None, None
 
-        # Filter out Whisper hallucinations on silence/noise
-        clean = user_text.strip().replace("-", "").replace(" ", "")
-        if len(clean) > 0 and len(set(clean.lower())) <= 2:
-            logger.debug("Filtered STT hallucination (low unique chars): %s", user_text[:50])
+        # Drop Whisper hallucinations (silence/music/short noise produces
+        # "Thanks for watching!", repeated words, etc.). Shared filter
+        # with live transcription — see services.transcript_filter.
+        from services.transcript_filter import is_hallucination
+        if is_hallucination(user_text):
+            logger.debug("Filtered STT hallucination: %r", user_text[:60])
             return None, None
-
-        # Filter repetitive words (e.g. "Harry Harry Harry Harry...")
-        words = user_text.strip().split()
-        if len(words) >= 4:
-            unique_words = set(w.lower() for w in words)
-            if len(unique_words) <= 2:
-                logger.debug("Filtered STT hallucination (repetitive): %s", user_text[:50])
-                return None, None
 
         logger.info("Voice STT result: %s", user_text[:100])
 

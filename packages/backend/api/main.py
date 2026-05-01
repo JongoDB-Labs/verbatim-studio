@@ -163,6 +163,16 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
+    # Recover from stuck jobs left over from a previous crash. Any jobs
+    # marked as queued/running on startup must have been killed by the
+    # backend exit (the in-memory ThreadPoolExecutor is gone), so flag
+    # them as failed with a clear message and reset the recordings/
+    # documents pinned to "processing" back to a useful terminal state.
+    try:
+        await _recover_stuck_jobs()
+    except Exception:
+        logger.exception("Stuck-job recovery failed (non-fatal)")
+
     # Load persisted AI settings (context window size) from DB
     try:
         from core.ai_settings import get_ai_settings
@@ -199,6 +209,70 @@ async def lifespan(app: FastAPI):
     if file_watcher:
         file_watcher.stop()
     job_queue.shutdown(wait=True)
+
+
+async def _recover_stuck_jobs() -> None:
+    """Mark zombie jobs as failed on startup.
+
+    Any Job whose status is 'queued' or 'running' at the time the
+    backend starts cannot actually be running — the in-memory
+    ThreadPoolExecutor was destroyed when the previous process exited.
+    Flag them as failed and reset any Recording/Document pinned to
+    'processing' back to 'failed' so the user can retry instead of
+    seeing a forever-spinning indicator.
+    """
+    from datetime import datetime
+
+    from sqlalchemy import select, update
+
+    from persistence.database import get_session_factory
+    from persistence.models import Document, Job, Recording
+
+    error_msg = "Job interrupted by app restart — please retry"
+
+    async with get_session_factory()() as session:
+        # Find stuck jobs
+        result = await session.execute(
+            select(Job).where(Job.status.in_(["queued", "running"]))
+        )
+        stuck_jobs = list(result.scalars().all())
+
+        if not stuck_jobs:
+            return
+
+        recording_ids: set[str] = set()
+        document_ids: set[str] = set()
+        for job in stuck_jobs:
+            job.status = "failed"
+            job.error = error_msg
+            job.completed_at = datetime.utcnow()
+            payload = job.payload or {}
+            if rid := payload.get("recording_id"):
+                recording_ids.add(rid)
+            if did := payload.get("document_id"):
+                document_ids.add(did)
+
+        # Reset associated recordings/documents stuck in 'processing'
+        if recording_ids:
+            await session.execute(
+                update(Recording)
+                .where(Recording.id.in_(recording_ids))
+                .where(Recording.status == "processing")
+                .values(status="failed")
+            )
+        if document_ids:
+            await session.execute(
+                update(Document)
+                .where(Document.id.in_(document_ids))
+                .where(Document.status == "processing")
+                .values(status="failed")
+            )
+
+        await session.commit()
+        logger.warning(
+            "Recovered %d stuck job(s) (%d recordings, %d documents)",
+            len(stuck_jobs), len(recording_ids), len(document_ids),
+        )
 
 
 app = FastAPI(
