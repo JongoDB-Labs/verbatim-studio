@@ -172,10 +172,13 @@ export async function migrateResourcesToUserData(
 }
 
 /**
- * Copy bundled voice clone files into user data, preserving any
- * user-uploaded files with matching names. Runs on every full install
- * (not just first launch) so updated bundled clones reach existing users
- * — but user uploads always take precedence.
+ * Copy bundled voice clone files into user data, replacing them when
+ * the bundled version differs in size from the user's copy. This lets
+ * us ship updated assistant voices to existing installs.
+ *
+ * To preserve a user-uploaded override, name it differently from the
+ * bundled file (e.g. `my_voice.wav` instead of `max.wav`). Files in
+ * user data with names not present in the bundle are never touched.
  */
 async function migrateVoiceClones(
   userDataDir: string,
@@ -189,7 +192,7 @@ async function migrateVoiceClones(
   const userDir = path.join(userDataDir, 'models', 'tts', 'voice_clones');
   await mkdir(userDir, { recursive: true });
 
-  const { readdir } = await import('fs/promises');
+  const { readdir, stat } = await import('fs/promises');
   let files: string[];
   try {
     files = await readdir(bundledDir);
@@ -202,11 +205,20 @@ async function migrateVoiceClones(
     if (!name.endsWith('.wav') && !name.endsWith('.txt')) continue;
     const src = path.join(bundledDir, name);
     const dest = path.join(userDir, name);
+
+    // Skip if dest exists and matches the bundled file's size (cheap proxy
+    // for content equality — voice clones are produced once so size is stable).
     if (existsSync(dest)) {
-      // Don't overwrite user-uploaded clone with the same name
-      continue;
+      try {
+        const [srcStat, destStat] = await Promise.all([stat(src), stat(dest)]);
+        if (srcStat.size === destStat.size) continue;
+        console.log(`[Migration] Voice clone ${name} differs (bundled ${srcStat.size}B vs user ${destStat.size}B) — replacing`);
+      } catch {
+        // Stat failed — fall through and overwrite
+      }
     }
-    await cp(src, dest);
+
+    await cp(src, dest, { force: true });
     copied++;
   }
 

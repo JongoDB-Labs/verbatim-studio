@@ -914,12 +914,17 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
         except Exception:
             logger.debug("Main LLM preload skipped")
 
-    # 2. TTS — force load into memory
+    # 2. TTS — force load into memory. Failures here cause silent TTS
+    # later (audio worker swallows errors), so surface them clearly now.
     try:
         tts_service._ensure_loaded()
         logger.info("TTS model preloaded for voice session")
     except Exception:
-        logger.debug("TTS preload skipped")
+        logger.exception(
+            "TTS model FAILED to preload — voice chat will be silent. "
+            "Check that all model dependencies are installed (mlx-audio, "
+            "kokoro-onnx, addict, num2words, spacy, dlinfo, segments)."
+        )
 
     # 3. STT preload happens in the voice session endpoint (async context)
 

@@ -33,12 +33,19 @@ extraResources:
     to: bin
     filter:
       - "livekit-server*"
+  - from: ../../build/resources/voice_clones
+    to: voice_clones
+    filter:
+      - "*.wav"
+      - "*.txt"
   # EXCLUDED from update builds (all persist in user data dir):
   # - python (~1.2-1.5GB) — migrated on first launch
   # - ffmpeg (~50MB) — migrated on first launch
   # - whisper-models (~150MB) — downloaded on first transcription
   # - embedding-models (~550MB) — downloaded on first semantic search
   # - cuda (~200MB) — migrated on first launch (Windows)
+  # voice_clones is INCLUDED — the Max reference audio is part of the
+  # assistant identity and ships in every build (~400KB).
 
 mac:
   category: public.app-category.productivity

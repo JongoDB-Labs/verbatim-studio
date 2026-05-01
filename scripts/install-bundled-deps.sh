@@ -195,7 +195,12 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
     --no-deps \
     "mlx-audio>=0.4.0"
 
-  # Install mlx-audio's unique deps that aren't already present
+  # Install mlx-audio's unique deps that aren't already present.
+  # The Kokoro and Qwen3 model loaders pull in additional packages that
+  # mlx-audio doesn't declare in its standard requirements (addict,
+  # num2words, spacy, dlinfo, segments). Without these the Kokoro model
+  # silently fails to load — voice chat goes silent but logs only show
+  # "TTS model preload skipped".
   "$PYTHON_BIN" -m pip install \
     --no-deps \
     "mlx-lm>=0.31.0" \
@@ -205,6 +210,16 @@ if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
     "misaki>=0.9.0" \
     "phonemizer-fork>=3.3.0" \
     "espeakng-loader>=0.2.0" 2>/dev/null || true
+
+  # Kokoro 82M model loader runtime deps (mlx_audio.utils.get_model_class)
+  echo "Installing Kokoro model loader deps..."
+  "$PYTHON_BIN" -m pip install \
+    "addict" \
+    "num2words" \
+    "dlinfo" \
+    "segments" 2>&1 | tail -3 || true
+  # spacy is large (~50MB) but required by the Kokoro pipeline
+  "$PYTHON_BIN" -m pip install --no-deps "spacy" 2>&1 | tail -3 || true
 
 elif [ "$PLATFORM" = "windows" ]; then
   echo "Installing for Windows x64 (CPU PyTorch + CTranslate2 GPU)..."
