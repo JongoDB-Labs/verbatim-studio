@@ -476,10 +476,16 @@ export async function startUpdate(downloadUrl: string, version: string): Promise
       });
       child.unref();
 
+      // Belt-and-suspenders: queue a relaunch on quit so even if NSIS's
+      // --force-run flag is ignored (electron-builder behavior varies in
+      // silent mode), the new binary launches when our process exits.
+      // The installer replaces files in-place at the same execPath.
+      app.relaunch();
+
       // Quit the app after a short delay to allow the installer to start
       setTimeout(() => {
         console.log('[Updater] Quitting app for update...');
-        app.quit();
+        app.exit(0);
       }, 500);
     } else {
       // macOS: download DMG and use updater script

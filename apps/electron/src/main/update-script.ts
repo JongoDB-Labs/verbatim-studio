@@ -105,12 +105,21 @@ fi
 
 echo "Update installed successfully!"
 
-# Cleanup before relaunch
-cleanup
-
-# Relaunch the app
+# Relaunch FIRST so the new app is up before we tear down the script's own
+# working directory (cleanup() does rm -rf "$UPDATE_DIR" which contains
+# this script — bash usually keeps it open mid-execution but it's safer to
+# launch the app before pulling the rug).
 echo "Relaunching $APP_NAME..."
-open "$APP_PATH"
+open "$APP_PATH" || {
+  notify "Update installed but relaunch failed — please open $APP_NAME manually."
+  cleanup
+  exit 1
+}
+
+# Cleanup AFTER the new app process has been kicked off by 'open'.
+# 'open' returns immediately once LaunchServices has accepted the request,
+# so the new app starts in parallel with our cleanup.
+cleanup
 
 exit 0
 `;
