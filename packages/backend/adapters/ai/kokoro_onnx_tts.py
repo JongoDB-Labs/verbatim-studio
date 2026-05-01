@@ -82,17 +82,10 @@ def _cleanup_model() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Preset voices — subset of Kokoro's 26 built-in voices
+# Single voice — Lewis (British male) is the Max assistant identity
 # ---------------------------------------------------------------------------
 _PRESET_VOICES: list[dict] = [
-    {"id": "af_sarah", "name": "Sarah", "description": "American female voice"},
-    {"id": "af_bella", "name": "Bella", "description": "American female voice"},
-    {"id": "af_nicole", "name": "Nicole", "description": "American female voice"},
-    {"id": "am_adam", "name": "Adam", "description": "American male voice"},
-    {"id": "am_michael", "name": "Michael", "description": "American male voice"},
-    {"id": "bf_emma", "name": "Emma", "description": "British female voice"},
-    {"id": "bm_lewis", "name": "Lewis", "description": "British male voice"},
-    {"id": "bm_george", "name": "George", "description": "British male voice"},
+    {"id": "bm_lewis", "name": "Max", "description": "Verbatim assistant voice"},
 ]
 
 DEFAULT_VOICE = "bm_lewis"

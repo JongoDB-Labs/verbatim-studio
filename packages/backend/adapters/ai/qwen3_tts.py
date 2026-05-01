@@ -107,9 +107,9 @@ _QWEN3_PRESET_VOICES: list[dict] = [
     {"id": "max", "name": "Max", "description": "Verbatim assistant voice (cloned)"},
 ]
 
-# Kokoro fallback for systems without Qwen3 — single American male voice
+# Kokoro fallback for systems without Qwen3 — Lewis (British male)
 _KOKORO_PRESET_VOICES: list[dict] = [
-    {"id": "am_adam", "name": "Max", "description": "Verbatim assistant voice"},
+    {"id": "bm_lewis", "name": "Max", "description": "Verbatim assistant voice"},
 ]
 
 # Backwards-compatible alias for code that imports _PRESET_VOICES directly.
@@ -181,7 +181,7 @@ class Qwen3TTSService(ITTSService):
 
     # -- Kokoro voice handling ----------------------------------------------
 
-    _KOKORO_DEFAULT_VOICE = "af_heart"
+    _KOKORO_DEFAULT_VOICE = "bm_lewis"
 
     def _resolve_kokoro_voice(self, voice: str | None) -> str:
         """Resolve a frontend voice ID to a Kokoro voice file name.
