@@ -172,14 +172,30 @@ function fetchGitHubReleases(): Promise<GitHubRelease[]> {
 
 /**
  * Compute SHA-256 of a local file as a hex string.
+ *
+ * Waits for the read stream's underlying file descriptor to fully
+ * close before resolving — on Windows there's a short window after
+ * 'end' where the OS-level handle is still held, which causes
+ * spawn(EBUSY) when the next step is to launch the just-hashed file.
  */
 function sha256File(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
     const stream = createReadStream(filePath);
+    let digest: string | null = null;
+    let errored = false;
+
     stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
+    stream.on('end', () => { digest = hash.digest('hex'); });
+    stream.on('error', (err) => {
+      errored = true;
+      reject(err);
+    });
+    stream.on('close', () => {
+      if (errored) return;
+      if (digest) resolve(digest);
+      else reject(new Error('sha256File: stream closed before end'));
+    });
   });
 }
 
@@ -612,10 +628,28 @@ export async function startUpdate(downloadUrl: string, version: string): Promise
 
       // Launch the NSIS installer silently and detached.
       // --force-run forces the app to relaunch after install completes.
-      const child = spawn(installerPath, ['/S', '--force-run'], {
-        detached: true,
-        stdio: 'ignore',
-      });
+      // Retry on EBUSY: Windows Defender / AV briefly holds open the
+      // freshly-downloaded .exe for inspection — first spawn can fail.
+      let spawnAttempt = 0;
+      let child;
+      while (true) {
+        try {
+          child = spawn(installerPath, ['/S', '--force-run'], {
+            detached: true,
+            stdio: 'ignore',
+          });
+          break;
+        } catch (err: unknown) {
+          spawnAttempt++;
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === 'EBUSY' && spawnAttempt < 5) {
+            console.warn(`[Updater] spawn EBUSY attempt ${spawnAttempt} — retrying in ${spawnAttempt * 500}ms`);
+            await new Promise((r) => setTimeout(r, spawnAttempt * 500));
+            continue;
+          }
+          throw err;
+        }
+      }
       child.unref();
 
       // Belt-and-suspenders: queue a relaunch on quit so even if NSIS's
