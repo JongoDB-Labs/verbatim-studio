@@ -9,6 +9,7 @@ Includes singleton caching with automatic invalidation when model path changes.
 import asyncio
 import logging
 import re
+import sys
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -225,6 +226,36 @@ class LlamaCppAIService(IAIService):
                     "AI model blocked by Windows Smart App Control. "
                     "Open Windows Security → App & Browser Control → "
                     "Smart App Control → Off, then restart the app."
+                ) from e
+            raise
+        except Exception as e:
+            # Upstream llama-cpp-python raises bare Exception("Failed to load
+            # model from file: ...") when the GGUF format isn't recognized.
+            # On Windows the most common cause is GPU acceleration installed
+            # llama-cpp-python 0.3.4 (the last version with a Windows CUDA
+            # wheel), which can't read newer GGUF formats like Granite 4.0
+            # hybrid Mamba-2. Detect that case and point at the recovery
+            # endpoint.
+            error_str = str(e)
+            if "Failed to load model" in error_str and sys.platform == "win32":
+                try:
+                    import llama_cpp
+                    installed = getattr(llama_cpp, "__version__", "unknown")
+                except Exception:
+                    installed = "unknown"
+                logger.error(
+                    "llama.cpp could not load %s with installed version %s. "
+                    "If you recently enabled GPU acceleration, the bundled "
+                    "CUDA llama-cpp-python wheel (v0.3.4) may be too old for "
+                    "this model. Recover via Settings → AI → 'Restore CPU LLM' "
+                    "or POST /system/disable-gpu-llm.",
+                    Path(self._model_path).name, installed,
+                )
+                raise RuntimeError(
+                    f"Failed to load AI model with llama-cpp-python {installed}. "
+                    "If you enabled GPU acceleration, the Windows CUDA wheel "
+                    "(0.3.4) is too old for this model. Open Settings → AI and "
+                    "click 'Restore CPU LLM' to recover."
                 ) from e
             raise
 

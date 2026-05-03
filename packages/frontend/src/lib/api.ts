@@ -3069,6 +3069,46 @@ class ApiClient {
         }
       }
     },
+    disableGpuLlm: async function* (): AsyncGenerator<GpuInstallEvent> {
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/system/disable-gpu-llm`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        yield { status: 'error' as const, message: `HTTP ${response.status}: ${response.statusText}` };
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        yield { status: 'error' as const, message: 'No response body' };
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6)) as GpuInstallEvent;
+              yield data;
+            } catch {
+              // Ignore parse errors
+            }
+          }
+        }
+      }
+    },
   };
 
   // Storage Locations

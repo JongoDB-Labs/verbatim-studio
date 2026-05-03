@@ -237,14 +237,12 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
         import subprocess
         import threading
 
-        # On non-macOS, install voice deps on-demand (not bundled — too large for NSIS)
+        # On non-macOS, install voice deps on-demand (not bundled — too large for NSIS).
+        # Adds Kokoro (only needed when downloading a TTS model) on top of the
+        # core LiveKit suite shared with the session-creation install path.
         if sys.platform != "darwin":
-            voice_deps = [
-                ("livekit-protocol", "livekit.protocol", "livekit-protocol>=1.1.0"),
-                ("livekit", "livekit.rtc", "livekit>=1.1.0"),
-                ("livekit-api", "livekit.api", "livekit-api>=1.1.0"),
-                ("livekit-agents", "livekit.agents", "livekit-agents>=1.5.0"),
-                ("livekit-plugins-silero", "livekit.plugins.silero", "livekit-plugins-silero>=1.5.0"),
+            from services.voice_setup import VOICE_DEPS as _VOICE_DEPS
+            voice_deps = list(_VOICE_DEPS) + [
                 ("kokoro-onnx", "kokoro_onnx", "kokoro-onnx>=0.4.0"),
             ]
             missing = []
@@ -534,6 +532,23 @@ async def create_voice_session(
                 "before starting a voice session."
             ),
         )
+
+    # Self-heal: install voice runtime if missing.
+    # On Windows the LiveKit packages are deliberately stripped from the
+    # NSIS installer (size budget) and installed on first TTS download.
+    # If the user downloaded a TTS model in a build that predated that
+    # hook, the deps are missing here — install them inline before
+    # creating the session. First call blocks ~30-90s; subsequent calls
+    # are no-ops.
+    from services.voice_setup import missing_voice_deps, install_voice_runtime
+    if missing_voice_deps():
+        logger.info("Voice deps missing at session creation; installing inline")
+        ok, message = install_voice_runtime()
+        if not ok:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Voice runtime install failed: {message}",
+            )
 
     selected_voice = body.voice if body else None
 

@@ -1019,7 +1019,41 @@ async def enable_gpu_acceleration():
 
             # Phase 2: Install CUDA llama-cpp-python
             # Pre-built Windows CUDA wheels only exist up to v0.3.4 on the cu124 index.
-            # Try that first; if it fails, attempt building from source with CUDA.
+            # Newer GGUF formats (e.g. Granite 4.0 hybrid Mamba-2) require a more
+            # recent llama.cpp than 0.3.4 ships. If the bundled CPU wheel is
+            # already newer than 0.3.4, downgrading to CUDA 0.3.4 would silently
+            # break model loading — so detect that case and skip the CUDA install,
+            # leaving the LLM on CPU. (Transcription/diarization still get GPU
+            # via CTranslate2 + CUDA PyTorch, which is the bulk of the speedup.)
+            installed_llama_version = None
+            try:
+                import llama_cpp
+                installed_llama_version = getattr(llama_cpp, "__version__", None)
+            except Exception:
+                pass
+
+            def _is_newer_than_034(v: str | None) -> bool:
+                if not v:
+                    return False
+                try:
+                    parts = [int(x) for x in v.split(".")[:3]]
+                    while len(parts) < 3:
+                        parts.append(0)
+                    return tuple(parts) > (0, 3, 4)
+                except (ValueError, AttributeError):
+                    return False
+
+            if _is_newer_than_034(installed_llama_version):
+                logger.info(
+                    "Installed llama-cpp-python %s is newer than the latest CUDA "
+                    "Windows wheel (0.3.4). Skipping LLM CUDA install to preserve "
+                    "Granite 4.0 / newer GGUF support.",
+                    installed_llama_version,
+                )
+                yield f"data: {json.dumps({'status': 'progress', 'phase': 'llama', 'message': f'Keeping CPU llama-cpp-python {installed_llama_version} — newer than the latest available Windows CUDA wheel (0.3.4). LLM stays on CPU; transcription still gets GPU.'})}\n\n"
+                yield f"data: {json.dumps({'status': 'complete', 'message': 'GPU acceleration enabled (transcription + diarization). Restarting...', 'restart_required': True})}\n\n"
+                return
+
             yield f"data: {json.dumps({'status': 'progress', 'phase': 'llama', 'message': 'Installing CUDA llama-cpp-python...'})}\n\n"
 
             llama_cmd = [
@@ -1104,6 +1138,66 @@ async def enable_gpu_acceleration():
             _gpu_install_in_progress = False
 
     return StreamingResponse(install_stream(), media_type="text/event-stream")
+
+
+@router.post("/disable-gpu-llm")
+async def disable_gpu_llm():
+    """Reinstall the CPU llama-cpp-python wheel.
+
+    Recovery path for users stuck because GPU acceleration installed
+    CUDA llama-cpp-python 0.3.4 (the last version with Windows CUDA
+    wheels) which can't read newer GGUF formats like Granite 4.0
+    hybrid Mamba-2. Restores the latest CPU build from abetlen's CPU
+    index. CUDA PyTorch is left in place so transcription/diarization
+    still get GPU.
+    """
+    if sys.platform != "win32":
+        return StreamingResponse(
+            iter([f"data: {json.dumps({'status': 'error', 'message': 'This recovery path is Windows-only'})}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    async def restore_stream() -> AsyncIterator[str]:
+        python_exe = sys.executable
+        cpu_llama_index = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
+        yield f"data: {json.dumps({'status': 'progress', 'message': 'Reinstalling CPU llama-cpp-python (latest)...'})}\n\n"
+
+        cmd = [
+            python_exe, "-m", "pip", "install",
+            "--upgrade", "--force-reinstall",
+            "--extra-index-url", cpu_llama_index,
+            "llama-cpp-python",
+        ]
+        logger.info("Restoring CPU llama-cpp-python: %s", " ".join(cmd))
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                line_text = line.decode().strip()
+                if line_text:
+                    logger.info("pip (cpu-llama): %s", line_text)
+                    if "Successfully installed" in line_text:
+                        yield f"data: {json.dumps({'status': 'progress', 'message': line_text[:200]})}\n\n"
+
+            await process.wait()
+            if process.returncode != 0:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'CPU llama-cpp-python restore failed. You may need to reinstall the app.'})}\n\n"
+                return
+
+            yield f"data: {json.dumps({'status': 'complete', 'message': 'CPU LLM restored. Restarting...', 'restart_required': True})}\n\n"
+        except Exception as exc:
+            logger.exception("disable-gpu-llm failed")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(restore_stream(), media_type="text/event-stream")
 
 
 @router.post("/clear-memory")

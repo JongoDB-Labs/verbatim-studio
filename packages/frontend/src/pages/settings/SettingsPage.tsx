@@ -581,6 +581,34 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     }
   }, []);
 
+  // Recovery: reinstall CPU llama-cpp-python (for users stuck because the
+  // CUDA wheel installed by enableGpu can't load newer GGUF formats).
+  const handleRestoreCpuLlm = useCallback(async () => {
+    setGpuInstalling(true);
+    setGpuError('');
+    setGpuInstallMessage('Restoring CPU LLM...');
+    try {
+      for await (const event of api.system.disableGpuLlm()) {
+        if (event.status === 'progress') {
+          setGpuInstallMessage(event.message);
+        } else if (event.status === 'complete') {
+          setGpuInstallMessage(event.message);
+          if (window.electronAPI?.restartApp) {
+            setTimeout(() => window.electronAPI!.restartApp(), 2000);
+          }
+        } else if (event.status === 'error') {
+          setGpuError(event.message);
+          setGpuInstalling(false);
+          break;
+        }
+      }
+    } catch (err) {
+      setGpuError(err instanceof Error ? err.message : 'Restore failed');
+    } finally {
+      setGpuInstalling(false);
+    }
+  }, []);
+
   // Handle ML dependencies installation
   const handleInstallMl = useCallback(async () => {
     setMlInstalling(true);
@@ -2981,6 +3009,24 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                 No NVIDIA GPU detected. All features running on CPU.
               </p>
             ) : null}
+
+            {/* Recovery: if AI chat is broken because GPU acceleration installed
+                an older CUDA llama-cpp-python wheel that can't read newer GGUF
+                formats (e.g. Granite 4.0 hybrid Mamba-2), this button reinstalls
+                the latest CPU build. */}
+            {gpuStatus.cuda_llama_installed && !gpuInstalling && (
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-1">
+                <button
+                  onClick={handleRestoreCpuLlm}
+                  className="text-sm text-amber-700 dark:text-amber-400 hover:underline"
+                >
+                  AI chat broken? Restore CPU LLM
+                </button>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Use this if AI chat shows "Failed to load model" after enabling GPU. Transcription will still use GPU.
+                </p>
+              </div>
+            )}
 
             {gpuError && (
               <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-600 dark:text-red-400">
