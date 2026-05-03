@@ -501,22 +501,22 @@ export async function checkForUpdates(manual = false): Promise<void> {
     // Only use stripped "update" variants if the Python environment has already
     // been migrated to user data. Otherwise, use the full installer so migration
     // can bootstrap the environment on first launch.
-    const canUseStripped = hasMigratedPython();
+    //
+    // Windows: stripped updates are DISABLED. Observed in the wild that NSIS's
+    // "uninstall before install" step deletes icudtl.dat / app.asar, then the
+    // extract step crashed mid-way (likely Defender/SAC interference), leaving
+    // the install in a non-bootable state — Chromium fails ICU init and the
+    // .exe exits silently before our JS even runs. Until that's root-caused,
+    // fall back to the full installer (~1.9GB) which is much more robust.
+    const canUseStripped = hasMigratedPython() && process.platform !== 'win32';
     let updateAsset: GitHubAsset | undefined;
 
     if (process.platform === 'win32') {
-      if (canUseStripped) {
-        updateAsset = latestRelease.assets.find((asset) => {
-          const name = asset.name.toLowerCase();
-          return name.endsWith('.exe') && name.includes('update');
-        });
-      }
-      if (!updateAsset) {
-        updateAsset = latestRelease.assets.find((asset) => {
-          const name = asset.name.toLowerCase();
-          return name.endsWith('.exe') && name.includes('setup');
-        });
-      }
+      // Windows: always full installer for now (stripped disabled, see above).
+      updateAsset = latestRelease.assets.find((asset) => {
+        const name = asset.name.toLowerCase();
+        return name.endsWith('.exe') && name.includes('setup');
+      });
       if (!updateAsset) {
         console.error('[Updater] No Windows installer asset found');
         safeSend('update-error', {
@@ -577,8 +577,46 @@ export async function checkForUpdates(manual = false): Promise<void> {
  * @param downloadUrl - The URL to download the DMG from
  * @param version - The version being installed
  */
+/**
+ * Sanity-check the running install before applying an update on top of it.
+ *
+ * If the previous update partially extracted (Windows: icudtl.dat / app.asar
+ * deleted, then NSIS aborted before extracting new ones), running another
+ * install would compound the corruption — the user would be left with a
+ * download manager that can't relaunch and no recovery path. Detect that
+ * state up front and surface a clear "manual reinstall required" error.
+ */
+function detectCorruptInstall(): string | null {
+  if (process.platform !== 'win32') return null;
+  if (!app.isPackaged) return null;
+
+  const exeDir = path.dirname(process.execPath);
+  const required: string[] = ['icudtl.dat', path.join('resources', 'app.asar')];
+  const missing = required.filter((rel) => {
+    try {
+      return !existsSync(path.join(exeDir, rel));
+    } catch {
+      return true;
+    }
+  });
+
+  if (missing.length === 0) return null;
+  return (
+    `Your Verbatim Studio install is missing required files (${missing.join(', ')}). ` +
+    `A previous update extracted partially. ` +
+    `Please reinstall manually from https://github.com/${GITHUB_OWNER}/${GITHUB_REPO_PUBLIC}/releases/latest`
+  );
+}
+
 export async function startUpdate(downloadUrl: string, version: string): Promise<void> {
   console.log(`[Updater] Starting update to ${version}`);
+
+  const corruption = detectCorruptInstall();
+  if (corruption) {
+    console.error('[Updater] Refusing to update on top of corrupt install:', corruption);
+    safeSend('update-error', { message: corruption });
+    return;
+  }
 
   const fallbackUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO_PUBLIC}/releases/tag/v${version}`;
   const assetName = decodeURIComponent(downloadUrl.split('/').pop() || '');
