@@ -25,12 +25,19 @@ logger = logging.getLogger(__name__)
 # (pip name, importable module path, pip spec). The module path is what
 # importlib will try; if any of the imports fails, the corresponding pip
 # spec is added to the install list.
+#
+# Includes kokoro-onnx because the bundled TTS engine on Windows/Linux is
+# Kokoro and a voice session that can authenticate to LiveKit but can't
+# generate speech still appears broken to the user. Bundling it in the
+# voice runtime install ensures both halves of the pipeline come up
+# together on first session.
 VOICE_DEPS: list[tuple[str, str, str]] = [
     ("livekit-protocol", "livekit.protocol", "livekit-protocol>=1.1.0"),
     ("livekit", "livekit.rtc", "livekit>=1.1.0"),
     ("livekit-api", "livekit.api", "livekit-api>=1.1.0"),
     ("livekit-agents", "livekit.agents", "livekit-agents>=1.5.0"),
     ("livekit-plugins-silero", "livekit.plugins.silero", "livekit-plugins-silero>=1.5.0"),
+    ("kokoro-onnx", "kokoro_onnx", "kokoro-onnx>=0.4.0"),
 ]
 
 

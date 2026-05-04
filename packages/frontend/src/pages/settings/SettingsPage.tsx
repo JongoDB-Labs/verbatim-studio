@@ -2966,6 +2966,17 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
               ))}
             </div>
 
+            {/* Explain why AI Assistant stays on CPU when full GPU is otherwise active.
+                Newer llama-cpp-python wheels don't ship with prebuilt Windows CUDA
+                bindings, so even with CUDA PyTorch the LLM runs on CPU. Without this
+                note the asymmetry looks like a bug. */}
+            {gpuStatus.torch_cuda_available && !gpuStatus.cuda_llama_installed && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50 rounded-md p-2.5 border border-gray-200 dark:border-gray-700">
+                <strong className="text-gray-700 dark:text-gray-300">Why is AI Assistant on CPU?</strong>{' '}
+                Pre-built CUDA wheels for newer <code className="font-mono text-xs">llama-cpp-python</code> aren't published for Windows yet, so the LLM continues to use CPU even after full GPU is enabled. Transcription, diarization, search, and OCR all still get GPU acceleration. Chat replies will be slower but functional.
+              </div>
+            )}
+
             {/* Upgrade button or status */}
             {gpuStatus.upgrade_available && !gpuStatus.torch_cuda_available && (
               <>

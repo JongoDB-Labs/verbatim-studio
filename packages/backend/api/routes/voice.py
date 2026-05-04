@@ -238,20 +238,11 @@ async def download_tts_model(model_id: str) -> StreamingResponse:
         import threading
 
         # On non-macOS, install voice deps on-demand (not bundled — too large for NSIS).
-        # Adds Kokoro (only needed when downloading a TTS model) on top of the
-        # core LiveKit suite shared with the session-creation install path.
+        # The shared dep list in voice_setup includes both LiveKit and Kokoro so
+        # this path and the session-creation path stay in sync.
         if sys.platform != "darwin":
-            from services.voice_setup import VOICE_DEPS as _VOICE_DEPS
-            voice_deps = list(_VOICE_DEPS) + [
-                ("kokoro-onnx", "kokoro_onnx", "kokoro-onnx>=0.4.0"),
-            ]
-            missing = []
-            for name, import_path, spec in voice_deps:
-                try:
-                    __import__(import_path)
-                except ImportError:
-                    missing.append(spec)
-
+            from services.voice_setup import missing_voice_deps
+            missing = missing_voice_deps()
             if missing:
                 yield f"data: {json.dumps({'status': 'installing_deps', 'message': f'Installing voice dependencies ({len(missing)} packages)...'})}\n\n"
                 try:
