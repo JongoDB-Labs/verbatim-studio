@@ -240,8 +240,17 @@ def detect_compute_type(device: str) -> str:
 def detect_llm_gpu_layers() -> int:
     """Detect optimal GPU layer offload for llama.cpp.
 
+    The right question is "does the *llama-cpp-python wheel* have CUDA
+    bindings", not "does the system have a GPU". On Windows we ship a CPU-
+    only llama-cpp-python wheel (newer versions have no pre-built Windows
+    CUDA wheels), but CTranslate2 / PyTorch are still CUDA-enabled — so a
+    GPU presence check would lie about llama's offload support and the
+    model would silently load on CPU after being told to offload.
+
     Returns:
-        -1 (all layers on GPU) for Apple Silicon or CUDA systems,
+        -1 (all layers on GPU) only when llama-cpp-python *itself* reports
+        GPU offload support, OR on Apple Silicon (Metal is built into the
+        bundled llama-cpp-python).
         0 (CPU only) otherwise.
     """
     if is_apple_silicon():
@@ -253,17 +262,12 @@ def detect_llm_gpu_layers() -> int:
         if llama_supports_gpu_offload():
             logger.info("CUDA llama-cpp detected — defaulting to full GPU offload")
             return -1
-    except (ImportError, Exception):
-        pass
-    # Fallback: check CTranslate2 CUDA (for transcription GPU, not LLM)
-    try:
-        import ctranslate2
-
-        if ctranslate2.get_cuda_device_count() > 0:
-            logger.info("CUDA (CTranslate2) detected — defaulting to full GPU offload for llama.cpp")
-            return -1
-    except (ImportError, Exception):
-        pass
+        logger.info(
+            "llama-cpp-python is CPU-only (no GPU bindings) — running LLM on CPU. "
+            "Other GPU-accelerated features (transcription, search) are unaffected."
+        )
+    except ImportError:
+        logger.warning("llama-cpp-python not installed — cannot probe GPU support; defaulting to CPU")
     return 0
 
 
