@@ -668,27 +668,26 @@ async def get_post_transcription_settings():
             select(Setting).where(Setting.key == "post_transcription")
         )
         setting = result.scalar_one_or_none()
-        if not setting:
-            return {
-                "auto_summarize": False,
-                "auto_export": {"enabled": False, "format": "txt"},
-                # Phase 2 phonetic post-correction is on by default — the
-                # 3-gate test is conservative and adds millisecond-scale
-                # latency. Threshold name maps to CONFIDENCE_THRESHOLDS.
-                "vocab_correction_enabled": True,
-                "vocab_correction_threshold": "default",
-                # Phase 3 LLM correction is opt-in: adds minutes of
-                # processing per recording on Granite Tiny CPU.
-                "auto_llm_vocab_correction": False,
-            }
-        # Merge defaults so older settings rows still have sensible values.
         defaults = {
             "auto_summarize": False,
             "auto_export": {"enabled": False, "format": "txt"},
+            # Phase 2 phonetic post-correction is on by default — the
+            # 3-gate test is conservative and adds millisecond-scale
+            # latency. Threshold name maps to CONFIDENCE_THRESHOLDS.
             "vocab_correction_enabled": True,
             "vocab_correction_threshold": "default",
+            # Phase 3 LLM correction is opt-in: adds minutes of
+            # processing per recording on Granite Tiny CPU.
             "auto_llm_vocab_correction": False,
+            # Phase 4 auto-learn — observe user manual edits and add
+            # proper-noun-shaped replacements to the dictionary
+            # automatically (Wispr Flow's sparkle pattern + Descript's
+            # 3-correction threshold for ambiguous terms).
+            "auto_learn_vocab": True,
         }
+        if not setting:
+            return defaults
+        # Merge defaults so older settings rows still have sensible values.
         merged = {**defaults, **(setting.value or {})}
         return merged
 

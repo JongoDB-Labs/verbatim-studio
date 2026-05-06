@@ -12,6 +12,7 @@ import { QualityReviewButton } from '@/components/transcript/QualityReviewButton
 import { QualityReviewPanel } from '@/components/transcript/QualityReviewPanel';
 import { FillerDetectionPanel } from '@/components/transcript/FillerDetectionPanel';
 import { TranslateButton } from '@/components/transcript/TranslateButton';
+import { RecorrectVocabularyButton } from '@/components/transcript/RecorrectVocabularyButton';
 import { useKeyboardShortcuts, getPlaybackShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useKeybindingStore } from '@/stores/keybindingStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -645,6 +646,16 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
             <TranslateButton
               transcriptId={transcript.id}
               onTranslate={handleTranslate}
+            />
+            <RecorrectVocabularyButton
+              transcriptId={transcript.id}
+              onCompleted={(applied) => {
+                if (applied > 0) {
+                  // Reload transcript so corrected segments + corrections
+                  // arrays are fresh.
+                  void loadData(true);
+                }
+              }}
             />
             <ExportButton transcriptId={transcript.id} title={recording.title} />
           </div>

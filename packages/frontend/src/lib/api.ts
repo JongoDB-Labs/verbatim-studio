@@ -293,6 +293,16 @@ export interface JobListResponse {
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'red' | 'purple' | 'orange';
 
+export interface SegmentCorrection {
+  type: 'domain_vocabulary' | 'llm_vocabulary';
+  original: string;
+  replacement: string;
+  confidence_before?: number | null;
+  edit_distance?: number | null;
+  term_id?: string | null;
+  word_index?: number | null;
+}
+
 export interface Segment {
   id: string;
   segment_index: number;
@@ -305,8 +315,16 @@ export interface Segment {
   original_text: string | null;
   highlight_color: HighlightColor | null;
   comment_count: number;
+  /** Auto-applied vocabulary corrections (Phase 2 phonetic + Phase 3 LLM). */
+  corrections?: SegmentCorrection[];
   created_at: string;
   updated_at: string;
+}
+
+export interface RecorrectResponse {
+  corrections_applied: number;
+  segments_updated: number;
+  standard_word_gate_skipped: boolean;
 }
 
 export interface SegmentComment {
@@ -1263,10 +1281,15 @@ export const DICTIONARY_PRIORITIES = [
   { value: 50, label: 'Critical', description: 'Always lands last in the prompt, even when budget is tight' },
 ] as const;
 
+/** User-selectable categories. `auto_learned` is reserved for terms the
+ *  auto-learn subsystem promoted from manual corrections — it's a valid
+ *  storage value (set by backend) but not exposed in the manual-add UI. */
 export const DICTIONARY_CATEGORIES = [
   'general', 'tech', 'medical', 'legal', 'names', 'business',
 ] as const;
-export type DictionaryCategory = typeof DICTIONARY_CATEGORIES[number];
+export type DictionaryCategory =
+  | typeof DICTIONARY_CATEGORIES[number]
+  | 'auto_learned';
 
 // Calendar Types
 export interface CalendarEvent {
@@ -1298,6 +1321,11 @@ export interface PostTranscriptionSettings {
   /** Phase 3 LLM correction pass. Default: false because Granite Tiny
    *  CPU adds 5-7 minutes to a typical 30-min transcript. */
   auto_llm_vocab_correction: boolean;
+  /** Phase 4 auto-learn from manual transcript edits. Adds proper-noun-
+   *  shaped corrections to the dictionary on first edit (Wispr Flow
+   *  pattern); ambiguous corrections get added after 3 occurrences
+   *  of the same misrecognition (Descript pattern). */
+  auto_learn_vocab: boolean;
 }
 
 // System Info Types
@@ -1975,6 +2003,23 @@ class ApiClient {
         method: 'POST',
         body: JSON.stringify({ segment_ids: segmentIds }),
       }),
+
+    /** Re-run Phase 2 phonetic correction over an already-completed transcript.
+     *  For users who add vocabulary terms after the recording was transcribed —
+     *  pulls the latest dictionary and applies it. Idempotent. */
+    recorrect: (transcriptId: string) =>
+      this.request<RecorrectResponse>(`/api/transcripts/${transcriptId}/recorrect`, {
+        method: 'POST',
+      }),
+
+    /** Revert a single auto-applied vocabulary correction by index in the
+     *  segment's `corrections` array. Restores the original spelling and
+     *  drops the entry from the audit trail. */
+    revertCorrection: (transcriptId: string, segmentId: string, correctionIndex: number) =>
+      this.request<Segment>(
+        `/api/transcripts/${transcriptId}/segments/${segmentId}/corrections/${correctionIndex}`,
+        { method: 'DELETE' },
+      ),
 
     export: async (transcriptId: string, options: ExportOptions): Promise<Blob> => {
       const queryParams = new URLSearchParams();
@@ -3418,6 +3463,7 @@ class ApiClient {
         vocab_correction_enabled: true,
         vocab_correction_threshold: 'default' as const,
         auto_llm_vocab_correction: false,
+        auto_learn_vocab: true,
       })),
 
     update: (data: Partial<PostTranscriptionSettings>) =>

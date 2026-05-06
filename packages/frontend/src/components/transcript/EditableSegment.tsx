@@ -58,6 +58,7 @@ export function EditableSegment({
   const [text, setText] = useState(segment.text);
   const [isSaving, setIsSaving] = useState(false);
   const [showHighlightPicker, setShowHighlightPicker] = useState(false);
+  const [showCorrections, setShowCorrections] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const segmentRef = useRef<HTMLDivElement>(null);
@@ -184,6 +185,7 @@ export function EditableSegment({
               rows={Math.max(2, text.split('\n').length)}
             />
           ) : (
+            <>
             <p
               onClick={() => setIsEditing(true)}
               className={`text-sm leading-relaxed cursor-text hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded p-1 -m-1 ${
@@ -203,7 +205,66 @@ export function EditableSegment({
                   AI corrected
                 </span>
               )}
+              {segment.corrections && segment.corrections.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowCorrections((v) => !v);
+                  }}
+                  className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
+                  title={`${segment.corrections.length} vocabulary ${segment.corrections.length === 1 ? 'correction' : 'corrections'} applied. Click to review.`}
+                >
+                  <span aria-hidden>✏️</span>
+                  {segment.corrections.length}
+                </button>
+              )}
             </p>
+            {showCorrections && segment.corrections && segment.corrections.length > 0 && (
+              <div className="mt-2 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-900/20 p-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    Auto-applied vocabulary corrections
+                  </span>
+                  <button
+                    onClick={() => setShowCorrections(false)}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    Close
+                  </button>
+                </div>
+                <ul className="space-y-1">
+                  {segment.corrections.map((c, idx) => (
+                    <li key={idx} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-gray-700 dark:text-gray-300 truncate">
+                        <span className="line-through text-gray-400">{c.original}</span>
+                        {' → '}
+                        <span className="font-medium text-emerald-700 dark:text-emerald-300">{c.replacement}</span>
+                        {c.type === 'llm_vocabulary' && (
+                          <span className="ml-1 text-purple-500">AI</span>
+                        )}
+                      </span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const updated = await api.transcripts.revertCorrection(transcriptId, segment.id, idx);
+                            onSegmentUpdate(updated);
+                          } catch (err) {
+                            console.error('Revert failed:', err);
+                            alert('Failed to revert correction');
+                          }
+                        }}
+                        className="text-xs text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 flex-shrink-0"
+                        title="Revert this correction"
+                      >
+                        Revert
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            </>
           )}
         </div>
 

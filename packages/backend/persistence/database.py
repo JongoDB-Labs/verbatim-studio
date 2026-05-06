@@ -235,3 +235,7 @@ async def _run_migrations(conn) -> None:
     # v2: extend with sounds_like / priority / usage_count columns for production-grade vocabulary
     from migrations.add_custom_dictionary_v2 import migrate as migrate_custom_dictionary_v2
     await conn.run_sync(lambda _: migrate_custom_dictionary_v2(db_path))
+
+    # Phase 4: persist per-word vocabulary corrections audit trail on segments
+    from migrations.add_segment_corrections_json import migrate as migrate_corrections_json
+    await conn.run_sync(lambda _: migrate_corrections_json(db_path))

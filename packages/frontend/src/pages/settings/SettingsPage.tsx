@@ -319,6 +319,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     vocab_correction_enabled: true,
     vocab_correction_threshold: 'default',
     auto_llm_vocab_correction: false,
+    auto_learn_vocab: true,
   });
 
   // AI / LLM model state
@@ -1906,7 +1907,16 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                   <div className="flex flex-col min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.term}</span>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">{entry.category}</span>
+                      {entry.category === 'auto_learned' ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
+                          title="Auto-learned from your manual corrections"
+                        >
+                          <span aria-hidden>🔮</span> auto-learned
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">{entry.category}</span>
+                      )}
                       {entry.priority > 0 && (
                         <span className={
                           'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ' +
@@ -2024,6 +2034,24 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                 type="checkbox"
                 checked={postTxSettings.auto_llm_vocab_correction}
                 onChange={(e) => updatePostTxSetting('auto_llm_vocab_correction', e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+            </label>
+          </SettingSection>
+
+          {/* Phase 4: auto-learn from manual transcript edits. Wispr Flow
+              fast-paths proper nouns; Descript counts (original→replacement)
+              pairs and adds after 3 of the same. We compose both. */}
+          <SettingSection
+            title="Auto-learn from corrections"
+            description="When you edit a transcript word, automatically add proper-noun replacements to your vocabulary so future transcripts get them right. Common-word corrections need 3 occurrences before being added."
+          >
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={postTxSettings.auto_learn_vocab}
+                onChange={(e) => updatePostTxSetting('auto_learn_vocab', e.target.checked)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />

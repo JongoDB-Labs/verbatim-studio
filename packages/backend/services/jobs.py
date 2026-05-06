@@ -546,7 +546,9 @@ async def handle_transcription(
                 logger.warning("Phonetic correction failed (non-fatal): %s", ce)
 
             detected_language = transcription_result.language
-            # Convert segments to dict format for diarization service
+            # Convert segments to dict format for diarization service. Carry the
+            # vocab-correction audit trail through so it can be persisted on the
+            # final Segment row (Phase 4 — per-word undo).
             segments_data = [
                 {
                     "start": seg.start,
@@ -557,6 +559,7 @@ async def handle_transcription(
                         {"word": w.word, "start": w.start, "end": w.end, "score": w.confidence}
                         for w in seg.words
                     ] if seg.words else [],
+                    "corrections": list(getattr(seg, "corrections", None) or []),
                 }
                 for seg in transcription_result.segments
             ]
@@ -612,6 +615,7 @@ async def handle_transcription(
 
             # Create segments with speaker labels
             for idx, seg in enumerate(segments_data):
+                segment_corrections = seg.get("corrections") or None
                 segment = Segment(
                     transcript_id=transcript.id,
                     segment_index=idx,
@@ -620,6 +624,7 @@ async def handle_transcription(
                     end_time=seg.get("end", 0.0),
                     text=seg.get("text", ""),
                     confidence=seg.get("confidence") or seg.get("score"),
+                    corrections_json=segment_corrections,
                 )
                 session.add(segment)
 

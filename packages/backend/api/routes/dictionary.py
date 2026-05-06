@@ -41,8 +41,14 @@ router = APIRouter(prefix="/dictionary", tags=["dictionary"])
 
 # Category vocabulary — frontend renders these as a dropdown. "general" is
 # the catch-all default. Keep the list short; long taxonomies hurt UX more
-# than they help.
-ALLOWED_CATEGORIES = {"general", "tech", "medical", "legal", "names", "business"}
+# than they help. "auto_learned" is reserved for terms the auto-learn
+# subsystem promoted from user corrections (Wispr Flow's sparkle marker
+# pattern); the UI renders it with a 🔮 indicator and lets the user
+# re-categorize.
+ALLOWED_CATEGORIES = {
+    "general", "tech", "medical", "legal", "names", "business",
+    "auto_learned",
+}
 
 # Bounded priority range. Three semantic stops are enough — see plan:
 #   0  = normal

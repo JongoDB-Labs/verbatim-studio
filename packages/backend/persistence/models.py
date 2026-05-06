@@ -237,6 +237,11 @@ class Segment(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     edited_by: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
     original_text: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Audit trail for vocabulary auto-corrections (Phase 2 phonetic + Phase 3 LLM).
+    # Each entry: {type, original, replacement, confidence_before, edit_distance,
+    # term_id, word_index}. Persisted so undo survives restart and the UI can
+    # surface a ✏️ indicator on corrected words.
+    corrections_json: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 

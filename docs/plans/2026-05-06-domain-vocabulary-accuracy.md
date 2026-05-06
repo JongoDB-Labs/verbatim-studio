@@ -37,6 +37,7 @@ Whisper transcribes domain-specific terms incorrectly: "MCTSSA" → "mctissa", "
 | AssemblyAI | `word_boost` | 1000 phrases × 6 words | Three-level boost (low/default/high) — deliberately coarse |
 | Speechmatics | Custom Dictionary + `sounds_like` | ≤6 words/term | **Free-form phonetic respelling** ("nyohki" for gnocchi) |
 | Azure | Phrase Lists | 500 | UPS phonetic notation |
+| Wispr Flow | Personal + Team Dictionary | 40 manual / 1000 import / 200 boost-per-session | **Auto-learn gated by proper-noun classifier** (✨ sparkle marker); cross-session persistent context (Slack handles, Cursor filenames); always-on paraphrase-capable LLM cleanup (no diff-bounded validation) |
 
 Published WER numbers for techniques relevant to us:
 - LLM post-correction (Courtside paper): **17.0% relative WER reduction** on proper-noun-dense transcripts.
@@ -150,6 +151,32 @@ Ship in three phases. Each phase is shippable on its own and adds measurable acc
 6. **Process per-segment, not whole-transcript** — keeps the LLM context manageable and limits the blast radius of a bad correction.
 
 **Phase 3 acceptance:** measured WER improvement of 10%+ on a proper-noun-heavy benchmark relative to Phase 1+2. Approach the published 17% relative WER reduction from the Courtside paper, ideally clearing it because we're stacking with phonetic correction.
+
+### Phase 4 — Persistence, undo, retroactive correction, auto-learn (1-2 weeks)
+
+**Goal:** close the audit-trail loop, let users repair already-completed transcripts, and ship the auto-learn feature that's the most-cited differentiator across the leaders (Descript's "after 3 corrections" + Wispr Flow's proper-noun-classifier-gated auto-add).
+
+1. **Persist corrections to DB** — Phase 2 + 3 already write a `corrections` array onto the segment object in memory; we need a new column `segments.corrections_json` so it survives restart. Migration: idempotent ADD COLUMN.
+
+2. **Undo per correction** — every applied correction is a row in the audit trail with the original spelling, replacement, term_id, confidence_before, and segment+word index. Frontend surfaces a small ✏️ icon on corrected words; click → popover with "Original: mctissa / Corrected: MCTSSA / Revert?". Backend endpoint `POST /api/transcripts/{id}/corrections/{idx}/revert` rolls back a single change.
+
+3. **Re-correct endpoint** — for users who add vocabulary terms after their transcripts are already done. `POST /api/transcripts/{id}/recorrect` re-runs Phase 2 (and optionally Phase 3) on a finished transcript. Useful for back-catalog repair.
+
+4. **Auto-learn from corrections** — hybrid of Descript's threshold and Wispr Flow's classifier:
+   - When a user manually edits a transcript word, send `(original, replacement)` to a new endpoint.
+   - Apply a proper-noun heuristic: replacement is all-caps (`MCTSSA`), starts-with-capital-and-not-standard-English (`Marforpac`), or contains a digit-letter mix (`Q4-FY26`).
+   - **If proper-noun-like**: auto-add to dictionary at priority=Normal after the first correction (Wispr-style). Mark with a 🔮 indicator in the dictionary UI to show it was auto-learned.
+   - **Otherwise**: count the (original, replacement) pair; auto-add at priority=Normal after 3 corrections of the same pair (Descript-style). Reset count when user explicitly rejects the suggestion.
+   - User can disable auto-learn globally in settings.
+
+5. **Cross-session context (Wispr-Flow-style)** — defer to a later phase. The Wispr persistent-context feature (remembering Slack handles, Cursor file names) requires accessibility-API integration that's a separate workstream. Worth noting as future work, not Phase 4.
+
+**Phase 4 acceptance:**
+- A correction applied by Phase 2 survives a backend restart and appears as ✏️ in the transcript viewer.
+- User can revert a single correction without rolling back the rest.
+- User can click "Re-correct vocabulary" on an old transcript and see new corrections applied.
+- After 3 manual corrections of "mctissa" → "MCTSSA", the term appears automatically in the dictionary on next view.
+- A correction of "she" → "Sarah" (looks proper-noun) is auto-added on first correction; "and" → "in" (normal English) is not.
 
 ### Out of scope (deliberately)
 
