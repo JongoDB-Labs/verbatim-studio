@@ -316,6 +316,9 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [postTxSettings, setPostTxSettings] = useState<PostTranscriptionSettings>({
     auto_summarize: false,
     auto_export: { enabled: false, format: 'txt' },
+    vocab_correction_enabled: true,
+    vocab_correction_threshold: 'default',
+    auto_llm_vocab_correction: false,
   });
 
   // AI / LLM model state
@@ -1969,6 +1972,58 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                 type="checkbox"
                 checked={postTxSettings.auto_summarize}
                 onChange={(e) => updatePostTxSetting('auto_summarize', e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+            </label>
+          </SettingSection>
+
+          {/* Phase 2: gated phonetic post-correction. On by default — the
+              3-gate test (low confidence + not standard English + phonetic
+              match within edit distance) is conservative and millisecond-
+              scale. Three-stop threshold matches AssemblyAI's deliberately-
+              coarse boost levels. */}
+          <SettingSection
+            title="Vocabulary auto-correction"
+            description="After transcription, repair misspelled domain terms using your custom vocabulary. Adds milliseconds; runs offline."
+          >
+            <div className="flex items-center gap-2">
+              <select
+                value={postTxSettings.vocab_correction_threshold}
+                onChange={(e) => updatePostTxSetting('vocab_correction_threshold', e.target.value)}
+                disabled={!postTxSettings.vocab_correction_enabled}
+                className="px-2 py-1 text-xs rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+                title="Lower = more conservative, fewer corrections. Higher = more permissive, slightly more false-positive risk."
+              >
+                <option value="conservative">Conservative</option>
+                <option value="default">Default</option>
+                <option value="aggressive">Aggressive</option>
+              </select>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={postTxSettings.vocab_correction_enabled}
+                  onChange={(e) => updatePostTxSetting('vocab_correction_enabled', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+              </label>
+            </div>
+          </SettingSection>
+
+          {/* Phase 3: LLM correction pass. Default off — adds 5-7 minutes
+              to a 30-min recording on Granite Tiny CPU, but catches the long
+              tail of multi-word and context-dependent corrections that pure
+              phonetic match misses. Diff-bounded: rejects free rewrites. */}
+          <SettingSection
+            title="AI vocabulary cleanup"
+            description="Run a local LLM pass to catch context-dependent misspellings phonetic match misses. Diff-validated to never paraphrase. Slower (~5-7 min per 30-min recording)."
+          >
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={postTxSettings.auto_llm_vocab_correction}
+                onChange={(e) => updatePostTxSetting('auto_llm_vocab_correction', e.target.checked)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />

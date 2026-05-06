@@ -56,6 +56,17 @@ llama-cpp-python>=0.2.0
 # wheels for every platform we ship.
 tiktoken>=0.7.0
 
+# metaphone: Double Metaphone phonetic algorithm for the post-correction
+# pass. ~14KB pure Python. Used to find dictionary terms that sound like
+# misrecognized words so we can repair them after Whisper completes.
+metaphone>=0.6
+
+# english-words: ~470k-word standard English wordlist. Used as the second
+# gate in phonetic post-correction — we only replace a word with a
+# dictionary term if that word is NOT a normal English word, preventing
+# false-positive substitutions for common speech. ~8MB.
+english-words>=2.0
+
 # Pin numpy here to prevent llama-cpp-python from pulling incompatible version
 # ML deps require numpy 2.0.2 for compatibility with torch/pyannote
 numpy==2.0.2

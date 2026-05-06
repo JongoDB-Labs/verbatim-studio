@@ -1287,6 +1287,17 @@ export interface PostTranscriptionSettings {
     enabled: boolean;
     format: string;
   };
+  /** Phase 2 phonetic post-correction. Default: true. The 3-gate test
+   *  is conservative and adds millisecond-scale latency. */
+  vocab_correction_enabled: boolean;
+  /** Threshold name controlling Whisper-confidence gate aggressiveness.
+   *  Conservative = fewer corrections, fewer false positives.
+   *  Default     = balanced.
+   *  Aggressive  = more corrections, slightly more false-positive risk. */
+  vocab_correction_threshold: 'conservative' | 'default' | 'aggressive';
+  /** Phase 3 LLM correction pass. Default: false because Granite Tiny
+   *  CPU adds 5-7 minutes to a typical 30-min transcript. */
+  auto_llm_vocab_correction: boolean;
 }
 
 // System Info Types
@@ -3404,6 +3415,9 @@ class ApiClient {
       this.request<PostTranscriptionSettings>('/api/config/post-transcription').catch(() => ({
         auto_summarize: false,
         auto_export: { enabled: false, format: 'txt' },
+        vocab_correction_enabled: true,
+        vocab_correction_threshold: 'default' as const,
+        auto_llm_vocab_correction: false,
       })),
 
     update: (data: Partial<PostTranscriptionSettings>) =>

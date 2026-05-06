@@ -463,14 +463,21 @@ async def handle_transcription(
                 audio_path = preprocessed_path
                 logger.info("Audio preprocessed: %s -> %s", original_audio_path, preprocessed_path)
 
-        # Load custom dictionary for initial_prompt
-        initial_prompt = None
+        # Load custom dictionary for initial_prompt + post-correction.
+        # Loaded once and reused: same entries drive prompt biasing
+        # (Phase 1, before transcription) and phonetic post-correction
+        # (Phase 2, after transcription).
+        initial_prompt: str | None = None
+        dictionary_entries: list = []
         try:
             from services.custom_dictionary import build_initial_prompt, load_dictionary_entries
-            entries = await load_dictionary_entries(project_id=project_id)
-            initial_prompt = build_initial_prompt(entries, project_id=project_id)
+            dictionary_entries = await load_dictionary_entries(project_id=project_id)
+            initial_prompt = build_initial_prompt(dictionary_entries, project_id=project_id)
             if initial_prompt:
-                logger.info("Using custom dictionary prompt (%d chars)", len(initial_prompt))
+                logger.info(
+                    "Using custom dictionary prompt (%d chars, %d term(s) in scope)",
+                    len(initial_prompt), len(dictionary_entries),
+                )
         except Exception as e:
             logger.warning("Failed to load custom dictionary: %s", e)
 
@@ -500,6 +507,43 @@ async def handle_transcription(
 
             if transcription_result is None:
                 raise ValueError("Transcription did not produce a result")
+
+            # Phase 2: phonetic post-correction.
+            # Repair domain-vocabulary misrecognitions that prompt biasing
+            # (Phase 1) didn't catch. Three-gate test ensures we never
+            # replace a normal English word with a dictionary term.
+            try:
+                from services.vocab_correction import correct_segments
+                from services.post_transcription_actions import _get_post_transcription_settings
+                settings_dict = await _get_post_transcription_settings()
+                vocab_enabled = settings_dict.get("vocab_correction_enabled", True)
+                threshold_name = settings_dict.get("vocab_correction_threshold", "default")
+                if dictionary_entries and vocab_enabled:
+                    correction_result = correct_segments(
+                        transcription_result.segments,
+                        dictionary_entries,
+                        threshold_name=threshold_name,
+                    )
+                    if correction_result.count:
+                        logger.info(
+                            "Phonetic correction: %d word(s) repaired%s",
+                            correction_result.count,
+                            " (standard-word gate disabled — install english-words)" if correction_result.standard_word_gate_skipped else "",
+                        )
+                        # Bump usage_count for matched terms — feeds the
+                        # priority ranking + future auto-learn feature.
+                        try:
+                            async with get_session_factory()() as usage_session:
+                                from services.custom_dictionary import increment_usage
+                                term_ids = [c.term_id for c in correction_result.corrections if c.term_id]
+                                await increment_usage(usage_session, term_ids)
+                                await usage_session.commit()
+                        except Exception as ue:
+                            logger.warning("Failed to bump dictionary usage_count: %s", ue)
+            except ImportError:
+                pass  # vocab_correction is optional — phase 1 still works
+            except Exception as ce:
+                logger.warning("Phonetic correction failed (non-fatal): %s", ce)
 
             detected_language = transcription_result.language
             # Convert segments to dict format for diarization service
