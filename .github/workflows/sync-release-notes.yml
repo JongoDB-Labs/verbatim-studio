@@ -10,7 +10,7 @@ on:
 
 jobs:
   sync-notes:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, jongodb]
     steps:
       - name: Sync release notes to public releases repo
         env:
