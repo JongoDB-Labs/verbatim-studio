@@ -231,3 +231,7 @@ async def _run_migrations(conn) -> None:
     # Add custom_dictionary table for domain-specific transcription terms
     from migrations.add_custom_dictionary import migrate as migrate_custom_dictionary
     await conn.run_sync(lambda _: migrate_custom_dictionary(db_path))
+
+    # v2: extend with sounds_like / priority / usage_count columns for production-grade vocabulary
+    from migrations.add_custom_dictionary_v2 import migrate as migrate_custom_dictionary_v2
+    await conn.run_sync(lambda _: migrate_custom_dictionary_v2(db_path))

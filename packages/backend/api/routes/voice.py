@@ -555,7 +555,15 @@ async def create_voice_session(
 
         web_search = body.web_search_enabled if body else False
         has_attachments = bool(body and (body.recording_ids or body.document_ids or body.file_context))
-        agent = create_agent_session(voice=selected_voice, web_search_enabled=web_search, has_attachments=has_attachments)
+        # Pass the active project so voice STT can apply project-scoped
+        # custom dictionary entries (matches batch transcription behavior).
+        scoped_project_id = active_project_ids[0] if active_project_ids else None
+        agent = await create_agent_session(
+            voice=selected_voice,
+            web_search_enabled=web_search,
+            has_attachments=has_attachments,
+            project_id=scoped_project_id,
+        )
     except Exception as e:
         logger.exception("Failed to create voice agent session")
         raise HTTPException(

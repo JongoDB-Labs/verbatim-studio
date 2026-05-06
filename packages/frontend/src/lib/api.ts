@@ -1237,12 +1237,36 @@ export interface DictionaryEntry {
   term: string;
   category: string;
   project_id: string | null;
-  created_at: string;
+  sounds_like: string[];
+  priority: number;
+  usage_count: number;
+  created_at: string | null;
 }
 
 export interface DictionaryListResponse {
   entries: DictionaryEntry[];
+  total: number;
 }
+
+export interface DictionaryImportResponse {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+/** Allowed priority values: 0 = normal, 10 = important, 50 = critical.
+ *  Modeled on AssemblyAI's three-level boost — deliberately coarse to
+ *  keep users from over-boosting and triggering false positives. */
+export const DICTIONARY_PRIORITIES = [
+  { value: 0, label: 'Normal', description: 'Default weight in the prompt' },
+  { value: 10, label: 'Important', description: 'Lands near the end of the prompt where Whisper attends most' },
+  { value: 50, label: 'Critical', description: 'Always lands last in the prompt, even when budget is tight' },
+] as const;
+
+export const DICTIONARY_CATEGORIES = [
+  'general', 'tech', 'medical', 'legal', 'names', 'business',
+] as const;
+export type DictionaryCategory = typeof DICTIONARY_CATEGORIES[number];
 
 // Calendar Types
 export interface CalendarEvent {
@@ -3297,27 +3321,74 @@ class ApiClient {
 
   // Custom Dictionary
   dictionary = {
-    list: (projectId?: string) => {
-      const params = projectId ? `?project_id=${projectId}` : '';
-      return this.request<DictionaryListResponse>(`/api/dictionary${params}`);
+    list: (projectId?: string, category?: DictionaryCategory) => {
+      const params = new URLSearchParams();
+      if (projectId) params.set('project_id', projectId);
+      if (category) params.set('category', category);
+      const qs = params.toString();
+      return this.request<DictionaryListResponse>(
+        `/api/dictionary${qs ? `?${qs}` : ''}`,
+      );
     },
 
-    add: (term: string, category: string = 'general', projectId?: string) =>
+    add: (params: {
+      term: string;
+      category?: DictionaryCategory;
+      projectId?: string;
+      soundsLike?: string[];
+      priority?: number;
+    }) =>
       this.request<DictionaryEntry>('/api/dictionary', {
         method: 'POST',
-        body: JSON.stringify({ term, category, project_id: projectId }),
+        body: JSON.stringify({
+          term: params.term,
+          category: params.category ?? 'general',
+          project_id: params.projectId,
+          sounds_like: params.soundsLike ?? [],
+          priority: params.priority ?? 0,
+        }),
+      }),
+
+    update: (entryId: string, patch: {
+      term?: string;
+      category?: DictionaryCategory;
+      soundsLike?: string[];
+      priority?: number;
+    }) =>
+      this.request<DictionaryEntry>(`/api/dictionary/${entryId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          term: patch.term,
+          category: patch.category,
+          sounds_like: patch.soundsLike,
+          priority: patch.priority,
+        }),
       }),
 
     remove: (entryId: string) =>
-      this.request<{ deleted: boolean }>(`/api/dictionary/${entryId}`, {
-        method: 'DELETE',
-      }),
+      this.request<void>(`/api/dictionary/${entryId}`, { method: 'DELETE' }),
 
     clear: (projectId?: string) => {
       const params = projectId ? `?project_id=${projectId}` : '';
       return this.request<{ deleted: number }>(`/api/dictionary${params}`, {
         method: 'DELETE',
       });
+    },
+
+    importCsv: async (file: File, projectId?: string): Promise<DictionaryImportResponse> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const baseUrl = getApiBaseUrl();
+      const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+      const response = await fetch(`${baseUrl}/api/dictionary/import${qs}`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Import failed: HTTP ${response.status}: ${errText}`);
+      }
+      return response.json();
     },
   };
 

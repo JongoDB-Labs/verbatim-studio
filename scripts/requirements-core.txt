@@ -50,6 +50,12 @@ reportlab>=4.0.0
 # LLM inference (bundled so AI chat works out of the box)
 llama-cpp-python>=0.2.0
 
+# tiktoken: GPT-2 BPE tokenizer used to measure Whisper initial_prompt
+# token budget (Whisper's hard limit is 224 tokens; chars-based counting
+# silently overflows on non-English). ~1.5MB pure Python with prebuilt
+# wheels for every platform we ship.
+tiktoken>=0.7.0
+
 # Pin numpy here to prevent llama-cpp-python from pulling incompatible version
 # ML deps require numpy 2.0.2 for compatibility with torch/pyannote
 numpy==2.0.2

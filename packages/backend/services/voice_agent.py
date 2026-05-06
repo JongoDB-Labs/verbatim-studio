@@ -107,18 +107,61 @@ class WhisperSTTAdapter:
 
     Uses a dedicated thread pool so STT doesn't compete with LLM/TTS
     for the default asyncio executor.
+
+    The voice STT pipeline now applies the user's custom dictionary the
+    same way batch transcription does — the prompt is built once at
+    session start and reused for every chunk so we don't pay the DB
+    query on each utterance. Build via WhisperSTTAdapter.with_dictionary()
+    or pass `initial_prompt` directly.
     """
 
     _stt_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
 
-    def __init__(self, engine: ITranscriptionEngine) -> None:
+    def __init__(
+        self,
+        engine: ITranscriptionEngine,
+        *,
+        initial_prompt: str | None = None,
+    ) -> None:
         self._engine = engine
+        self._initial_prompt = initial_prompt
+
+    @classmethod
+    async def with_dictionary(
+        cls,
+        engine: ITranscriptionEngine,
+        *,
+        project_id: str | None = None,
+    ) -> "WhisperSTTAdapter":
+        """Construct an adapter with the user's custom dictionary baked in.
+
+        Loads dictionary entries once and builds a Whisper initial_prompt
+        that will be applied to every chunk in this session. Failure to
+        load is non-fatal — voice still works without the dictionary.
+        """
+        prompt: str | None = None
+        try:
+            from services.custom_dictionary import (
+                build_initial_prompt,
+                load_dictionary_entries,
+            )
+            entries = await load_dictionary_entries(project_id=project_id)
+            prompt = build_initial_prompt(entries, project_id=project_id)
+            if prompt:
+                logger.info(
+                    "Voice STT using custom dictionary prompt (%d chars, project=%s)",
+                    len(prompt), project_id or "global",
+                )
+        except Exception as e:
+            logger.warning("Voice STT failed to load custom dictionary: %s", e)
+        return cls(engine, initial_prompt=prompt)
 
     async def recognize(self, audio_data: bytes, *, sample_rate: int = 16000) -> str:
         """Transcribe audio bytes via Whisper.
 
         Writes audio to a temporary WAV file (Whisper expects file input),
-        runs transcription, and returns the concatenated text.
+        runs transcription with the session's initial_prompt applied, and
+        returns the concatenated text.
 
         Args:
             audio_data: Raw PCM audio bytes (16-bit mono).
@@ -128,6 +171,8 @@ class WhisperSTTAdapter:
             Transcribed text string.
         """
         import wave
+
+        from core.interfaces.transcription import TranscriptionOptions
 
         # Write audio to temp file — close handle before wave.open() for Windows
         tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -139,8 +184,19 @@ class WhisperSTTAdapter:
                 wf.setframerate(sample_rate)
                 wf.writeframes(audio_data)
 
-            # Run transcription through existing engine
-            result = await self._engine.transcribe(tmp.name)
+            # Pass the session's custom-dictionary prompt to the engine.
+            # When initial_prompt is None this is equivalent to the old
+            # path — no breaking change for callers that didn't opt in.
+            options = (
+                TranscriptionOptions(initial_prompt=self._initial_prompt)
+                if self._initial_prompt
+                else None
+            )
+            result = (
+                await self._engine.transcribe(tmp.name, options)
+                if options
+                else await self._engine.transcribe(tmp.name)
+            )
             text = " ".join(seg.text for seg in result.segments).strip()
             return text
         finally:
@@ -803,17 +859,27 @@ def _get_tts_service() -> ITTSService:
     return get_tts_service(str(model_dir))
 
 
-def create_agent_session(voice: str | None = None, web_search_enabled: bool = False, has_attachments: bool = False) -> VerbatimVoiceAgent:
+async def create_agent_session(
+    voice: str | None = None,
+    web_search_enabled: bool = False,
+    has_attachments: bool = False,
+    project_id: str | None = None,
+) -> VerbatimVoiceAgent:
     """Factory that creates a fully configured VerbatimVoiceAgent.
 
     Wires together:
-    - STT: Whisper via the adapter factory
+    - STT: Whisper via the adapter factory, with custom dictionary baked in
     - LLM: Granite / llama.cpp via the adapter factory
     - TTS: Qwen3-TTS via the active model
     - Tools: Bridged from the existing ToolRegistry
 
     Args:
         voice: Optional voice/speaker ID for TTS (e.g. "Chelsie", "Ryan").
+        web_search_enabled: If True, enables web search tool.
+        has_attachments: If True, augments system prompt for attachment context.
+        project_id: When set, loads project-scoped + global custom dictionary
+                    entries into the STT prompt so voice STT recognizes the
+                    same domain terms as batch transcription.
 
     Returns:
         A configured VerbatimVoiceAgent ready to process audio.
@@ -825,11 +891,14 @@ def create_agent_session(voice: str | None = None, web_search_enabled: bool = Fa
 
     factory = get_factory()
 
-    # Create STT adapter wrapping Whisper
+    # Create STT adapter wrapping Whisper, with the user's custom dictionary
+    # baked into the initial_prompt for the lifetime of this session.
     try:
         transcription_engine = factory.create_transcription_engine()
-        stt = WhisperSTTAdapter(transcription_engine)
-        logger.info("Voice STT adapter created (Whisper)")
+        stt = await WhisperSTTAdapter.with_dictionary(
+            transcription_engine, project_id=project_id,
+        )
+        logger.info("Voice STT adapter created (Whisper, dict project=%s)", project_id or "global")
     except Exception as e:
         raise RuntimeError(f"Failed to create STT adapter: {e}") from e
 
