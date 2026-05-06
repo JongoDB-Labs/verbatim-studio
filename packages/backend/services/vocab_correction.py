@@ -171,18 +171,55 @@ class TermPhoneticIndex:
         self, candidate_codes: tuple[str, str], candidate_lower: str
     ) -> tuple[str, int] | None:
         """Return (matched_spelling, edit_distance) for the closest matching
-        spelling whose phonetic code matches one of the candidate codes,
-        or None if no codes match. Caller still gates on max edit distance.
+        spelling whose phonetic code is *similar* to one of the candidate
+        codes, or None if no codes match. Caller still gates on the final
+        spelling-edit-distance limit.
+
+        Code similarity allows three relaxations beyond strict equality —
+        Double Metaphone is too strict for real-world ASR misrecognition:
+        - Equal codes (canonical case)
+        - One is a prefix of the other with prefix length ≥ 4. Handles
+          plural/possessive variations ("Marforpac" MRFRPK vs
+          "marforpacs" MRFRPKS) and dropped/added final consonants.
+        - Code edit distance = 1 with both codes ≥ 4 chars. Handles
+          one-consonant misrecognitions ("ADSEP" ATSP vs "adset" ATST).
+
+        Without these relaxations, the strictest case fires only on
+        exactly-pronounced-the-same misspellings, which is rare in
+        practice — most domain misrecognitions diverge slightly in the
+        consonant cluster.
         """
         best: tuple[str, int] | None = None
         for code in candidate_codes:
             if not code:
                 continue
-            for spelling in self.code_to_spellings.get(code, ()):
-                dist = _levenshtein(candidate_lower, spelling.lower())
-                if best is None or dist < best[1]:
-                    best = (spelling, dist)
+            for term_code, spellings in self.code_to_spellings.items():
+                if not _codes_similar(code, term_code):
+                    continue
+                for spelling in spellings:
+                    dist = _levenshtein(candidate_lower, spelling.lower())
+                    if best is None or dist < best[1]:
+                        best = (spelling, dist)
         return best
+
+
+def _codes_similar(a: str, b: str) -> bool:
+    """Phonetic-code similarity check. See TermPhoneticIndex.best_match
+    for the rationale. Returns True under any of the three relaxations.
+    """
+    if a == b:
+        return True
+    # Prefix overlap with min length 4
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    if len(shorter) >= 4 and longer.startswith(shorter):
+        return True
+    # Single-char edit distance for similar-length codes ≥ 4 chars.
+    # Restricting both lengths prevents tiny codes (1-2 chars) from
+    # matching unrelated terms via edit-distance overlap.
+    if len(a) >= 4 and len(b) >= 4 and abs(len(a) - len(b)) <= 1:
+        if _levenshtein(a, b) <= 1:
+            return True
+    return False
 
 
 @dataclass
