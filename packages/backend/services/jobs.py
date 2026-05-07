@@ -463,23 +463,32 @@ async def handle_transcription(
                 audio_path = preprocessed_path
                 logger.info("Audio preprocessed: %s -> %s", original_audio_path, preprocessed_path)
 
-        # Load custom dictionary for initial_prompt + post-correction.
-        # Loaded once and reused: same entries drive prompt biasing
-        # (Phase 1, before transcription) and phonetic post-correction
-        # (Phase 2, after transcription).
+        # Context-aware vocabulary retrieval.
+        # Pulls top-100 most-relevant terms from the bundled corpus +
+        # user additions for this project, drives prompt biasing (Phase
+        # 1) and phonetic / LLM post-correction (Phases 2 & 3). The
+        # service falls back to "user table only" when the bundled
+        # corpus isn't yet shipped, so this code path is safe to run
+        # before the corpus DB lands.
         initial_prompt: str | None = None
         dictionary_entries: list = []
         try:
-            from services.custom_dictionary import build_initial_prompt, load_dictionary_entries
-            dictionary_entries = await load_dictionary_entries(project_id=project_id)
+            from services.custom_dictionary import build_initial_prompt
+            from services.vocab_retrieval import retrieve_for_project, to_legacy_entries
+            async with get_session_factory()() as retrieval_session:
+                retrieved = await retrieve_for_project(
+                    retrieval_session,
+                    project_id=project_id,
+                )
+            dictionary_entries = to_legacy_entries(retrieved)
             initial_prompt = build_initial_prompt(dictionary_entries, project_id=project_id)
             if initial_prompt:
                 logger.info(
-                    "Using custom dictionary prompt (%d chars, %d term(s) in scope)",
-                    len(initial_prompt), len(dictionary_entries),
+                    "Vocab retrieval: %d terms selected, prompt %d chars",
+                    len(dictionary_entries), len(initial_prompt),
                 )
         except Exception as e:
-            logger.warning("Failed to load custom dictionary: %s", e)
+            logger.warning("Vocab retrieval failed: %s", e)
 
         # Run transcription with streaming progress
         options = TranscriptionOptions(

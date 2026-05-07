@@ -54,3 +54,11 @@ models/
 
 # Downloaded FFmpeg binaries
 build/resources/ffmpeg/
+
+# Bundled vocabulary corpus (built by scripts/build_vocab_corpus,
+# attached to releases via electron-builder extraResources)
+assets/vocab_bundled.db
+assets/vocab_bundled.db-journal
+assets/vocab_bundled.db-wal
+assets/vocab_bundled.db-shm
+assets/vocab_corpus_cache/

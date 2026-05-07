@@ -133,27 +133,31 @@ class WhisperSTTAdapter:
         *,
         project_id: str | None = None,
     ) -> "WhisperSTTAdapter":
-        """Construct an adapter with the user's custom dictionary baked in.
+        """Construct an adapter with retrieved vocabulary baked in.
 
-        Loads dictionary entries once and builds a Whisper initial_prompt
-        that will be applied to every chunk in this session. Failure to
-        load is non-fatal — voice still works without the dictionary.
+        Calls vocab_retrieval.retrieve_for_project to pull the top-100
+        most-relevant terms (bundled corpus + user additions) for the
+        current project, then builds a Whisper initial_prompt from them
+        once and applies it to every audio chunk in this session.
+        Failure to load is non-fatal — voice still works without the
+        dictionary.
         """
         prompt: str | None = None
         try:
-            from services.custom_dictionary import (
-                build_initial_prompt,
-                load_dictionary_entries,
-            )
-            entries = await load_dictionary_entries(project_id=project_id)
+            from services.custom_dictionary import build_initial_prompt
+            from services.vocab_retrieval import retrieve_for_project, to_legacy_entries
+            from persistence.database import get_session_factory
+            async with get_session_factory()() as session:
+                retrieved = await retrieve_for_project(session, project_id=project_id)
+            entries = to_legacy_entries(retrieved)
             prompt = build_initial_prompt(entries, project_id=project_id)
             if prompt:
                 logger.info(
-                    "Voice STT using custom dictionary prompt (%d chars, project=%s)",
-                    len(prompt), project_id or "global",
+                    "Voice STT using vocab retrieval (%d terms, %d chars, project=%s)",
+                    len(entries), len(prompt), project_id or "global",
                 )
         except Exception as e:
-            logger.warning("Voice STT failed to load custom dictionary: %s", e)
+            logger.warning("Voice STT vocab retrieval failed: %s", e)
         return cls(engine, initial_prompt=prompt)
 
     async def recognize(self, audio_data: bytes, *, sample_rate: int = 16000) -> str:
