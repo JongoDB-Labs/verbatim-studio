@@ -445,7 +445,7 @@ def _popularity_floor_query(
 
 
 def _acronym_safety_query(
-    conn: sqlite3.Connection, per_category: int = 5,
+    conn: sqlite3.Connection, per_category: int = 20,
 ) -> list[sqlite3.Row]:
     """Stratified acronym pull, top-N per non-aviation category.
 
@@ -484,7 +484,7 @@ def _acronym_safety_query(
                 "FROM vocab_bundled "
                 "WHERE category = ? "
                 "  AND term GLOB '[A-Z][A-Z0-9]*' "
-                "  AND length(term) BETWEEN 3 AND 10 "
+                "  AND length(term) BETWEEN 3 AND 16 "
                 "  AND popularity_score >= 0.50 "
                 # Deterministic order — popularity desc, then term asc.
                 # Random tiebreakers hid critical terms (MCTSSA at 0.85
@@ -620,7 +620,7 @@ async def retrieve_for_project(
     bm25_rows = _bm25_query(conn, plain, limit=BM25_POOL) if plain else []
     cosine_rows = _vec_query(conn, vector or [], limit=COSINE_POOL) if (has_vec and vector) else []
     popular_rows = _popularity_floor_query(conn, POPULARITY_FLOOR)
-    acronym_rows = _acronym_safety_query(conn, per_category=15)
+    acronym_rows = _acronym_safety_query(conn, per_category=20)
     user_rows = await _load_user_rows(db, project_id=project_id)
 
     # Category broadcast: when BM25 results cluster in a few categories,
@@ -683,6 +683,10 @@ async def retrieve_for_project(
     # bypass the Phase 2 confidence gate, so pinning them is the only
     # way Phase 2 can repair "Mctissa" → MCTSSA when the project's
     # context didn't trip a military signal.
+    # Cap pinned acronyms at half the retrieval budget — they're a
+    # safety net, not the main course. Leave headroom for project-
+    # context-driven BM25 / cosine retrieval to fill the rest.
+    acronym_pin_cap = max(20, limit // 2)
     pinned_acronyms = 0
     for ar in acronym_rows:
         key = str(ar["id"])
@@ -691,7 +695,7 @@ async def retrieve_for_project(
         seen_keys.add(key)
         out.append(_row_to_retrieved(ar, is_user=False, score=RANK_POPULARITY * (ar["popularity_score"] or 0)))
         pinned_acronyms += 1
-        if pinned_acronyms >= 30:
+        if pinned_acronyms >= acronym_pin_cap:
             break
 
     # Bundled candidates ranked by combined score.
