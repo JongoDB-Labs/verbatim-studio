@@ -207,8 +207,28 @@ elif [ -f "$VOCAB_DB_SRC" ]; then
     cp "$VOCAB_DB_SRC" "$RESOURCES_DIR/vocab_bundled.db"
   fi
 else
-  echo "Warning: no vocab corpus DB found — runtime will use user-only fallback"
-  echo "  Build via: python -m scripts.build_vocab_corpus"
+  # CI path: no local corpus DB (it's gitignored). Download the slim
+  # variant from the latest public release. This is the canonical
+  # source — manually-uploaded corpus or CI-built corpus both end up
+  # at the same `vocab_bundled_slim.db` URL on releases/latest.
+  CORPUS_URL="https://github.com/JongoDB/verbatim-studio-releases/releases/latest/download/vocab_bundled_slim.db"
+  echo "  no local corpus DB; downloading slim variant from public release"
+  echo "  source: $CORPUS_URL"
+  if curl -fsSL --retry 3 --retry-delay 5 \
+      "$CORPUS_URL" \
+      -o "$RESOURCES_DIR/vocab_bundled.db.tmp"; then
+    DOWNLOADED_SIZE=$(stat -f%z "$RESOURCES_DIR/vocab_bundled.db.tmp" 2>/dev/null || stat -c%s "$RESOURCES_DIR/vocab_bundled.db.tmp" 2>/dev/null || echo 0)
+    if [ "$DOWNLOADED_SIZE" -gt 50000000 ]; then  # >50 MB sanity check
+      mv "$RESOURCES_DIR/vocab_bundled.db.tmp" "$RESOURCES_DIR/vocab_bundled.db"
+      echo "  downloaded $DOWNLOADED_SIZE bytes from public release"
+    else
+      rm -f "$RESOURCES_DIR/vocab_bundled.db.tmp"
+      echo "Warning: download succeeded but file is suspiciously small ($DOWNLOADED_SIZE bytes) — runtime will use user-only fallback"
+    fi
+  else
+    echo "Warning: corpus download failed — runtime will use user-only fallback"
+    echo "  Local fix: python -m scripts.build_vocab_corpus"
+  fi
 fi
 
 if [ -f "$RESOURCES_DIR/vocab_bundled.db" ]; then
