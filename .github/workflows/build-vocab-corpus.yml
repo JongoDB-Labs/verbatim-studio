@@ -60,12 +60,29 @@ jobs:
           restore-keys: |
             hf-nomic-
 
+      # Cache the FULL embedded DB itself, keyed by a hash of every file
+      # that influences corpus content. On hit, we skip the 60-150 min
+      # embedding pass entirely — release tags that don't change corpus
+      # content (e.g. pure UI bumps) finish in ~1 min instead of hours.
+      # On miss, we run the full build and the cache populates for next
+      # time. The "v3" suffix is a manual cache buster — bump it when
+      # embedding logic changes such that previously-cached vectors are
+      # no longer comparable to fresh ones.
+      - name: Cache embedded corpus DB
+        id: corpus-db-cache
+        uses: actions/cache@v4
+        with:
+          path: assets/vocab_bundled.db
+          key: vocab-corpus-db-v3-${{ hashFiles('scripts/build_vocab_corpus/**/*.py') }}
+
       - name: Install build dependencies
+        if: steps.corpus-db-cache.outputs.cache-hit != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install metaphone sqlite-vec sentence-transformers einops PyMuPDF
 
       - name: Build corpus with embeddings
+        if: steps.corpus-db-cache.outputs.cache-hit != 'true'
         env:
           CORPUS_VERSION: ${{ github.ref_name }}
         run: |
@@ -74,6 +91,14 @@ jobs:
             --csv-export-dir assets/vocab_corpus_export \
             --corpus-version "${CORPUS_VERSION:-dev}" \
             --verbose
+
+      # Cache hit fast path needs sqlite-vec installed for the integrity
+      # checks below (they probe the vec table).
+      - name: Install verification dependencies (cache hit)
+        if: steps.corpus-db-cache.outputs.cache-hit == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install sqlite-vec
 
       - name: Verify corpus integrity
         run: |
