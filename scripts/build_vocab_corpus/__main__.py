@@ -53,8 +53,19 @@ DEFAULT_OUTPUT = REPO_ROOT / "assets" / "vocab_bundled.db"
 # are added here; missing/failing sources don't block the build, they
 # just emit a warning + zero-count line in the build report.
 SOURCE_MODULES = [
+    # Curated lists (no network — fast + always-available)
+    "latin_legal",
+    "military_ranks",
+    "military_acronyms",
+    "business_acronyms",
+    # Network-fetched, public-domain US gov + permissive
     "nasa_acronyms",
-    # Additional source modules added incrementally:
+    "sec_edgar",
+    "ourairports",
+    "geonames_cities",
+    "iso_639_languages",
+    "dod_dictionary",
+    # Future modules (commented until source extractors land):
     # "scowl",
     # "cmudict",
     # "norvig_frequency",
@@ -62,24 +73,18 @@ SOURCE_MODULES = [
     # "rxnorm",
     # "icd10cm",
     # "court_listener",
-    # "latin_legal",
-    # "geonames_cities",
     # "wikidata_entities",
-    # "sec_edgar",
     # "stack_overflow_tags",
     # "awesome_lists",
-    # "dod_dictionary",
     # "kaikki_slang",
     # "musicbrainz",
     # "wikidata_sports",
     # "doj_acronyms",
-    # "ourairports",
     # "wikipedia_ten_codes",
     # "wikidata_food",
     # "ipeds_universities",
     # "wikipedia_religious",
     # "pubchem_top",
-    # "iso_639",
     # "courtside_misrecognitions",
 ]
 
@@ -301,6 +306,126 @@ def _write_metadata(
     conn.commit()
 
 
+def _write_csv_export(
+    conn: sqlite3.Connection,
+    *,
+    output_dir: Path,
+    counts: dict[str, int],
+) -> Path:
+    """Dump the corpus to a master CSV + per-category CSVs.
+
+    The master is sorted by (category, term) so a `grep` or `sort` against
+    it is well-behaved. Per-category files keep row counts low enough to
+    open cleanly in Excel/Numbers (Excel chokes around the 1M-row
+    boundary, our largest category will be well under 200k).
+
+    The CSVs ship alongside the DB but are not used at runtime — they're
+    a personal-QA / editorial-review artifact.
+    """
+    import csv
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    master_path = output_dir / "vocab_corpus.csv"
+
+    columns = [
+        "category",
+        "subcategory",
+        "term",
+        "canonical_form",
+        "sounds_like",
+        "popularity_score",
+        "metaphone_primary",
+        "metaphone_secondary",
+        "context_blurb",
+        "source",
+    ]
+
+    cur = conn.execute(
+        f"SELECT {', '.join(columns)} FROM vocab_bundled "
+        f"ORDER BY category, term COLLATE NOCASE"
+    )
+
+    # Master CSV
+    with master_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(columns)
+        for row in cur:
+            writer.writerow([(v if v is not None else "") for v in row])
+
+    # Per-category CSVs in a subdir for easy spreadsheet opening
+    by_category_dir = output_dir / "by_category"
+    by_category_dir.mkdir(exist_ok=True)
+    for category in counts:
+        path = by_category_dir / f"{category}.csv"
+        cur = conn.execute(
+            f"SELECT {', '.join(columns)} FROM vocab_bundled "
+            f"WHERE category = ? ORDER BY term COLLATE NOCASE",
+            (category,),
+        )
+        with path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(columns)
+            for row in cur:
+                writer.writerow([(v if v is not None else "") for v in row])
+
+    # README so the user knows what they're looking at
+    readme = output_dir / "README.md"
+    readme.write_text(f"""# Verbatim Bundled Vocabulary Corpus — QA Export
+
+This directory contains the bundled-vocabulary corpus in human-readable
+form, generated alongside `vocab_bundled.db`. The CSVs are reference
+artifacts for editorial review only — the runtime app reads from the
+SQLite database, not these files.
+
+## Files
+
+- `vocab_corpus.csv` — single sorted CSV of all {sum(counts.values()):,} terms,
+  ordered by (category, term). Useful for `grep`, `sort`, `awk`, or
+  loading into a database / dataframe for ad-hoc queries.
+- `by_category/<category>.csv` — one CSV per category, sorted by term.
+  Smaller files open cleanly in Excel / Numbers / LibreOffice Calc.
+
+## Columns
+
+- `category` — top-level bucket (general, tech, medical, legal, etc.)
+- `subcategory` — finer grouping where the source provides one
+- `term` — the lookup form (lowercased / ASCII-folded for matching)
+- `canonical_form` — the spelling we want in transcripts
+- `sounds_like` — comma-separated phonetic alternates (Speechmatics-style)
+- `popularity_score` — 0.0-1.0 editorial weight (1.0 = extremely common)
+- `metaphone_primary` / `metaphone_secondary` — Double Metaphone codes
+  used by the runtime phonetic-correction matcher
+- `context_blurb` — short example phrase, embedded for semantic retrieval
+- `source` — attribution string (matches THIRD_PARTY_LICENSES.md)
+
+## Per-category counts
+
+{chr(10).join(f"- **{cat}**: {n:,} terms" for cat, n in sorted(counts.items()))}
+
+**Total: {sum(counts.values()):,} terms**
+
+## Reviewing
+
+To spot bad entries:
+
+```bash
+# All terms shorter than 3 chars (often false positives)
+awk -F, 'length($3) < 3' vocab_corpus.csv | head
+
+# Terms in a specific category
+awk -F, '$1 == "military"' vocab_corpus.csv | head
+
+# Terms whose canonical form is all lowercase (likely not proper nouns)
+awk -F, '$4 ~ /^[a-z]+$/' vocab_corpus.csv | head
+
+# Find dups across categories
+cut -d, -f3 vocab_corpus.csv | sort | uniq -c | sort -rn | head
+```
+""")
+
+    return master_path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -313,6 +438,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--sources", nargs="*",
         help="Override the list of source modules. Defaults to SOURCE_MODULES.",
+    )
+    parser.add_argument(
+        "--csv-export-dir", type=Path,
+        default=REPO_ROOT / "assets" / "vocab_corpus_export",
+        help="Directory for the human-readable CSV export. Defaults to "
+             "assets/vocab_corpus_export/. Pass empty string to skip.",
     )
     args = parser.parse_args(argv)
 
@@ -361,6 +492,16 @@ def main(argv: list[str] | None = None) -> int:
         duration_s=duration,
     )
 
+    # Human-readable CSV export for QA review. Done before VACUUM since
+    # we still hold the analyze-friendly connection. Empty --csv-export-dir
+    # turns it off (use case: CI builds where we only care about the .db).
+    csv_master_path: Path | None = None
+    if args.csv_export_dir and str(args.csv_export_dir):
+        csv_master_path = _write_csv_export(
+            conn, output_dir=args.csv_export_dir, counts=counts,
+        )
+        logger.info("CSV QA export written to %s", csv_master_path)
+
     logger.info("ANALYZE / VACUUM …")
     conn.execute("ANALYZE")
     conn.commit()
@@ -383,6 +524,7 @@ def main(argv: list[str] | None = None) -> int:
         "category_counts": counts,
         "per_source_counts": per_source_counts,
         "embedded": embedded,
+        "csv_export": str(csv_master_path) if csv_master_path else None,
     }, indent=2))
     return 0
 
