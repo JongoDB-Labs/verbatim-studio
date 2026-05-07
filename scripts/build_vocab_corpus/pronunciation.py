@@ -119,6 +119,94 @@ def has_word_shape(acronym: str) -> bool:
     return True
 
 
+def implicit_vowel_word_forms(acronym: str) -> list[str]:
+    """Generate plausible word-form pronunciations by inserting implicit
+    vowels between consonant clusters.
+
+    Acronyms get pronounced as portmanteau words across many
+    occupational fields — military, medical, legal, finance — even when
+    they look unpronounceable on paper. MCTSSA → "mick-tiss-uh".
+    MCTSSA's letters M-C-T-S-S-A read as a word by treating each
+    consonant cluster as needing a vowel: M-(i)-CT-(i)-SS-A → "mick
+    tissa". The exact vowel choice varies by community but Double
+    Metaphone normalizes most short-vowel inserts to the same code, so
+    we don't have to be exact — covering the common patterns is enough
+    to give the runtime correction layer a target.
+
+    Strategy: for each consecutive run of consonants, insert each of
+    {"i", "e", "a"} between consecutive consonants. Generate the
+    full string with no spaces, with hyphens after each insertion, and
+    a few common segmentation patterns.
+
+    Examples:
+      MCTSSA → ["mctissa", "mctessa", "mctassa", "mck-tissa", ...]
+      MCWL   → ["mcwil", "mcwel", "mcwal"]
+      ABCD   → ["abicd", "abecd", "abacd", "abcid", ...]
+
+    Returns a deduplicated list. Output is always lowercase.
+    """
+    if not acronym:
+        return []
+    letters = [c for c in acronym if c.isalpha()]
+    if len(letters) < 3:
+        # 2-char acronyms rarely word-form (FBI is 3 chars and even that's
+        # universally letter-by-letter; below 3 isn't worth the noise).
+        return []
+
+    upper = "".join(letters).upper()
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(form: str) -> None:
+        cleaned = form.strip().lower()
+        if cleaned and cleaned not in seen and 2 <= len(cleaned) <= 60:
+            seen.add(cleaned)
+            out.append(cleaned)
+
+    # 1. Bare lowercase concatenation — covers Whisper hallucinations
+    #    that drop the case (e.g. it heard MCTSSA, output "mctssa").
+    _add(upper.lower())
+
+    # 2. Vowel-inserted variants. For each gap between consecutive
+    #    consonants, try inserting {i, e, a, u}. We don't enumerate all
+    #    combinations exhaustively — instead, generate one variant per
+    #    inserted vowel choice, applied uniformly across all gaps.
+    for vowel in ("i", "e", "a", "u"):
+        rebuilt: list[str] = []
+        for idx, ch in enumerate(upper):
+            rebuilt.append(ch.lower())
+            if (
+                idx + 1 < len(upper)
+                and ch.upper() not in _VOWELS
+                and ch.upper() not in _SEMI_VOWELS
+                and upper[idx + 1].upper() not in _VOWELS
+                and upper[idx + 1].upper() not in _SEMI_VOWELS
+            ):
+                rebuilt.append(vowel)
+        _add("".join(rebuilt))
+
+    # 3. Hyphenated form of the i-inserted variant — sometimes Whisper
+    #    or downstream tooling preserves a dash from the spoken pause.
+    if "i" in (out[1] if len(out) > 1 else ""):
+        # Re-run the i variant but with hyphens at consonant-cluster boundaries
+        rebuilt: list[str] = []
+        for idx, ch in enumerate(upper):
+            rebuilt.append(ch.lower())
+            if (
+                idx + 1 < len(upper)
+                and ch.upper() not in _VOWELS
+                and ch.upper() not in _SEMI_VOWELS
+                and upper[idx + 1].upper() not in _VOWELS
+                and upper[idx + 1].upper() not in _SEMI_VOWELS
+            ):
+                rebuilt.extend(("i", "-"))
+        # Trim trailing dash
+        candidate = "".join(rebuilt).rstrip("-")
+        _add(candidate)
+
+    return out
+
+
 def derive_acronym_pronunciations(
     canonical: str,
     *,
@@ -127,37 +215,47 @@ def derive_acronym_pronunciations(
     """Return a list of plausible spoken forms for *canonical*.
 
     Always includes:
-    - Letter-by-letter spelling, joined by spaces ("ef bee eye")
-    - Letter-by-letter spelling, joined by hyphens ("ef-bee-eye")
-      (some prompts respond better to one form than the other)
+    - Letter-by-letter spelling, space-joined ("ef bee eye")
+    - Letter-by-letter spelling, hyphen-joined ("ef-bee-eye")
+    - The bare lowercase form ("fbi")
+    - Vowel-inserted word-form variants ("mctissa", "mctessa", "mctassa")
+      for any acronym 3+ chars long
 
-    Word-form pronunciation is NOT auto-emitted, even when the
-    acronym has a vowel-rich shape — the heuristic over-fires on
-    things like FBI/IRS/AWS that look pronounceable but are
-    universally spelled out in spoken English. Curated sources
-    that know a community pronounces an acronym as a word (MCWL =
-    "mic wil", MARFORPAC = "mar-for-pack") supply that form via
-    `extra_hints`. The helper deduplicates and lowercases.
+    The vowel-inserted forms catch the common occupational-field pattern
+    where acronyms get pronounced as portmanteau words by inserting
+    implicit vowels. Double Metaphone normalizes short-vowel inserts to
+    similar codes, so even if the user pronounced "mick-tiss-uh" we get
+    a phonetic match against "mctissa" / "mctessa" / "mctassa".
 
-    All forms are returned lowercase, stripped of whitespace, and
-    deduplicated.
+    `extra_hints` lets curated source modules supply community-locked
+    pronunciations (e.g. MARCORSEPMAN = "mar corps sep man") that the
+    auto-derivation can't infer. Hints are added after the derived forms.
+
+    All forms are returned lowercase, deduplicated, in stable order.
     """
     forms: list[str] = []
     seen: set[str] = set()
 
-    # Filter out non-alphanumeric chars from acronym for the spoken form.
     cleaned = "".join(c for c in canonical if c.isalnum())
     if not cleaned:
         return list(dict.fromkeys(extra_hints))
 
-    space_form = letter_by_letter(cleaned, joiner=" ")
-    hyphen_form = letter_by_letter(cleaned, joiner="-")
-
-    for f in (space_form, hyphen_form):
+    # Letter-by-letter (space + hyphen joiners).
+    for f in (
+        letter_by_letter(cleaned, joiner=" "),
+        letter_by_letter(cleaned, joiner="-"),
+    ):
         if f and f not in seen:
             seen.add(f)
             forms.append(f)
 
+    # Word-form / implicit-vowel variants.
+    for f in implicit_vowel_word_forms(cleaned):
+        if f and f not in seen:
+            seen.add(f)
+            forms.append(f)
+
+    # Curated hints last (preserve their phrasing).
     for hint in extra_hints:
         clean_hint = (hint or "").strip().lower()
         if clean_hint and clean_hint not in seen:

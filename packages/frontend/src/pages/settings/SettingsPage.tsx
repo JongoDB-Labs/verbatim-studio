@@ -2373,7 +2373,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
               coarse boost levels. */}
           <SettingSection
             title="Vocabulary auto-correction"
-            description="After transcription, repair misspelled domain terms using your custom vocabulary. Adds milliseconds; runs offline."
+            description="Fast per-word repair. Phonetic match against your vocabulary, with three safety gates so it doesn't replace real English words. Catches typos / near-spellings — e.g. 'nyokey' → 'gnocchi'. Misses acronyms when Whisper transcribes them confidently as a fake word — e.g. 'Mctissa' for MCTSSA. Adds milliseconds; runs offline. Tip: bump threshold to Aggressive if confident-but-wrong acronym misreadings sneak through."
           >
             <div className="flex items-center gap-2">
               <select
@@ -2381,7 +2381,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
                 onChange={(e) => updatePostTxSetting('vocab_correction_threshold', e.target.value)}
                 disabled={!postTxSettings.vocab_correction_enabled}
                 className="px-2 py-1 text-xs rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
-                title="Lower = more conservative, fewer corrections. Higher = more permissive, slightly more false-positive risk."
+                title="Confidence threshold below which a word is a candidate for correction. Conservative = 0.40 (only the very-low-confidence words get touched). Default = 0.60. Aggressive = 0.75 (catches confident-but-wrong acronym misreadings, slightly more false-positive risk)."
               >
                 <option value="conservative">Conservative</option>
                 <option value="default">Default</option>
@@ -2405,7 +2405,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
               phonetic match misses. Diff-bounded: rejects free rewrites. */}
           <SettingSection
             title="AI vocabulary cleanup"
-            description="Run a local LLM pass to catch context-dependent misspellings phonetic match misses. Diff-validated to never paraphrase. Slower (~5-7 min per 30-min recording)."
+            description="Slower segment-level repair via local AI. Best for acronyms whose spoken form diverges from the spelling — 'mick-tiss-uh' → MCTSSA, 'em-see-tee-tee-ess-ay' → MCTTSA — and multi-word terms Whisper splits incorrectly ('north star' / 'northstar'). Reads each transcript segment as a whole so it can use surrounding context. Diff-validated: rejects free rewrites; only accepts swaps where the replacement is a glossary entry. Requires a Granite model (download via Settings → AI). Adds ~5-7 min to a 30-min recording. Toggle this on if auto-correction misses confident acronym misreadings."
           >
             <label className="relative inline-flex items-center cursor-pointer">
               <input
