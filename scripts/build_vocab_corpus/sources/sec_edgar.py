@@ -47,18 +47,26 @@ _LEGAL_SUFFIX_RE = re.compile(
 def _ensure_dataset() -> Path:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     target = CACHE_DIR / "company_tickers.json"
-    if target.exists():
-        return target
+    if target.exists() and target.stat().st_size > 1000:
+        # Validate the cached file isn't garbage (a previous bad cache
+        # left compressed bytes here). Quick sanity check on the prefix.
+        if target.read_bytes()[:1] == b"{":
+            return target
+        logger.warning("Cached SEC EDGAR file is not JSON — re-fetching")
+        target.unlink()
 
     import urllib.request
     logger.info("Fetching SEC EDGAR tickers from %s", SOURCE_URL)
-    # SEC requires a User-Agent identifying the requester per their
-    # access policy. Generic build identifier.
+    # SEC requires a User-Agent that identifies the requester per their
+    # access policy. We DO NOT request gzip explicitly — urllib won't
+    # transparently decode it and we'd have to handle the Content-
+    # Encoding header by hand. Skipping gzip costs ~700 KB on this
+    # particular endpoint (~3 MB uncompressed) which is fine.
     req = urllib.request.Request(
         SOURCE_URL,
         headers={
-            "User-Agent": "Verbatim Studio Corpus Builder dev@verbatim.studio",
-            "Accept-Encoding": "gzip, deflate",
+            "User-Agent": "Verbatim Studio Corpus Builder admin@verbatim.studio",
+            "Accept": "application/json",
         },
     )
     with urllib.request.urlopen(req, timeout=60) as resp:

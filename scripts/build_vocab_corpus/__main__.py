@@ -58,6 +58,9 @@ SOURCE_MODULES = [
     "military_ranks",
     "military_acronyms",
     "business_acronyms",
+    "colloquial_slang",
+    "government_acronyms",
+    "law_enforcement_codes",
     # Network-fetched, public-domain US gov + permissive
     "nasa_acronyms",
     "sec_edgar",
