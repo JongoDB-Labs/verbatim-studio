@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.sync import broadcast
@@ -684,6 +685,17 @@ async def permanently_delete_project(
     )
     for doc in live_doc_result.scalars():
         doc.project_id = None
+
+    # Drop the cached vocab-retrieval context vector for this project.
+    # The cache is otherwise content-addressed by hash, but a permanently
+    # deleted project will never be re-queried, so the row is dead weight.
+    try:
+        await db.execute(
+            sql_text("DELETE FROM project_context_embedding WHERE project_id = :pid"),
+            {"pid": project_id},
+        )
+    except Exception as e:
+        logger.debug(f"project_context_embedding cleanup skipped: {e}")
 
     await db.delete(project)
     await db.commit()

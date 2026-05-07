@@ -15,12 +15,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'scripts/build_vocab_corpus/**'
       - '.github/workflows/build-vocab-corpus.yml'
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write   # required for action-gh-release

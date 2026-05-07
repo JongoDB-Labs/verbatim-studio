@@ -34,6 +34,7 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
   const [error, setError] = useState<string | null>(null);
   const [officeLoading, setOfficeLoading] = useState(false);
   const [ocrRunning, setOcrRunning] = useState(false);
+  const [extractRunning, setExtractRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
@@ -85,6 +86,42 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
       console.error('Failed to start OCR:', err);
     } finally {
       setOcrRunning(false);
+    }
+  };
+
+  const handleExtractVocab = async () => {
+    if (!document || extractRunning) return;
+    setExtractRunning(true);
+    try {
+      const result = await api.dictionary.extractFromDocument(
+        documentId,
+        document.project_id ?? undefined,
+      );
+      const dedupedFromBundle = result.skipped_already_bundled;
+      const dedupedFromUser = result.skipped_already_user;
+      const summary = [
+        `Added ${result.accepted} new term${result.accepted === 1 ? '' : 's'} to your vocabulary.`,
+        `Considered ${result.candidates_proposed} candidate${result.candidates_proposed === 1 ? '' : 's'}.`,
+        dedupedFromBundle > 0 && `${dedupedFromBundle} already in bundled corpus.`,
+        dedupedFromUser > 0 && `${dedupedFromUser} already in your vocabulary.`,
+        result.skipped_common_english > 0 && `${result.skipped_common_english} skipped as common English.`,
+        result.errors.length > 0 && `${result.errors.length} error${result.errors.length === 1 ? '' : 's'} (see console).`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      if (result.errors.length > 0) {
+        console.error('Vocabulary extraction errors:', result.errors);
+      }
+      alert(summary);
+    } catch (err) {
+      console.error('Failed to extract vocabulary:', err);
+      alert(
+        err instanceof Error
+          ? `Vocabulary extraction failed: ${err.message}`
+          : 'Vocabulary extraction failed.',
+      );
+    } finally {
+      setExtractRunning(false);
     }
   };
 
@@ -407,6 +444,31 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
             </svg>
             Download
           </a>
+          {/* Extract vocabulary — runs Granite over the doc, dedupes,
+              adds new acronyms / proper nouns to the user's vocabulary */}
+          <button
+            onClick={handleExtractVocab}
+            disabled={extractRunning || document.status !== 'completed'}
+            title="Run AI vocabulary extraction over this document. New acronyms / proper nouns get added to your custom vocabulary so future transcriptions recognize them."
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {extractRunning ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Extracting…
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+                Extract vocabulary
+              </>
+            )}
+          </button>
           {/* Notes toggle button */}
           <button
             onClick={() => setShowNotes(!showNotes)}
