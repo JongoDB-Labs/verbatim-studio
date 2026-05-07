@@ -487,6 +487,126 @@ class ExtractFromDocResponse(BaseModel):
     errors: list[str] = []
 
 
+class CandidateOut(BaseModel):
+    term: str
+    evidence: str
+    classification: str  # "new" | "already_bundled" | "already_user" | "common_english" | "invalid"
+    bundled_match_id: str | None = None
+
+
+class PreviewExtractionResponse(BaseModel):
+    document_id: str
+    candidates: list[CandidateOut]
+    errors: list[str] = []
+
+
+class TermSubmission(BaseModel):
+    term: str
+    evidence: str | None = None
+    project_id: str | None = None
+
+
+class CommitTermsRequest(BaseModel):
+    terms: list[TermSubmission]
+    document_id: str | None = None
+
+
+@router.post("/extract-from-document/{document_id}/preview", response_model=PreviewExtractionResponse)
+async def preview_extraction_endpoint(
+    document_id: str,
+    project_id: Annotated[str | None, Query()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> PreviewExtractionResponse:
+    """Two-phase extraction step 1 — classify candidates without writing.
+
+    Returns the same candidate set extract_from_document would write,
+    but as a preview so the UI can present each term for user approval
+    before any vocabulary changes happen.
+    """
+    from persistence.models import Document
+    from sqlalchemy import select as _select
+
+    doc_row = await db.execute(_select(Document).where(Document.id == document_id))
+    doc = doc_row.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    document_text = (doc.extracted_text or "").strip()
+    if not document_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Document has no extracted text yet — upload still processing or extraction failed.",
+        )
+
+    if project_id is None:
+        project_id = doc.project_id
+
+    try:
+        from core.factory import get_factory
+        factory = get_factory()
+        ai_service = factory.create_ai_service()
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI service unavailable: {e}. Make sure a Granite model is downloaded in Settings → AI.",
+        )
+
+    from services.vocab_extraction import preview_extraction
+
+    preview = await preview_extraction(
+        db,
+        document_id=document_id,
+        document_text=document_text,
+        document_title=doc.title,
+        ai_service=ai_service,
+        project_id=project_id,
+    )
+    return PreviewExtractionResponse(
+        document_id=preview.document_id,
+        candidates=[
+            CandidateOut(
+                term=c.term,
+                evidence=c.evidence,
+                classification=c.classification,
+                bundled_match_id=c.bundled_match_id,
+            )
+            for c in preview.candidates
+        ],
+        errors=preview.errors,
+    )
+
+
+@router.post("/commit-extracted-terms", response_model=ExtractFromDocResponse)
+async def commit_extracted_terms_endpoint(
+    payload: CommitTermsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ExtractFromDocResponse:
+    """Two-phase extraction step 2 — write the user-approved subset.
+
+    Frontend posts the terms the user kept (after reviewing the preview);
+    backend re-validates each one and writes survivors to custom_dictionary.
+    """
+    from services.vocab_extraction import commit_terms as _commit
+
+    result = await _commit(
+        db,
+        terms=[t.model_dump() for t in payload.terms],
+        document_id=payload.document_id,
+    )
+
+    return ExtractFromDocResponse(
+        document_id=result.document_id,
+        candidates_proposed=result.candidates_proposed,
+        accepted=result.accepted,
+        skipped_already_bundled=result.skipped_already_bundled,
+        skipped_already_user=result.skipped_already_user,
+        skipped_invalid=result.skipped_invalid,
+        skipped_common_english=result.skipped_common_english,
+        new_term_ids=result.new_term_ids,
+        errors=result.errors,
+    )
+
+
 @router.post("/extract-from-document/{document_id}", response_model=ExtractFromDocResponse)
 async def extract_from_document_endpoint(
     document_id: str,

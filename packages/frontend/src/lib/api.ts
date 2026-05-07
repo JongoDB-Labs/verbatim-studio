@@ -1292,6 +1292,31 @@ export interface DictionaryCorpusStatus {
   download_url: string;
 }
 
+export type ExtractionCandidateClassification =
+  | 'new'
+  | 'already_bundled'
+  | 'already_user'
+  | 'common_english'
+  | 'invalid';
+
+export interface ExtractionCandidate {
+  term: string;
+  evidence: string;
+  classification: ExtractionCandidateClassification;
+  bundled_match_id: string | null;
+}
+
+export interface PreviewExtractionResponse {
+  document_id: string;
+  candidates: ExtractionCandidate[];
+  errors: string[];
+}
+
+export interface CommitTermsRequest {
+  terms: Array<{ term: string; evidence?: string; project_id?: string }>;
+  document_id?: string;
+}
+
 export type DictionaryCorpusDownloadEvent =
   | { status: 'starting' }
   | {
@@ -3490,6 +3515,28 @@ class ApiClient {
       return this.request<DictionaryExtractResponse>(
         `/api/dictionary/extract-from-document/${documentId}${qs}`,
         { method: 'POST' },
+      );
+    },
+
+    /** Two-phase extraction step 1: classify candidates without writing.
+     *  Returns the LLM output classified as new / already_bundled /
+     *  already_user / common_english / invalid so the UI can present
+     *  per-term yes/no decisions. */
+    previewExtraction: (documentId: string, projectId?: string) => {
+      const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+      return this.request<PreviewExtractionResponse>(
+        `/api/dictionary/extract-from-document/${documentId}/preview${qs}`,
+        { method: 'POST' },
+      );
+    },
+
+    /** Two-phase extraction step 2: write the user-approved subset.
+     *  Backend re-validates each term against the same gates as preview
+     *  before inserting (defense-in-depth — the wire isn't trusted). */
+    commitExtractedTerms: (request: CommitTermsRequest) => {
+      return this.request<DictionaryExtractResponse>(
+        '/api/dictionary/commit-extracted-terms',
+        { method: 'POST', body: JSON.stringify(request) },
       );
     },
 

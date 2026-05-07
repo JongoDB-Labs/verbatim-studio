@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate, type DictionaryEntry, type PostTranscriptionSettings } from '@/lib/api';
+import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate, type DictionaryEntry, type PostTranscriptionSettings, type ExtractionCandidate, type Project } from '@/lib/api';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useKeybindingStore, DEFAULT_ACTIONS, formatCombo, type KeyCombo, type ActionCategory } from '@/stores/keybindingStore';
 import { StorageTypeSelector } from '@/components/storage/StorageTypeSelector';
@@ -310,6 +310,20 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
   // doc-extracted via Phase C).
   const [dictEntries, setDictEntries] = useState<DictionaryEntry[]>([]);
 
+  // Drop-zone driven extraction flow — upload a doc, get classified
+  // candidates back, user yes/no per term + optional project assignment,
+  // commit selected. Three discrete phases: upload, preview, review.
+  const [extractDragOver, setExtractDragOver] = useState(false);
+  const [extractPhase, setExtractPhase] = useState<'idle' | 'uploading' | 'analyzing' | 'reviewing' | 'committing'>('idle');
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [extractDocId, setExtractDocId] = useState<string | null>(null);
+  const [extractCandidates, setExtractCandidates] = useState<ExtractionCandidate[]>([]);
+  const [extractSelected, setExtractSelected] = useState<Set<string>>(new Set());
+  const [extractTargetProjectId, setExtractTargetProjectId] = useState<string>('');
+  const [extractFilename, setExtractFilename] = useState<string | null>(null);
+  const [availableProjects, setAvailableProjects] = useState<Project[]>([]);
+  const extractFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Full embedded-corpus download state. The installer ships the slim
   // BM25-only DB; this surface lets users opt into the ~1.1 GB hybrid
   // variant from verbatim-studio-releases.
@@ -494,6 +508,15 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
     }
   }, []);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      const r = await api.projects.list();
+      setAvailableProjects(r.items.filter((p) => !p.is_archived));
+    } catch (err) {
+      console.error('Failed to load projects for vocab extraction:', err);
+    }
+  }, []);
+
   const loadPostTxSettings = useCallback(async () => {
     try {
       const data = await api.postTranscription.get();
@@ -515,6 +538,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
     api.config.getTranscription().then(setTxSettings).catch(console.error);
     loadDictionary();
     loadCorpusStatus();
+    loadProjects();
     loadPostTxSettings();
     api.ai.listModels().then((r) => setAiModels(r.models)).catch(console.error);
     api.config.getAI().then(setAiSettings).catch(console.error);
@@ -544,7 +568,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       api.system.gpuStatus().then(setGpuStatus).catch(console.error);
     }
     loadStorageLocations();
-  }, [loadStorageLocations, loadDictionary, loadCorpusStatus, loadPostTxSettings]);
+  }, [loadStorageLocations, loadDictionary, loadCorpusStatus, loadProjects, loadPostTxSettings]);
 
   // Load update settings on mount
   useEffect(() => {
@@ -820,6 +844,128 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       setDictEntries([]);
     } catch (err) {
       console.error('Failed to clear dictionary:', err);
+    }
+  };
+
+  const resetExtractFlow = () => {
+    setExtractPhase('idle');
+    setExtractError(null);
+    setExtractDocId(null);
+    setExtractCandidates([]);
+    setExtractSelected(new Set());
+    setExtractTargetProjectId('');
+    setExtractFilename(null);
+  };
+
+  const runExtractFlow = async (file: File) => {
+    setExtractError(null);
+    setExtractFilename(file.name);
+    setExtractPhase('uploading');
+    let doc;
+    try {
+      doc = await api.documents.upload(file, file.name, undefined, true);
+    } catch (err) {
+      setExtractError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+      setExtractPhase('idle');
+      return;
+    }
+    setExtractDocId(doc.id);
+
+    // Wait for the document to finish text extraction. Status moves
+    // through pending → processing → completed (or failed). Poll every
+    // 1.5s until the status changes or we time out.
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 90_000;
+    let processedDoc = doc;
+    while (processedDoc.status !== 'completed' && processedDoc.status !== 'failed') {
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        setExtractError('Document processing timed out. Try a smaller file.');
+        setExtractPhase('idle');
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        processedDoc = await api.documents.get(doc.id);
+      } catch (err) {
+        setExtractError(`Status check failed: ${err instanceof Error ? err.message : String(err)}`);
+        setExtractPhase('idle');
+        return;
+      }
+    }
+
+    if (processedDoc.status === 'failed') {
+      setExtractError(`Document processing failed: ${processedDoc.error_message ?? 'unknown error'}`);
+      setExtractPhase('idle');
+      return;
+    }
+
+    setExtractPhase('analyzing');
+    try {
+      const preview = await api.dictionary.previewExtraction(doc.id);
+      setExtractCandidates(preview.candidates);
+      // Default-select all "new" candidates; leave dedupe candidates
+      // unchecked so the user is opt-in for the redundant ones.
+      const defaults = new Set(
+        preview.candidates.filter((c) => c.classification === 'new').map((c) => c.term),
+      );
+      setExtractSelected(defaults);
+      if (preview.candidates.length === 0) {
+        setExtractError(
+          preview.errors.length > 0
+            ? `No candidates extracted. Errors: ${preview.errors.join('; ')}`
+            : 'No candidates extracted from this document.',
+        );
+      }
+      setExtractPhase('reviewing');
+    } catch (err) {
+      setExtractError(`Extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+      setExtractPhase('idle');
+    }
+  };
+
+  const handleExtractFileChosen = (file: File | null) => {
+    if (!file) return;
+    runExtractFlow(file);
+  };
+
+  const handleExtractDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setExtractDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) runExtractFlow(file);
+  };
+
+  const toggleCandidate = (term: string) => {
+    setExtractSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(term)) next.delete(term);
+      else next.add(term);
+      return next;
+    });
+  };
+
+  const handleCommitExtraction = async () => {
+    if (extractSelected.size === 0) return;
+    setExtractPhase('committing');
+    setExtractError(null);
+    const projectId = extractTargetProjectId || undefined;
+    const terms = extractCandidates
+      .filter((c) => extractSelected.has(c.term))
+      .map((c) => ({ term: c.term, evidence: c.evidence, project_id: projectId }));
+    try {
+      const result = await api.dictionary.commitExtractedTerms({
+        terms,
+        document_id: extractDocId ?? undefined,
+      });
+      const summary = `Added ${result.accepted} term${result.accepted === 1 ? '' : 's'}. ` +
+        (result.skipped_already_user > 0 ? `${result.skipped_already_user} already in your vocabulary. ` : '') +
+        (result.skipped_already_bundled > 0 ? `${result.skipped_already_bundled} already in bundled corpus. ` : '');
+      alert(summary.trim());
+      await loadDictionary();
+      resetExtractFlow();
+    } catch (err) {
+      setExtractError(`Commit failed: ${err instanceof Error ? err.message : String(err)}`);
+      setExtractPhase('reviewing');
     }
   };
 
@@ -1873,6 +2019,167 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
                 </button>
               )}
             </div>
+
+            {/* Drop zone — quick path: drag a doc here, get a preview of
+                extracted terms with per-term yes/no, optionally assign to
+                a project. Bypasses the documents page round-trip when
+                the user just wants to feed terms into vocab. */}
+            {extractPhase === 'idle' && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setExtractDragOver(true); }}
+                onDragLeave={() => setExtractDragOver(false)}
+                onDrop={handleExtractDrop}
+                onClick={() => extractFileInputRef.current?.click()}
+                className={`mt-4 rounded-lg border-2 border-dashed p-5 text-center cursor-pointer transition-colors ${
+                  extractDragOver
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500'
+                }`}
+              >
+                <input
+                  ref={extractFileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => handleExtractFileChosen(e.target.files?.[0] ?? null)}
+                  accept=".pdf,.docx,.doc,.txt,.md,.csv,.pptx,.xlsx,.rtf,application/pdf"
+                />
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                  Drop a document here or click to upload
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Verbatim will extract candidate terms and let you choose what to add. PDF, DOCX, PPTX, XLSX, TXT, MD, RTF supported.
+                </p>
+              </div>
+            )}
+
+            {(extractPhase === 'uploading' || extractPhase === 'analyzing') && (
+              <div className="mt-4 rounded-lg border border-gray-300 dark:border-gray-600 p-5 text-center">
+                <svg className="w-6 h-6 animate-spin text-blue-500 mx-auto" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="mt-2 text-sm text-gray-700 dark:text-gray-200">
+                  {extractPhase === 'uploading' ? 'Uploading' : 'Analyzing with AI'}
+                  {extractFilename ? `: ${extractFilename}` : '…'}
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {extractPhase === 'uploading'
+                    ? 'Document is uploading and processing for text extraction.'
+                    : 'Running Granite-Tiny over the document text. Typically 5–30 seconds.'}
+                </p>
+              </div>
+            )}
+
+            {extractPhase === 'reviewing' && (
+              <div className="mt-4 rounded-lg border border-gray-300 dark:border-gray-600 p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Review candidates {extractFilename && <span className="text-gray-500 dark:text-gray-400 font-normal">— {extractFilename}</span>}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {extractCandidates.length} candidate{extractCandidates.length === 1 ? '' : 's'} found.
+                      Toggle each one and pick a project (optional, otherwise global).
+                    </p>
+                  </div>
+                  <button
+                    onClick={resetExtractFlow}
+                    className="flex-shrink-0 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                {extractError && (
+                  <p className="mb-3 text-xs text-red-600 dark:text-red-400">{extractError}</p>
+                )}
+
+                {extractCandidates.length > 0 && (
+                  <>
+                    <div className="mb-3 flex items-center gap-3 text-xs">
+                      <label className="text-gray-700 dark:text-gray-300">Project:</label>
+                      <select
+                        value={extractTargetProjectId}
+                        onChange={(e) => setExtractTargetProjectId(e.target.value)}
+                        className="flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                      >
+                        <option value="">No project (available everywhere)</option>
+                        {availableProjects.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded">
+                      {extractCandidates.map((c) => {
+                        const checked = extractSelected.has(c.term);
+                        const badge =
+                          c.classification === 'new' ? { text: 'new', cls: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' } :
+                          c.classification === 'already_bundled' ? { text: 'in bundled corpus', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' } :
+                          c.classification === 'already_user' ? { text: 'already added', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' } :
+                          c.classification === 'common_english' ? { text: 'common English', cls: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400' } :
+                          { text: 'invalid', cls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' };
+                        const disabled = c.classification === 'invalid' || c.classification === 'common_english';
+                        return (
+                          <label
+                            key={c.term}
+                            className={`flex items-start gap-2 p-2 border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={() => toggleCandidate(c.term)}
+                              className="mt-0.5 flex-shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{c.term}</span>
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.cls}`}>
+                                  {badge.text}
+                                </span>
+                              </div>
+                              {c.evidence && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400 truncate" title={c.evidence}>
+                                  “{c.evidence}”
+                                </p>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {extractSelected.size} of {extractCandidates.length} selected
+                      </span>
+                      <button
+                        onClick={handleCommitExtraction}
+                        disabled={extractSelected.size === 0}
+                        className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg"
+                      >
+                        Add {extractSelected.size} term{extractSelected.size === 1 ? '' : 's'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {extractPhase === 'committing' && (
+              <div className="mt-4 rounded-lg border border-gray-300 dark:border-gray-600 p-5 text-center">
+                <svg className="w-6 h-6 animate-spin text-blue-500 mx-auto" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="mt-2 text-sm text-gray-700 dark:text-gray-200">Adding {extractSelected.size} term{extractSelected.size === 1 ? '' : 's'} to your vocabulary…</p>
+              </div>
+            )}
+
+            {extractError && extractPhase === 'idle' && (
+              <p className="mt-3 text-xs text-red-600 dark:text-red-400">{extractError}</p>
+            )}
           </div>
         </div>
 

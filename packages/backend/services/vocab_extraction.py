@@ -96,6 +96,32 @@ class ExtractionResult:
     errors: list[str]
 
 
+@dataclass
+class CandidateClassification:
+    """One extracted term with its dedup classification — used by the
+    preview path that returns candidates for the user to approve before
+    writing. Mirrors the gates inside extract_from_document() but
+    doesn't touch the user dictionary."""
+
+    term: str
+    evidence: str
+    # One of: "new", "already_bundled", "already_user", "common_english",
+    # "invalid". The frontend uses this to decide the default checkbox
+    # state (only "new" is checked by default).
+    classification: str
+    bundled_match_id: str | None = None
+
+
+@dataclass
+class PreviewResult:
+    """Outcome of preview_extraction — returned to the UI without any
+    DB writes."""
+
+    document_id: str
+    candidates: list[CandidateClassification]
+    errors: list[str]
+
+
 # ── Chunking + LLM call ─────────────────────────────────────────────
 
 
@@ -433,6 +459,154 @@ async def extract_from_document(
         result.skipped_invalid,
         result.skipped_common_english,
     )
+    return result
+
+
+async def preview_extraction(
+    db: AsyncSession,
+    *,
+    document_id: str,
+    document_text: str,
+    document_title: str | None,
+    ai_service,
+    project_id: str | None = None,
+) -> PreviewResult:
+    """Two-phase extraction step 1 — classify candidates without writing.
+
+    Runs the same LLM pipeline as extract_from_document but returns the
+    classified candidate list to the caller for UI approval. Pair with
+    commit_terms() to actually write the user-approved subset.
+    """
+    out = PreviewResult(document_id=document_id, candidates=[], errors=[])
+
+    if not document_text or not document_text.strip():
+        out.errors.append("empty document text")
+        return out
+
+    chunks = _chunk_text(document_text)
+    logger.info("preview_extraction: %d chunks for document %s", len(chunks), document_id)
+
+    all_candidates: list[ExtractedTerm] = []
+    for idx, chunk in enumerate(chunks):
+        try:
+            candidates = await _extract_chunk(ai_service, chunk, idx)
+            all_candidates.extend(candidates)
+        except Exception as e:
+            out.errors.append(f"chunk {idx}: {e}")
+        if len(all_candidates) > 1000:
+            logger.warning("preview_extraction: 1000+ candidates from doc %s — capping", document_id)
+            break
+
+    if not all_candidates:
+        return out
+
+    # Dedupe within the LLM's own output — same term may surface in many chunks.
+    seen_in_doc: dict[str, ExtractedTerm] = {}
+    for c in all_candidates:
+        key = c.term.strip().lower()
+        if key not in seen_in_doc:
+            seen_in_doc[key] = c
+
+    try:
+        from services.vocab_retrieval import _open_bundled_conn
+        bundled_conn, _ = _open_bundled_conn()
+    except Exception:
+        bundled_conn = None
+
+    for raw_term, ext in seen_in_doc.items():
+        if not _looks_extractable(ext.term):
+            out.candidates.append(CandidateClassification(
+                term=ext.term, evidence=ext.evidence, classification="invalid",
+            ))
+            continue
+        if _is_common_english(ext.term):
+            out.candidates.append(CandidateClassification(
+                term=ext.term, evidence=ext.evidence, classification="common_english",
+            ))
+            continue
+        if await _exists_in_user(db, ext.term, project_id):
+            out.candidates.append(CandidateClassification(
+                term=ext.term, evidence=ext.evidence, classification="already_user",
+            ))
+            continue
+        bundled_id = await _dedupe_against_bundled(bundled_conn, ext.term)
+        if bundled_id:
+            out.candidates.append(CandidateClassification(
+                term=ext.term, evidence=ext.evidence,
+                classification="already_bundled", bundled_match_id=bundled_id,
+            ))
+            continue
+        out.candidates.append(CandidateClassification(
+            term=ext.term, evidence=ext.evidence, classification="new",
+        ))
+
+    return out
+
+
+async def commit_terms(
+    db: AsyncSession,
+    *,
+    terms: list[dict],
+    document_id: str | None = None,
+) -> ExtractionResult:
+    """Two-phase extraction step 2 — write the user-approved subset.
+
+    Each entry in *terms* must have {term, evidence?, project_id?}. The
+    function re-validates each term against the same gates as
+    preview_extraction (defense-in-depth — the UI shouldn't send invalid
+    terms but we don't trust the wire), and writes survivors to
+    custom_dictionary.
+    """
+    result = ExtractionResult(
+        document_id=document_id or "",
+        candidates_proposed=len(terms),
+        accepted=0,
+        skipped_already_bundled=0,
+        skipped_already_user=0,
+        skipped_invalid=0,
+        skipped_common_english=0,
+        new_term_ids=[],
+        errors=[],
+    )
+
+    try:
+        from services.vocab_retrieval import _open_bundled_conn
+        bundled_conn, _ = _open_bundled_conn()
+    except Exception:
+        bundled_conn = None
+
+    for entry in terms:
+        term = (entry.get("term") or "").strip()
+        evidence = (entry.get("evidence") or "").strip()
+        project_id = entry.get("project_id")
+        if not term:
+            result.skipped_invalid += 1
+            continue
+        if not _looks_extractable(term):
+            result.skipped_invalid += 1
+            continue
+        if _is_common_english(term):
+            result.skipped_common_english += 1
+            continue
+        if await _exists_in_user(db, term, project_id):
+            result.skipped_already_user += 1
+            continue
+        bundled_id = await _dedupe_against_bundled(bundled_conn, term)
+        if bundled_id:
+            await _attach_user_pin(db, term, bundled_id, evidence, project_id, document_id or "")
+            result.skipped_already_bundled += 1
+            continue
+        new_id = await _insert_user_term(db, term, evidence, project_id, document_id or "")
+        if new_id:
+            result.accepted += 1
+            result.new_term_ids.append(new_id)
+
+    try:
+        await db.commit()
+    except Exception as e:
+        logger.warning("commit_terms: commit failed: %s", e)
+        result.errors.append(f"commit: {e}")
+
     return result
 
 
