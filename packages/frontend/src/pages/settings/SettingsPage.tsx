@@ -14,6 +14,7 @@ interface SettingsPageProps {
   theme: 'light' | 'dark' | 'system';
   onThemeChange: (theme: 'light' | 'dark' | 'system') => void;
   pluginSettingsTabs?: Array<{ id: string; label: string; icon: string }>;
+  onNavigateToDocuments?: () => void;
 }
 
 // Languages supported by WhisperX
@@ -285,7 +286,7 @@ function TrashSettings() {
   );
 }
 
-export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: SettingsPageProps) {
+export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavigateToDocuments }: SettingsPageProps) {
   const [settings, setSettings] = useState(() => getStoredSettings());
   const [saved, setSaved] = useState(false);
 
@@ -839,6 +840,15 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       } else if (event.status === 'complete') {
         setCorpusDownloading(false);
         setCorpusProgress(null);
+        // Optimistic update — flip the tile immediately based on what the
+        // download said, then reconcile with a fresh status fetch in case
+        // the post-download probe disagrees (e.g. file-system flush race).
+        setCorpusStatus({
+          downloaded: true,
+          downloading: false,
+          has_embeddings: event.has_embeddings,
+          bytes_on_disk: event.bytes_on_disk,
+        });
         loadCorpusStatus();
       } else if (event.status === 'error') {
         setCorpusError(event.message);
@@ -1836,23 +1846,32 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
         </div>
 
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
-          <div className="flex items-start gap-3">
-            <div className="text-2xl" aria-hidden>📚</div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                Add domain-specific terms by uploading a document
-              </p>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Upload an OPORD, an SOP, a meeting brief, a regulation manual — anything
-                that contains the acronyms or proper nouns your team uses. Verbatim's
-                AI extracts the new terms, dedupes against the bundled corpus, and
-                adds the rest to your vocabulary. Documents must be uploaded under a
-                project first; extraction runs on existing documents.
-              </p>
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                Tip: if you correct a transcribed word manually, Verbatim auto-adds it
-                to your vocabulary too — no separate step needed.
-              </p>
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  Add domain-specific terms by uploading a document
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Upload an OPORD, an SOP, a meeting brief, a regulation manual — anything
+                  that contains the acronyms or proper nouns your team uses. Verbatim's
+                  AI extracts the new terms, dedupes against the bundled corpus, and
+                  adds the rest to your vocabulary. Documents must be uploaded under a
+                  project first; extraction runs from the document viewer.
+                </p>
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Tip: if you correct a transcribed word manually, Verbatim auto-adds it
+                  to your vocabulary too — no separate step needed.
+                </p>
+              </div>
+              {onNavigateToDocuments && (
+                <button
+                  onClick={onNavigateToDocuments}
+                  className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg whitespace-nowrap"
+                >
+                  Manage documents
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1862,8 +1881,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
             hybrid (BM25 + cosine) by pulling the embedded variant from
             verbatim-studio-releases. */}
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
-          <div className="flex items-start gap-3">
-            <div className="text-2xl" aria-hidden>🧠</div>
+          <div>
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">

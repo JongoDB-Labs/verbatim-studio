@@ -737,7 +737,12 @@ function AppContent() {
                   />
                 )}
                 {navigation.type === 'settings' && (
-                  <SettingsPage theme={theme} onThemeChange={setTheme} pluginSettingsTabs={pluginManifest.settings_tabs} />
+                  <SettingsPage
+                    theme={theme}
+                    onThemeChange={setTheme}
+                    pluginSettingsTabs={pluginManifest.settings_tabs}
+                    onNavigateToDocuments={handleNavigateToDocuments}
+                  />
                 )}
                 {navigation.type === 'plugin' && (() => {
                   const routeConfig = getPluginRouteConfig(navigation.pluginRoute, pluginManifest);

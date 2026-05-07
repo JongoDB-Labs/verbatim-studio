@@ -673,21 +673,23 @@ async def get_corpus_status() -> CorpusStatusResponse:
 
     has_embeddings = False
     if downloaded:
-        # Probe the vec table to confirm this isn't a stale slim copy.
+        # Probe sqlite_master directly — the vec virtual table appears in
+        # the catalog even without the sqlite-vec extension loaded, so we
+        # don't depend on extension-loading capability or URI-mode quirks
+        # (URI mode + paths with spaces / unicode is a known foot-gun).
         import sqlite3
         try:
-            conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+            conn = sqlite3.connect(str(target))
             try:
-                conn.enable_load_extension(True)
-                import sqlite_vec
-                sqlite_vec.load(conn)
-                conn.execute("SELECT 1 FROM vocab_bundled_vec LIMIT 1").fetchone()
-                has_embeddings = True
-            except Exception:
-                has_embeddings = False
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE name = 'vocab_bundled_vec' AND type = 'table' LIMIT 1"
+                ).fetchone()
+                has_embeddings = row is not None
             finally:
                 conn.close()
-        except Exception:
+        except Exception as e:
+            logger.warning("corpus status probe failed for %s: %s", target, e)
             has_embeddings = False
 
     return CorpusStatusResponse(
