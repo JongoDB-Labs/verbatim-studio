@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Iterable
@@ -330,6 +331,38 @@ def _strip_punctuation(word: str) -> tuple[str, str, str]:
     return leading, word[i:j], trailing
 
 
+def _looks_like_acronym_misread(core: str) -> bool:
+    """Bypass-gate-1 heuristic.
+
+    Returns True if the token is shape-likely to be an acronym misread
+    (or a legitimate acronym) that confidence-based filtering would
+    block. Loose by design — gate 2 (standard English wordlist) and
+    gate 3 (phonetic match + edit distance) provide the downstream
+    filtering. We'd rather over-report here and have gate 2 reject
+    "Hello" / "John" than miss the actual misreads.
+
+    Two shapes:
+
+    1. All-uppercase 3-10 chars (FBI, NATO, MCTSSA) — already-correct
+       acronyms that need a re-check for case-folded user-dictionary
+       matches.
+    2. Capitalized 3-12 chars (Mctissa, Marfor, Adsep, John, Hello) —
+       the misread shape. Standard-English words like "John" / "Hello"
+       fall out at gate 2.
+    """
+    if not core or len(core) < 3 or len(core) > 12:
+        return False
+    if not core.isalnum():
+        return False
+    # All uppercase 3-10 chars
+    if core.isupper() and len(core) <= 10:
+        return True
+    # Capitalized first letter (any case in the rest)
+    if core[0].isupper() and not core.isupper():
+        return True
+    return False
+
+
 def _should_correct(
     raw_word: str,
     confidence: float,
@@ -344,20 +377,30 @@ def _should_correct(
 
     Gates:
       1. Whisper confidence below threshold
+         (with an acronym-shape bypass — see below)
       2. Word not in standard English dictionary
       3. Phonetic match to a dictionary term, with bounded edit distance
 
     All three must fire. Order matters for short-circuit performance.
-    """
-    # Gate 1 — confidence threshold
-    if confidence is None or confidence > threshold:
-        return None
 
+    Gate 1 has one bypass: acronym-shape tokens (all-caps short, or
+    Capitalized-non-English pseudo-words like "Mctissa") are evaluated
+    regardless of confidence. Whisper is *confident* in those misreads
+    because they look like plausible English words — but they're
+    almost always misrenderings of acronyms. Gates 2 + 3 are still
+    enough to prevent us from rewriting real proper nouns.
+    """
     _, core, _ = _strip_punctuation(raw_word)
     if len(core) < MIN_WORD_LEN:
         return None
 
     core_lower = core.lower()
+
+    # Gate 1 — confidence threshold (with acronym-shape bypass).
+    is_acronym_shape = _looks_like_acronym_misread(core)
+    if not is_acronym_shape:
+        if confidence is None or confidence > threshold:
+            return None
 
     # Gate 2 — not a normal English word.
     # If the wordlist isn't loaded, we skip this gate but log it once.

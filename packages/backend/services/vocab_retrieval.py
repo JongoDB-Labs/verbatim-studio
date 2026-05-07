@@ -444,6 +444,58 @@ def _popularity_floor_query(
         return []
 
 
+def _acronym_safety_query(
+    conn: sqlite3.Connection, per_category: int = 5,
+) -> list[sqlite3.Row]:
+    """Stratified acronym pull, top-N per non-aviation category.
+
+    Acronyms are the highest-loss class for transcription accuracy —
+    Whisper hallucinates pseudo-words like "Mctissa" for MCTSSA. Those
+    pseudo-words pass the Phase 2 confidence gate (because Whisper is
+    confident in its plausible-English guess), so the only way Phase 2
+    can correct them is if the canonical acronym is in the dictionary
+    entries.
+
+    Without this query, acronyms only surface when BM25 or cosine
+    retrieval pulls them — meaning the user's project context has to
+    trip a military / medical / legal signal for MCTSSA to be
+    reachable. Empirically that fails when the project description
+    is generic ("team standup", "Friday call"). Hard-pinning per-
+    category top acronyms closes that gap.
+
+    Stratification by category prevents one source (aviation airport
+    codes have pop=0.90 across all 85k entries) from dominating the
+    pool. Aviation is excluded entirely — airport codes are highly
+    project-specific and rarely surface as transcription false
+    friends. Other categories each contribute their top-N.
+    """
+    categories = (
+        "military", "government", "business", "tech",
+        "medical", "legal", "law_enforcement", "general",
+        "proper_nouns", "science",
+    )
+    rows: list[sqlite3.Row] = []
+    try:
+        for cat in categories:
+            cur = conn.execute(
+                "SELECT id, term, canonical_form, category, sounds_like, "
+                "       metaphone_primary, metaphone_secondary, "
+                "       popularity_score "
+                "FROM vocab_bundled "
+                "WHERE category = ? "
+                "  AND term GLOB '[A-Z][A-Z0-9]*' "
+                "  AND length(term) BETWEEN 3 AND 10 "
+                "  AND popularity_score >= 0.50 "
+                "ORDER BY popularity_score DESC, RANDOM() "
+                "LIMIT ?",
+                (cat, per_category),
+            )
+            rows.extend(cur.fetchall())
+    except sqlite3.Error as e:
+        logger.debug("vocab_retrieval: acronym safety query failed: %s", e)
+    return rows
+
+
 def _category_broadcast_query(
     conn: sqlite3.Connection,
     categories: list[str],
@@ -562,6 +614,7 @@ async def retrieve_for_project(
     bm25_rows = _bm25_query(conn, plain, limit=BM25_POOL) if plain else []
     cosine_rows = _vec_query(conn, vector or [], limit=COSINE_POOL) if (has_vec and vector) else []
     popular_rows = _popularity_floor_query(conn, POPULARITY_FLOOR)
+    acronym_rows = _acronym_safety_query(conn, per_category=15)
     user_rows = await _load_user_rows(db, project_id=project_id)
 
     # Category broadcast: when BM25 results cluster in a few categories,
@@ -601,6 +654,8 @@ async def retrieve_for_project(
         by_id.setdefault(str(r["id"]), r)
     for r in popular_rows:
         by_id.setdefault(str(r["id"]), r)
+    for r in acronym_rows:
+        by_id.setdefault(str(r["id"]), r)
     for r in broadcast_rows:
         by_id.setdefault(str(r["id"]), r)
 
@@ -615,6 +670,23 @@ async def retrieve_for_project(
             continue
         seen_keys.add(key)
         out.append(_user_row_to_retrieved(ur, score=RANK_IS_USER + RANK_USAGE * (ur["usage_count"] or 0) / 100.0))
+
+    # Acronym safety tier — also pinned. These always belong in the
+    # dictionary regardless of project-context-driven ranking; they're
+    # the highest-loss class and Whisper hallucinations of acronyms
+    # bypass the Phase 2 confidence gate, so pinning them is the only
+    # way Phase 2 can repair "Mctissa" → MCTSSA when the project's
+    # context didn't trip a military signal.
+    pinned_acronyms = 0
+    for ar in acronym_rows:
+        key = str(ar["id"])
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        out.append(_row_to_retrieved(ar, is_user=False, score=RANK_POPULARITY * (ar["popularity_score"] or 0)))
+        pinned_acronyms += 1
+        if pinned_acronyms >= 30:
+            break
 
     # Bundled candidates ranked by combined score.
     bundled_scored: list[tuple[float, RetrievedTerm]] = []
@@ -646,10 +718,11 @@ async def retrieve_for_project(
 
     logger.info(
         "vocab_retrieval: project=%s mode=%s bm25=%d vec=%d popular=%d "
-        "broadcast=%d (cats=%s) user=%d → returned=%d",
+        "acronyms=%d broadcast=%d (cats=%s) user=%d → returned=%d",
         project_id or "global",
         "hybrid" if (has_vec and vector) else ("bm25-only" if plain else "fallback"),
         len(bm25_rows), len(cosine_rows), len(popular_rows),
+        len(acronym_rows),
         len(broadcast_rows), ",".join(dominant_cats) if dominant_cats else "—",
         len(user_rows), len(out),
     )
