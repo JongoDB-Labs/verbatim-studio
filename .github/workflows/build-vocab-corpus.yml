@@ -93,6 +93,34 @@ jobs:
           conn.close()
           PYEOF
 
+      - name: Require embeddings on tag push
+        # The build script silently degrades to BM25-only when the
+        # embedder isn't importable (we hit this once: services.embedding
+        # pulled SQLAlchemy → ModuleNotFoundError → 0 embeddings, but the
+        # workflow still exited 0 because "no vec table" is a valid
+        # graceful-degradation state). Tag pushes are user-facing
+        # releases — embeddings are non-negotiable there.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python <<'PYEOF'
+          import sqlite3, sys
+          conn = sqlite3.connect("assets/vocab_bundled.db")
+          try:
+              import sqlite_vec
+              conn.enable_load_extension(True)
+              sqlite_vec.load(conn)
+              (n_vec,) = conn.execute("SELECT COUNT(*) FROM vocab_bundled_vec").fetchone()
+          except Exception as e:
+              print(f"::error::sqlite_vec unavailable or vec table missing: {e}")
+              sys.exit(1)
+          (n_terms,) = conn.execute("SELECT COUNT(*) FROM vocab_bundled").fetchone()
+          if n_vec < n_terms * 0.99:
+              print(f"::error::Embedded only {n_vec}/{n_terms} terms (<99%) — refusing to ship corpus without embeddings on a tag push")
+              sys.exit(1)
+          print(f"Embeddings OK: {n_vec:,}/{n_terms:,} terms have vectors")
+          conn.close()
+          PYEOF
+
       - name: Build slim variant (BM25-only) for installer
         run: |
           python -m scripts.build_vocab_corpus.strip_embeddings \
