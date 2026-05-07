@@ -673,10 +673,22 @@ def iter_terms() -> Iterable[RawTerm]:
             sounds_like = list(hints)
         # All curated military acronyms get a high popularity score —
         # they're equally likely to surface in real spoken usage and
-        # equally likely to be misrecognized by Whisper. The earlier
-        # tier-by-subcat split (docs at 0.85, units at 0.70) penalized
-        # MCTSSA / MCWL / MARFORPAC unfairly.
-        score = 0.85
+        # equally likely to be misrecognized by Whisper.
+        #
+        # Critical-class acronyms get a 0.95 boost so they always
+        # surface in the per-category safety pool (which limits to
+        # top-N by popularity). These are acronyms with a history of
+        # confident-Whisper misreads ("MCTSSA" → "Mctissa"), where
+        # absence from the dictionary directly produces a transcription
+        # error in real user recordings. List grows as we observe more
+        # regression cases.
+        critical = {
+            "MCTSSA", "MCWL", "MARFORPAC", "MARCORSEPMAN", "MARADMIN",
+            "MARCORSYSCOM", "MARCORMAN", "MARDEPMAN", "MARFORLANT",
+            "MARFORRES", "ADSEP", "MCTP", "MCWP", "MCDP", "MCRP",
+            "MCBUL", "MCO", "USAFRICOM", "USCENTCOM", "USPACOM",
+        }
+        score = 0.95 if canonical in critical else 0.85
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,

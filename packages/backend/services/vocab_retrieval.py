@@ -486,7 +486,13 @@ def _acronym_safety_query(
                 "  AND term GLOB '[A-Z][A-Z0-9]*' "
                 "  AND length(term) BETWEEN 3 AND 10 "
                 "  AND popularity_score >= 0.50 "
-                "ORDER BY popularity_score DESC, RANDOM() "
+                # Deterministic order — popularity desc, then term asc.
+                # Random tiebreakers hid critical terms (MCTSSA at 0.85
+                # was at the mercy of RANDOM() against ~375 0.85 peers
+                # in the military category). Critical class terms get
+                # bumped to 0.95 in their source modules so they
+                # outrank the 0.85 mass and surface deterministically.
+                "ORDER BY popularity_score DESC, term ASC "
                 "LIMIT ?",
                 (cat, per_category),
             )
