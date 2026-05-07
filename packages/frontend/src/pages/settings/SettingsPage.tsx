@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getApiUrl, DICTIONARY_PRIORITIES, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate, type DictionaryEntry, type DictionaryCategory, type PostTranscriptionSettings } from '@/lib/api';
+import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate, type DictionaryEntry, type PostTranscriptionSettings } from '@/lib/api';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useKeybindingStore, DEFAULT_ACTIONS, formatCombo, type KeyCombo, type ActionCategory } from '@/stores/keybindingStore';
 import { StorageTypeSelector } from '@/components/storage/StorageTypeSelector';
@@ -303,14 +303,11 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   const [showHfToken, setShowHfToken] = useState(false);
   const [hfTokenInput, setHfTokenInput] = useState('');
 
-  // Custom Dictionary state
+  // Custom Vocabulary state — only tracks USER ADDITIONS now.
+  // The bundled 339k-term corpus is opaque to the user; we surface
+  // here only what they've added (auto-learned from corrections or
+  // doc-extracted via Phase C).
   const [dictEntries, setDictEntries] = useState<DictionaryEntry[]>([]);
-  const [dictTerm, setDictTerm] = useState('');
-  const [dictCategory, setDictCategory] = useState('general');
-  const [dictSoundsLike, setDictSoundsLike] = useState('');
-  const [dictPriority, setDictPriority] = useState<number>(0);
-  const [dictLoading, setDictLoading] = useState(false);
-  const dictFileInputRef = useRef<HTMLInputElement>(null);
 
   // Post-Transcription Automation state
   const [postTxSettings, setPostTxSettings] = useState<PostTranscriptionSettings>({
@@ -771,48 +768,11 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     }
   }, [hfTokenInput]);
 
-  // Dictionary handlers
-  const handleAddDictTerm = async () => {
-    if (!dictTerm.trim()) return;
-    setDictLoading(true);
-    try {
-      const soundsLike = dictSoundsLike
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      await api.dictionary.add({
-        term: dictTerm.trim(),
-        category: dictCategory as DictionaryCategory,
-        soundsLike,
-        priority: dictPriority,
-      });
-      setDictTerm('');
-      setDictSoundsLike('');
-      setDictPriority(0);
-      await loadDictionary();
-    } catch (err) {
-      console.error('Failed to add dictionary term:', err);
-    } finally {
-      setDictLoading(false);
-    }
-  };
-
-  const handleImportDictCsv = async (file: File) => {
-    setDictLoading(true);
-    try {
-      const result = await api.dictionary.importCsv(file);
-      const detail = result.errors.length > 0
-        ? `\nErrors:\n${result.errors.slice(0, 5).join('\n')}${result.errors.length > 5 ? `\n…and ${result.errors.length - 5} more` : ''}`
-        : '';
-      alert(`Imported ${result.imported}, skipped ${result.skipped}.${detail}`);
-      await loadDictionary();
-    } catch (err) {
-      console.error('CSV import failed:', err);
-      alert(`Import failed: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      setDictLoading(false);
-    }
-  };
+  // Manual term-add and CSV-import handlers were removed in Phase D.
+  // The bundled corpus + auto-learn-from-corrections + doc-upload
+  // extraction (Phase C) replace the user-as-editor model. Manual
+  // remove still works for cleaning up auto-learned terms the user
+  // doesn't want.
 
   const handleRemoveDictTerm = async (id: string) => {
     try {
@@ -1798,107 +1758,55 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
         </div>
       )}
 
-      {/* Custom Dictionary */}
+      {/* Custom Vocabulary — bundled-first model */}
       <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Custom Vocabulary</h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Domain-specific terms (acronyms, names, brands) Whisper will learn to recognize</p>
-          </div>
-          <div className="flex gap-2">
-            <input
-              ref={dictFileInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleImportDictCsv(file);
-                  e.target.value = '';
-                }
-              }}
-            />
-            <button
-              onClick={() => dictFileInputRef.current?.click()}
-              disabled={dictLoading}
-              className="px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-              title="Bulk import CSV (columns: term, sounds_like, category, priority)"
-            >
-              Import CSV
-            </button>
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Custom Vocabulary</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Verbatim ships with a built-in vocabulary of ~339,000 terms across 17 domains
+            (medical, legal, military, tech, business, slang, and more). For each recording
+            we automatically pull the most relevant terms based on your project's context.
+          </p>
+        </div>
+
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
+          <div className="flex items-start gap-3">
+            <div className="text-2xl" aria-hidden>📚</div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                Add domain-specific terms by uploading a document
+              </p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Upload an OPORD, an SOP, a meeting brief, a regulation manual — anything
+                that contains the acronyms or proper nouns your team uses. Verbatim's
+                AI extracts the new terms, dedupes against the bundled corpus, and
+                adds the rest to your vocabulary. Documents must be uploaded under a
+                project first; extraction runs on existing documents.
+              </p>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Tip: if you correct a transcribed word manually, Verbatim auto-adds it
+                to your vocabulary too — no separate step needed.
+              </p>
+            </div>
           </div>
         </div>
-        <div className="px-5 py-4">
-          {/* Add-term form: term, sounds_like, category, priority */}
-          <div className="space-y-2 mb-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <input
-                type="text"
-                value={dictTerm}
-                onChange={(e) => setDictTerm(e.target.value)}
-                placeholder="Term (e.g. MCTSSA, Kubernetes, HIPAA)"
-                className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && dictTerm.trim() && !e.shiftKey) {
-                    handleAddDictTerm();
-                  }
-                }}
-              />
-              <input
-                type="text"
-                value={dictSoundsLike}
-                onChange={(e) => setDictSoundsLike(e.target.value)}
-                placeholder='Sounds like (optional, comma-separated, e.g. "em-see-tee-double-s-ay")'
-                className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                title="Free-form respellings to help Whisper match audio to the term. No IPA needed — write it the way it sounds."
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <select
-                value={dictCategory}
-                onChange={(e) => setDictCategory(e.target.value)}
-                className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              >
-                <option value="general">General</option>
-                <option value="tech">Tech</option>
-                <option value="medical">Medical</option>
-                <option value="legal">Legal</option>
-                <option value="names">Names</option>
-                <option value="business">Business</option>
-              </select>
-              {/* Priority — three-button toggle, not a free slider, so users can't over-boost */}
-              <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
-                {DICTIONARY_PRIORITIES.map((p) => (
-                  <button
-                    key={p.value}
-                    onClick={() => setDictPriority(p.value)}
-                    title={p.description}
-                    className={
-                      'px-3 py-2 text-xs font-medium transition-colors ' +
-                      (dictPriority === p.value
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600')
-                    }
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={handleAddDictTerm}
-                disabled={!dictTerm.trim() || dictLoading}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
-              >
-                Add term
-              </button>
-            </div>
-          </div>
 
-          {/* Entries list */}
+        <div className="px-5 py-4">
+          {/* Entries list — only shows USER-added terms, not the bundled corpus */}
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Your additions
+            </span>
+            {dictEntries.length > 0 && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {dictEntries.length} term{dictEntries.length !== 1 ? 's' : ''} added
+              </span>
+            )}
+          </div>
           {dictEntries.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-6">
-              No vocabulary terms yet. Add domain-specific words like acronyms, product names, or jargon and Whisper will recognize them more reliably.
+              No additions yet — the bundled vocabulary is doing the work.
+              Upload a document inside a project to add domain-specific terms.
             </p>
           ) : (
             <div className="space-y-1 max-h-64 overflow-y-auto">

@@ -468,3 +468,97 @@ async def import_csv(
 
     await db.commit()
     return ImportResponse(imported=imported, skipped=skipped, errors=errors)
+
+
+# ─── Phase C: Document-upload extraction ────────────────────────────
+
+
+class ExtractFromDocResponse(BaseModel):
+    """Result of extracting vocabulary from an uploaded document."""
+
+    document_id: str | None
+    candidates_proposed: int
+    accepted: int
+    skipped_already_bundled: int
+    skipped_already_user: int
+    skipped_invalid: int
+    skipped_common_english: int
+    new_term_ids: list[str]
+    errors: list[str] = []
+
+
+@router.post("/extract-from-document/{document_id}", response_model=ExtractFromDocResponse)
+async def extract_from_document_endpoint(
+    document_id: str,
+    project_id: Annotated[str | None, Query()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> ExtractFromDocResponse:
+    """Run Granite-Tiny over an already-uploaded document and add the
+    extracted acronyms / proper nouns / domain terms to the user's
+    custom dictionary.
+
+    The document must already exist in the database (uploaded via the
+    /documents endpoint). This endpoint pulls its extracted text,
+    chunks it, runs the LLM, and writes the survivors of the dedup +
+    common-English filter pipeline into custom_dictionary.
+
+    No streaming — returns the full result as JSON. Granite-Tiny on
+    CPU can take 5-15 seconds per typical PDF; clients should show a
+    spinner. Latency caps at ~3 minutes for very large docs (~30 chunks).
+    """
+    from persistence.models import Document
+    from sqlalchemy import select as _select
+
+    doc_row = await db.execute(_select(Document).where(Document.id == document_id))
+    doc = doc_row.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Pull text the same way semantic search does — extracted_text
+    # is populated by services/document_processor on upload.
+    document_text = (doc.extracted_text or "").strip()
+    if not document_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Document has no extracted text. Reprocess via OCR first.",
+        )
+
+    # Resolve project context — caller-provided wins, otherwise inherit
+    # from the document's project association.
+    if project_id is None:
+        project_id = doc.project_id
+
+    # AI service — late import so the route can fail fast if Granite
+    # isn't loaded.
+    try:
+        from core.factory import get_factory
+        factory = get_factory()
+        ai_service = factory.create_ai_service()
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI service unavailable for extraction: {e}",
+        )
+
+    from services.vocab_extraction import extract_from_document
+
+    result = await extract_from_document(
+        db,
+        document_id=document_id,
+        document_text=document_text,
+        document_title=doc.title,
+        ai_service=ai_service,
+        project_id=project_id,
+    )
+
+    return ExtractFromDocResponse(
+        document_id=result.document_id,
+        candidates_proposed=result.candidates_proposed,
+        accepted=result.accepted,
+        skipped_already_bundled=result.skipped_already_bundled,
+        skipped_already_user=result.skipped_already_user,
+        skipped_invalid=result.skipped_invalid,
+        skipped_common_english=result.skipped_common_english,
+        new_term_ids=result.new_term_ids,
+        errors=result.errors,
+    )

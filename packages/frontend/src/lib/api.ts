@@ -1272,6 +1272,18 @@ export interface DictionaryImportResponse {
   errors: string[];
 }
 
+export interface DictionaryExtractResponse {
+  document_id: string | null;
+  candidates_proposed: number;
+  accepted: number;
+  skipped_already_bundled: number;
+  skipped_already_user: number;
+  skipped_invalid: number;
+  skipped_common_english: number;
+  new_term_ids: string[];
+  errors: string[];
+}
+
 /** Allowed priority values: 0 = normal, 10 = important, 50 = critical.
  *  Modeled on AssemblyAI's three-level boost — deliberately coarse to
  *  keep users from over-boosting and triggering false positives. */
@@ -3445,6 +3457,17 @@ class ApiClient {
         throw new Error(`Import failed: HTTP ${response.status}: ${errText}`);
       }
       return response.json();
+    },
+
+    /** Run Granite-Tiny over an already-uploaded document to extract
+     *  acronyms, proper nouns, and domain-specific terms; dedupe against
+     *  the bundled corpus; insert new terms into the user's vocabulary. */
+    extractFromDocument: (documentId: string, projectId?: string) => {
+      const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+      return this.request<DictionaryExtractResponse>(
+        `/api/dictionary/extract-from-document/${documentId}${qs}`,
+        { method: 'POST' },
+      );
     },
   };
 

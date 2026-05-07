@@ -171,6 +171,26 @@ else
   echo "Warning: $VOICE_CLONES_SRC does not exist — skipping voice clone bundling"
 fi
 
+# Bundle the vocabulary corpus DB.
+# Two sources for vocab_bundled.db, in priority order:
+#   1. CI environment: download via build-vocab-corpus workflow
+#      artifact (preferred — has full Nomic embeddings, ~350 MB).
+#   2. Local checkout: assets/vocab_bundled.db built via
+#      `python -m scripts.build_vocab_corpus` (typically without
+#      embeddings during dev — runtime falls back to BM25-only).
+# When neither exists, we don't error — runtime degrades to user-only
+# dictionary, which keeps the app shippable while corpus is iterating.
+echo "Setting up vocabulary corpus..."
+VOCAB_DB_SRC="$PROJECT_ROOT/assets/vocab_bundled.db"
+if [ -f "$VOCAB_DB_SRC" ]; then
+  cp "$VOCAB_DB_SRC" "$RESOURCES_DIR/vocab_bundled.db"
+  VOCAB_SIZE=$(ls -la "$RESOURCES_DIR/vocab_bundled.db" | awk '{print $5}')
+  echo "Bundled vocab corpus: $VOCAB_SIZE bytes ($(numfmt --to=iec --suffix=B $VOCAB_SIZE 2>/dev/null || echo "${VOCAB_SIZE}B"))"
+else
+  echo "Warning: $VOCAB_DB_SRC not found — runtime will use BM25-only fallback"
+  echo "  Build via: python -m scripts.build_vocab_corpus"
+fi
+
 echo ""
 echo "=== Done ==="
 echo "Resources prepared at: $RESOURCES_DIR"
