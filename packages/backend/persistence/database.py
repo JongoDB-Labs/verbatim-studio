@@ -239,3 +239,9 @@ async def _run_migrations(conn) -> None:
     # Phase 4: persist per-word vocabulary corrections audit trail on segments
     from migrations.add_segment_corrections_json import migrate as migrate_corrections_json
     await conn.run_sync(lambda _: migrate_corrections_json(db_path))
+
+    # Phase B (bundled-vocab redesign): per-project context-vector cache
+    # for the retrieval layer. Invalidated when project description,
+    # documents, transcripts, or scoped dictionary entries change.
+    from migrations.add_project_context_embedding import migrate as migrate_pce
+    await conn.run_sync(lambda _: migrate_pce(db_path))

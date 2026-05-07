@@ -67,6 +67,12 @@ metaphone>=0.6
 # false-positive substitutions for common speech. ~8MB.
 english-words>=2.0
 
+# sqlite-vec: SQLite extension providing vector similarity search via
+# virtual tables (cosine, L2, dot product). Powers the semantic-retrieval
+# leg of vocab_retrieval over the bundled corpus DB. ~165KB pure-binary
+# wheels for macOS / Windows / Linux.
+sqlite-vec>=0.1.9
+
 # Pin numpy here to prevent llama-cpp-python from pulling incompatible version
 # ML deps require numpy 2.0.2 for compatibility with torch/pyannote
 numpy==2.0.2

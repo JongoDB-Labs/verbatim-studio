@@ -115,6 +115,32 @@ class EmbeddingService:
             self._model = None
             gc.collect()
 
+    # Sync helpers — used by the corpus build script and any caller
+    # that doesn't want the asyncio.to_thread wrapper around encode().
+
+    def embed_query_sync(self, query: str) -> list[float]:
+        """Synchronous version of embed_query — for build scripts and CLIs."""
+        self._ensure_loaded()
+        prefixed = f"search_query: {query}"
+        return self._model.encode(prefixed).tolist()
+
+    def embed_documents_sync(self, texts: list[str]) -> list[list[float]]:
+        """Synchronous version of embed_texts — for build scripts and CLIs."""
+        self._ensure_loaded()
+        prefixed = [f"search_document: {t}" for t in texts]
+        return self._model.encode(prefixed).tolist()
+
 
 # Singleton instance
 embedding_service = EmbeddingService()
+
+
+def get_embedder() -> EmbeddingService:
+    """Convenience accessor for the module-level embedder singleton.
+
+    Used by vocab_retrieval and the corpus build script. Equivalent to
+    referencing embedding_service directly; provided as a function so
+    consumers can mock it in tests without monkey-patching the module
+    attribute.
+    """
+    return embedding_service

@@ -254,6 +254,7 @@ def _embed_corpus(conn: sqlite3.Connection) -> int:
 
     BATCH = 256
     embedded = 0
+    import struct
     for i in range(0, len(rows), BATCH):
         chunk = rows[i:i + BATCH]
         # Embed the canonical form plus a short context blurb (the
@@ -264,16 +265,18 @@ def _embed_corpus(conn: sqlite3.Connection) -> int:
             for r in chunk
         ]
         try:
-            vectors = embedder.embed(texts)
+            vectors = embedder.embed_documents_sync(texts)
         except Exception as exc:
             logger.warning("Embedder batch failed at offset %d: %s — skipping", i, exc)
             continue
 
-        # Insert into sqlite-vec. If the vec table wasn't created
-        # (sqlite-vec missing) this raises and we skip silently.
+        # Insert into sqlite-vec. The virtual table accepts packed
+        # float32 bytes; we serialise via struct.pack to match the
+        # runtime side's expectations (services/embedding.py uses the
+        # same `<{N}f` packing for stored embeddings).
         try:
             data = [
-                (r["id"], v.astype("float32").tobytes())
+                (r["id"], struct.pack(f"<{len(v)}f", *v))
                 for r, v in zip(chunk, vectors)
             ]
             conn.executemany(
