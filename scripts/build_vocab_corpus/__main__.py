@@ -68,6 +68,13 @@ SOURCE_MODULES = [
     "geonames_cities",
     "iso_639_languages",
     "dod_dictionary",
+    "scowl",
+    "cmudict_homophones",
+    "wikidata_entities",
+    "tech_terms",
+    "medical_curated",
+    "religious_cultural",
+    "cooking_food",
     # Future modules (commented until source extractors land):
     # "scowl",
     # "cmudict",

@@ -1,0 +1,232 @@
+"""Curated religious / cultural terms.
+
+Scripture book names, denominations, holidays in multiple traditions —
+the high-value subset Whisper consistently mistranscribes.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Iterable
+
+from ..types import RawTerm
+
+logger = logging.getLogger(__name__)
+
+
+_TERMS: list[tuple[str, str, str]] = [
+    # Christian denominations
+    ("Catholic", "Christian denomination", "denomination"),
+    ("Roman Catholic", "Christian denomination", "denomination"),
+    ("Eastern Orthodox", "Christian denomination", "denomination"),
+    ("Greek Orthodox", "Christian denomination", "denomination"),
+    ("Russian Orthodox", "Christian denomination", "denomination"),
+    ("Coptic", "Christian denomination", "denomination"),
+    ("Maronite", "Eastern Catholic Church", "denomination"),
+    ("Anglican", "Christian denomination", "denomination"),
+    ("Episcopal", "Christian denomination (US)", "denomination"),
+    ("Lutheran", "Christian denomination", "denomination"),
+    ("Methodist", "Christian denomination", "denomination"),
+    ("Baptist", "Christian denomination", "denomination"),
+    ("Presbyterian", "Christian denomination", "denomination"),
+    ("Pentecostal", "Christian denomination", "denomination"),
+    ("Evangelical", "Christian movement", "denomination"),
+    ("Mennonite", "Christian denomination", "denomination"),
+    ("Amish", "Christian denomination", "denomination"),
+    ("Quaker", "Religious Society of Friends", "denomination"),
+    ("Jehovah's Witness", "Christian movement", "denomination"),
+    ("Latter-day Saints", "LDS / Mormon", "denomination"),
+    ("Mormon", "LDS Church", "denomination"),
+    # Islamic
+    ("Sunni", "Islamic denomination", "denomination"),
+    ("Shia", "Islamic denomination", "denomination"),
+    ("Shi'ite", "Islamic denomination", "denomination"),
+    ("Sufi", "Islamic mysticism", "denomination"),
+    ("Ahmadiyya", "Islamic movement", "denomination"),
+    # Jewish
+    ("Orthodox Judaism", "traditionalist", "denomination"),
+    ("Conservative Judaism", "Masorti movement", "denomination"),
+    ("Reform Judaism", "progressive movement", "denomination"),
+    ("Reconstructionist", "Jewish movement", "denomination"),
+    ("Hasidic", "Orthodox Jewish movement", "denomination"),
+    ("Haredi", "ultra-Orthodox Jewish", "denomination"),
+    # Other religions
+    ("Hindu", "religion of South Asia", "denomination"),
+    ("Vaishnavism", "Hindu denomination", "denomination"),
+    ("Shaivism", "Hindu denomination", "denomination"),
+    ("Buddhist", "follower of Buddha's teachings", "denomination"),
+    ("Theravada", "Buddhist tradition", "denomination"),
+    ("Mahayana", "Buddhist tradition", "denomination"),
+    ("Vajrayana", "Tibetan Buddhist tradition", "denomination"),
+    ("Zen", "East Asian Buddhist school", "denomination"),
+    ("Sikh", "follower of Sikhism", "denomination"),
+    ("Jain", "follower of Jainism", "denomination"),
+    ("Bahá'í", "religion founded in Persia", "denomination"),
+    ("Zoroastrian", "ancient Persian religion", "denomination"),
+    # Christian scripture
+    ("Genesis", "Bible book", "scripture"),
+    ("Exodus", "Bible book", "scripture"),
+    ("Leviticus", "Bible book", "scripture"),
+    ("Numbers", "Bible book", "scripture"),
+    ("Deuteronomy", "Bible book", "scripture"),
+    ("Joshua", "Bible book", "scripture"),
+    ("Judges", "Bible book", "scripture"),
+    ("Samuel", "Bible book", "scripture"),
+    ("Kings", "Bible book", "scripture"),
+    ("Psalms", "Bible book", "scripture"),
+    ("Proverbs", "Bible book", "scripture"),
+    ("Ecclesiastes", "Bible book", "scripture"),
+    ("Isaiah", "Bible book", "scripture"),
+    ("Jeremiah", "Bible book", "scripture"),
+    ("Ezekiel", "Bible book", "scripture"),
+    ("Daniel", "Bible book", "scripture"),
+    ("Hosea", "Bible book (minor prophet)", "scripture"),
+    ("Joel", "Bible book (minor prophet)", "scripture"),
+    ("Amos", "Bible book (minor prophet)", "scripture"),
+    ("Obadiah", "Bible book (minor prophet)", "scripture"),
+    ("Jonah", "Bible book (minor prophet)", "scripture"),
+    ("Micah", "Bible book (minor prophet)", "scripture"),
+    ("Nahum", "Bible book (minor prophet)", "scripture"),
+    ("Habakkuk", "Bible book (minor prophet)", "scripture"),
+    ("Zephaniah", "Bible book (minor prophet)", "scripture"),
+    ("Haggai", "Bible book (minor prophet)", "scripture"),
+    ("Zechariah", "Bible book (minor prophet)", "scripture"),
+    ("Malachi", "Bible book (minor prophet)", "scripture"),
+    ("Matthew", "Gospel", "scripture"),
+    ("Mark", "Gospel", "scripture"),
+    ("Luke", "Gospel", "scripture"),
+    ("John", "Gospel", "scripture"),
+    ("Acts", "New Testament", "scripture"),
+    ("Romans", "Epistle", "scripture"),
+    ("Corinthians", "Epistles", "scripture"),
+    ("Galatians", "Epistle", "scripture"),
+    ("Ephesians", "Epistle", "scripture"),
+    ("Philippians", "Epistle", "scripture"),
+    ("Colossians", "Epistle", "scripture"),
+    ("Thessalonians", "Epistles", "scripture"),
+    ("Timothy", "Pastoral Epistles", "scripture"),
+    ("Titus", "Pastoral Epistle", "scripture"),
+    ("Philemon", "Pauline Epistle", "scripture"),
+    ("Hebrews", "New Testament", "scripture"),
+    ("James", "Epistle", "scripture"),
+    ("Peter", "Epistles", "scripture"),
+    ("Jude", "Epistle", "scripture"),
+    ("Revelation", "apocalyptic book", "scripture"),
+    ("Apocalypse", "Revelation", "scripture"),
+    # Quran
+    ("Surah", "Quranic chapter", "scripture"),
+    ("Surah Al-Fatiha", "first chapter of the Quran", "scripture"),
+    ("Surah Al-Baqarah", "second chapter of the Quran", "scripture"),
+    ("Surah Al-Kahf", "Quranic chapter", "scripture"),
+    ("Surah Yasin", "Quranic chapter", "scripture"),
+    ("Hadith", "Islamic prophetic traditions", "scripture"),
+    ("Sahih Bukhari", "hadith collection", "scripture"),
+    ("Sahih Muslim", "hadith collection", "scripture"),
+    # Hindu / Buddhist
+    ("Bhagavad Gita", "Hindu scripture", "scripture"),
+    ("Vedas", "Hindu scriptures", "scripture"),
+    ("Rigveda", "oldest Hindu scripture", "scripture"),
+    ("Upanishads", "Hindu philosophical texts", "scripture"),
+    ("Mahabharata", "Hindu epic", "scripture"),
+    ("Ramayana", "Hindu epic", "scripture"),
+    ("Tripitaka", "Buddhist canon", "scripture"),
+    ("Sutta Pitaka", "Buddhist scripture collection", "scripture"),
+    ("Dhammapada", "Buddhist text", "scripture"),
+    # Jewish
+    ("Torah", "Hebrew scripture", "scripture"),
+    ("Tanakh", "Hebrew Bible", "scripture"),
+    ("Talmud", "Jewish religious text", "scripture"),
+    ("Mishnah", "first Talmudic text", "scripture"),
+    ("Gemara", "Talmudic commentary", "scripture"),
+    ("Kabbalah", "Jewish mystical tradition", "scripture"),
+    # Holidays — Christian
+    ("Christmas", "December 25 celebration", "holiday"),
+    ("Easter", "Christian resurrection holiday", "holiday"),
+    ("Lent", "pre-Easter observance", "holiday"),
+    ("Ash Wednesday", "first day of Lent", "holiday"),
+    ("Good Friday", "before Easter", "holiday"),
+    ("Pentecost", "Christian holiday", "holiday"),
+    ("Advent", "pre-Christmas observance", "holiday"),
+    ("Epiphany", "January 6 holiday", "holiday"),
+    ("All Saints' Day", "November 1 holiday", "holiday"),
+    # Jewish
+    ("Rosh Hashanah", "Jewish New Year", "holiday"),
+    ("Yom Kippur", "Day of Atonement", "holiday"),
+    ("Sukkot", "Feast of Tabernacles", "holiday"),
+    ("Hanukkah", "Festival of Lights", "holiday"),
+    ("Passover", "Pesach", "holiday"),
+    ("Pesach", "Passover", "holiday"),
+    ("Shavuot", "Feast of Weeks", "holiday"),
+    ("Purim", "Festival of Lots", "holiday"),
+    ("Tu BiShvat", "New Year of Trees", "holiday"),
+    ("Tisha B'Av", "ninth of Av observance", "holiday"),
+    # Islamic
+    ("Eid al-Fitr", "festival ending Ramadan", "holiday"),
+    ("Eid al-Adha", "Festival of Sacrifice", "holiday"),
+    ("Ramadan", "Islamic month of fasting", "holiday"),
+    ("Mawlid", "birthday of Muhammad", "holiday"),
+    ("Ashura", "tenth day of Muharram", "holiday"),
+    ("Lailat al-Qadr", "Night of Power", "holiday"),
+    # Hindu
+    ("Diwali", "festival of lights", "holiday"),
+    ("Holi", "festival of colors", "holiday"),
+    ("Navaratri", "nine-night festival", "holiday"),
+    ("Ganesh Chaturthi", "Ganesha's birthday", "holiday"),
+    ("Raksha Bandhan", "festival of brother-sister bond", "holiday"),
+    # Buddhist
+    ("Vesak", "Buddha's birth/enlightenment/death", "holiday"),
+    ("Bodhi Day", "Buddha's enlightenment", "holiday"),
+    ("Losar", "Tibetan New Year", "holiday"),
+    # Sikh
+    ("Vaisakhi", "Sikh New Year", "holiday"),
+    ("Guru Nanak Gurpurab", "Guru Nanak's birthday", "holiday"),
+    # Cultural / secular
+    ("Lunar New Year", "Chinese / East Asian New Year", "holiday"),
+    ("Chinese New Year", "Lunar New Year", "holiday"),
+    ("Tet", "Vietnamese New Year", "holiday"),
+    ("Songkran", "Thai New Year", "holiday"),
+    ("Nowruz", "Persian New Year", "holiday"),
+    ("Kwanzaa", "African-American cultural festival", "holiday"),
+    ("Juneteenth", "June 19 emancipation holiday", "holiday"),
+    # Religious roles
+    ("rabbi", "Jewish religious leader", "role"),
+    ("imam", "Muslim prayer leader", "role"),
+    ("ayatollah", "Shia Islamic title", "role"),
+    ("priest", "Christian religious leader", "role"),
+    ("bishop", "Christian senior clergy", "role"),
+    ("cardinal", "Catholic senior clergy", "role"),
+    ("monsignor", "Catholic clerical title", "role"),
+    ("pope", "Catholic head", "role"),
+    ("patriarch", "Orthodox head", "role"),
+    ("pastor", "Protestant minister", "role"),
+    ("reverend", "Protestant clergy honorific", "role"),
+    ("monk", "religious renunciant", "role"),
+    ("nun", "religious sister", "role"),
+    ("guru", "Hindu/Sikh teacher", "role"),
+    ("lama", "Tibetan Buddhist teacher", "role"),
+    ("Dalai Lama", "Tibetan Buddhist leader", "role"),
+]
+
+
+def iter_terms() -> Iterable[RawTerm]:
+    seen: set[str] = set()
+    for canonical, gloss, subcat in _TERMS:
+        key = canonical.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        score = 0.6
+        yield RawTerm(
+            term=canonical,
+            canonical_form=canonical,
+            category="religious",
+            subcategory=subcat,
+            context_blurb=gloss[:140],
+            popularity_score=score,
+            source="Curated religious / cultural terms",
+        )
+    logger.info("Religious / cultural: %d yielded", len(seen))
+
+
+name = "Religious / Cultural"
+category = "religious"
