@@ -226,21 +226,63 @@ def _bulk_insert(conn: sqlite3.Connection, terms: Iterable[RawTerm]) -> dict[str
     return counts
 
 
+def _get_build_embedder():
+    """Return an embedder usable during the corpus build.
+
+    Two paths:
+      1. Reuse `services.embedding.EmbeddingService` if the full backend
+         is importable (covers local dev where the venv has SQLAlchemy +
+         everything else). This guarantees identical embeddings to the
+         runtime layer.
+      2. Otherwise, fall back to a direct `sentence-transformers` wrapper
+         using the same model name and prefix scheme. CI runs this path
+         to avoid pulling SQLAlchemy / aiosqlite / the rest of the
+         backend dep tree just for an embed pass.
+
+    Both paths produce the same vectors — the service wrapper is a thin
+    shim around `SentenceTransformer.encode`.
+    """
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "packages" / "backend"))
+        from services.embedding import get_embedder  # noqa: WPS433
+        return get_embedder()
+    except Exception as e:
+        logger.info(
+            "service-wrapped embedder unavailable (%s) — using direct "
+            "sentence_transformers fallback", e,
+        )
+
+    from sentence_transformers import SentenceTransformer
+
+    class _DirectEmbedder:
+        """Same API surface as services.embedding.EmbeddingService."""
+
+        def __init__(self) -> None:
+            self._model = SentenceTransformer(
+                "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True,
+            )
+
+        def embed_documents_sync(self, texts: list[str]) -> list[list[float]]:
+            prefixed = [f"search_document: {t}" for t in texts]
+            return self._model.encode(prefixed).tolist()
+
+        def embed_query_sync(self, query: str) -> list[float]:
+            return self._model.encode(f"search_query: {query}").tolist()
+
+    return _DirectEmbedder()
+
+
 def _embed_corpus(conn: sqlite3.Connection) -> int:
     """Compute and insert Nomic embeddings for all rows.
 
-    Skipped (with a warning) when the embedder isn't available — we
-    can't download the model in every CI environment, so the build
-    falls through to vector-less mode in that case.
+    Skipped (with a warning) when sentence-transformers itself isn't
+    available — the runtime falls through to BM25-only retrieval in
+    that case.
 
     Returns count of embedded rows.
     """
     try:
-        # Reuse the same embedder the runtime uses for semantic search
-        # so embeddings are perfectly comparable at query time.
-        sys.path.insert(0, str(REPO_ROOT / "packages" / "backend"))
-        from services.embedding import get_embedder
-        embedder = get_embedder()
+        embedder = _get_build_embedder()
     except Exception as e:
         logger.warning("Embedder unavailable (%s) — building DB without vectors", e)
         return 0

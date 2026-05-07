@@ -68,9 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     conn = _open_with_vec(args.output)
 
-    sys.path.insert(0, str(REPO_ROOT / "packages" / "backend"))
-    from services.embedding import get_embedder
-    embedder = get_embedder()
+    from .__main__ import _get_build_embedder
+    embedder = _get_build_embedder()
 
     cur = conn.execute(
         "SELECT id, canonical_form, context_blurb FROM vocab_bundled ORDER BY id"
