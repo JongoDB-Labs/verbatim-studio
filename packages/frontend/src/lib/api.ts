@@ -1284,6 +1284,29 @@ export interface DictionaryExtractResponse {
   errors: string[];
 }
 
+export interface DictionaryCorpusStatus {
+  downloaded: boolean;
+  downloading: boolean;
+  has_embeddings: boolean;
+  bytes_on_disk: number | null;
+  download_url: string;
+}
+
+export type DictionaryCorpusDownloadEvent =
+  | { status: 'starting' }
+  | {
+      status: 'progress';
+      downloaded_bytes: number;
+      total_bytes: number;
+      percent: number;
+    }
+  | {
+      status: 'complete';
+      has_embeddings: boolean;
+      bytes_on_disk: number;
+    }
+  | { status: 'error'; message: string };
+
 /** Allowed priority values: 0 = normal, 10 = important, 50 = critical.
  *  Modeled on AssemblyAI's three-level boost — deliberately coarse to
  *  keep users from over-boosting and triggering false positives. */
@@ -3469,6 +3492,66 @@ class ApiClient {
         { method: 'POST' },
       );
     },
+
+    corpusStatus: () =>
+      this.request<DictionaryCorpusStatus>('/api/dictionary/corpus/status'),
+
+    /** Stream the full embedded-corpus download from the public release
+     *  bucket. Mirrors the OCR/whisper model download pattern: fetch
+     *  POST returns SSE; consumer is notified of progress + final state.
+     */
+    downloadCorpus: (
+      onEvent: (event: DictionaryCorpusDownloadEvent) => void,
+    ): { abort: () => void } => {
+      const abortController = new AbortController();
+
+      fetch(`${this.baseUrl}/api/dictionary/corpus/download`, {
+        method: 'POST',
+        signal: abortController.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            onEvent({ status: 'error', message: `HTTP ${response.status}` });
+            return;
+          }
+          const reader = response.body?.getReader();
+          if (!reader) {
+            onEvent({ status: 'error', message: 'No response body' });
+            return;
+          }
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  onEvent(JSON.parse(line.slice(6)) as DictionaryCorpusDownloadEvent);
+                } catch {
+                  // skip malformed lines
+                }
+              }
+            }
+          }
+        })
+        .catch((err) => {
+          if (err.name !== 'AbortError') {
+            onEvent({ status: 'error', message: err.message });
+          }
+        });
+
+      return { abort: () => abortController.abort() };
+    },
+
+    removeCorpus: () =>
+      this.request<{ removed: boolean; has_embeddings: boolean }>(
+        '/api/dictionary/corpus',
+        { method: 'DELETE' },
+      ),
   };
 
   // Calendar

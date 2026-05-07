@@ -93,12 +93,26 @@ jobs:
           conn.close()
           PYEOF
 
-      - name: Upload corpus artifact
+      - name: Build slim variant (BM25-only) for installer
+        run: |
+          python -m scripts.build_vocab_corpus.strip_embeddings \
+            --source assets/vocab_bundled.db \
+            --dest assets/vocab_bundled_slim.db \
+            --verbose
+
+      - name: Rename full corpus for release upload
+        # Keep two clearly-distinct names so consumers can tell which is which.
+        # vocab_bundled_slim.db ships in installer; vocab_bundled_full.db is
+        # downloaded by users opting into hybrid retrieval.
+        run: cp assets/vocab_bundled.db assets/vocab_bundled_full.db
+
+      - name: Upload corpus artifacts
         uses: actions/upload-artifact@v4
         with:
           name: vocab-corpus-${{ github.sha }}
           path: |
-            assets/vocab_bundled.db
+            assets/vocab_bundled_full.db
+            assets/vocab_bundled_slim.db
             assets/vocab_corpus_export/
           retention-days: 30
           if-no-files-found: error
@@ -107,6 +121,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: assets/vocab_bundled.db
+          # Both variants attach to the release. The auto-updater + Settings
+          # tile pulls vocab_bundled_full.db; vocab_bundled_slim.db is for
+          # auditing / inspection but matches what the installer ships.
+          files: |
+            assets/vocab_bundled_full.db
+            assets/vocab_bundled_slim.db
           fail_on_unmatched_files: true
           token: ${{ secrets.GITHUB_TOKEN }}

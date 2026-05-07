@@ -154,6 +154,31 @@ def _bundled_db_path() -> Path | None:
     return None
 
 
+def reload_bundled_conn() -> bool:
+    """Reset the bundled-DB connection cache.
+
+    Called after the user downloads (or removes) the full embedded
+    corpus. Drops the cached connection so the next retrieval call
+    re-opens via _bundled_db_path() and re-detects has_vec, picking up
+    the new file (typically the user-data variant takes priority over
+    the resources variant).
+
+    Returns the new has_vec flag — useful for surfacing "hybrid mode is
+    now active" status to the UI after a download completes.
+    """
+    global _bundled_conn, _bundled_conn_path, _bundled_has_vec
+    if _bundled_conn is not None:
+        try:
+            _bundled_conn.close()
+        except Exception:
+            pass
+    _bundled_conn = None
+    _bundled_conn_path = None
+    _bundled_has_vec = False
+    _, has_vec = _open_bundled_conn()
+    return has_vec
+
+
 def _open_bundled_conn() -> tuple[sqlite3.Connection | None, bool]:
     """Open (or reuse) the bundled DB connection.
 

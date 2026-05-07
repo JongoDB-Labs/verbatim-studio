@@ -172,23 +172,48 @@ else
 fi
 
 # Bundle the vocabulary corpus DB.
-# Two sources for vocab_bundled.db, in priority order:
-#   1. CI environment: download via build-vocab-corpus workflow
-#      artifact (preferred — has full Nomic embeddings, ~350 MB).
-#   2. Local checkout: assets/vocab_bundled.db built via
-#      `python -m scripts.build_vocab_corpus` (typically without
-#      embeddings during dev — runtime falls back to BM25-only).
+#
+# We ship the SLIM variant (BM25-only, ~95 MB) inside the installer.
+# Users who want hybrid retrieval (BM25 + cosine) opt into downloading
+# the full embedded variant (~1.1 GB) from verbatim-studio-releases via
+# Settings → AI → Custom Vocabulary → Semantic vocabulary corpus.
+#
+# Source preference:
+#   1. assets/vocab_bundled_slim.db — explicitly built with
+#      `python -m scripts.build_vocab_corpus.strip_embeddings`
+#   2. assets/vocab_bundled.db — fall through if slim missing.
+#      In dev this is whatever the developer built (with or without
+#      embeddings). Shipping it raw is fine; the runtime always works,
+#      and the Settings tile will say "active" if it sees vec.
 # When neither exists, we don't error — runtime degrades to user-only
 # dictionary, which keeps the app shippable while corpus is iterating.
 echo "Setting up vocabulary corpus..."
+VOCAB_DB_SLIM="$PROJECT_ROOT/assets/vocab_bundled_slim.db"
 VOCAB_DB_SRC="$PROJECT_ROOT/assets/vocab_bundled.db"
-if [ -f "$VOCAB_DB_SRC" ]; then
-  cp "$VOCAB_DB_SRC" "$RESOURCES_DIR/vocab_bundled.db"
+
+# Prefer the explicitly-stripped slim variant; otherwise auto-strip from
+# the full DB so the installer never accidentally ships ~1.1 GB.
+if [ -f "$VOCAB_DB_SLIM" ]; then
+  echo "  using prebuilt slim variant: $VOCAB_DB_SLIM"
+  cp "$VOCAB_DB_SLIM" "$RESOURCES_DIR/vocab_bundled.db"
+elif [ -f "$VOCAB_DB_SRC" ]; then
+  echo "  no slim variant; auto-stripping from $VOCAB_DB_SRC"
+  if (cd "$PROJECT_ROOT" && python -m scripts.build_vocab_corpus.strip_embeddings \
+      --source "$VOCAB_DB_SRC" \
+      --dest "$RESOURCES_DIR/vocab_bundled.db" 2>&1); then
+    echo "  slim variant generated"
+  else
+    echo "  Warning: strip_embeddings failed — copying full DB (installer will be large)"
+    cp "$VOCAB_DB_SRC" "$RESOURCES_DIR/vocab_bundled.db"
+  fi
+else
+  echo "Warning: no vocab corpus DB found — runtime will use user-only fallback"
+  echo "  Build via: python -m scripts.build_vocab_corpus"
+fi
+
+if [ -f "$RESOURCES_DIR/vocab_bundled.db" ]; then
   VOCAB_SIZE=$(ls -la "$RESOURCES_DIR/vocab_bundled.db" | awk '{print $5}')
   echo "Bundled vocab corpus: $VOCAB_SIZE bytes ($(numfmt --to=iec --suffix=B $VOCAB_SIZE 2>/dev/null || echo "${VOCAB_SIZE}B"))"
-else
-  echo "Warning: $VOCAB_DB_SRC not found — runtime will use BM25-only fallback"
-  echo "  Build via: python -m scripts.build_vocab_corpus"
 fi
 
 echo ""

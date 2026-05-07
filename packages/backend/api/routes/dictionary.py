@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -562,3 +562,209 @@ async def extract_from_document_endpoint(
         new_term_ids=result.new_term_ids,
         errors=result.errors,
     )
+
+
+# ── Full-corpus download (BM25-only → BM25 + cosine hybrid) ─────────
+#
+# The installer ships a slim vocab_bundled.db (BM25 only) — ~95 MB,
+# enough for full lexical retrieval + category broadcast. Users who
+# want semantic recall (e.g. "Marine Corps administration" surfacing
+# MARCORSEPMAN even without a matching token) opt into downloading
+# the full embedded variant from verbatim-studio-releases.
+#
+# The runtime locator already prefers ${DATA_DIR}/vocab_bundled.db
+# over the resources copy (see services/vocab_retrieval.py:_bundled_db_path),
+# so writing the downloaded full DB into user data dir transparently
+# upgrades retrieval to hybrid mode without an app restart.
+
+import asyncio  # noqa: E402  (lazy in the corpus block)
+import concurrent.futures  # noqa: E402
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Where the full-corpus artifact lives. `latest/download/<file>` redirects
+# to the most recent release's asset with that filename — corpus updates
+# follow the app release cadence, so "latest" is correct here.
+CORPUS_DOWNLOAD_URL = (
+    "https://github.com/JongoDB/verbatim-studio-releases"
+    "/releases/latest/download/vocab_bundled_full.db"
+)
+
+# Track the in-flight download so a second POST returns 409 instead of
+# kicking off a duplicate.
+_corpus_download_future: concurrent.futures.Future | None = None
+_corpus_download_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+_corpus_download_progress: dict[str, int | str] = {}
+
+
+def _corpus_target_path() -> Path:
+    """Where the downloaded full corpus is written. Takes precedence
+    over the bundled slim DB at runtime."""
+    from core.config import settings
+    settings.ensure_directories()
+    return Path(settings.DATA_DIR) / "vocab_bundled.db"
+
+
+def _do_corpus_download(target: Path) -> None:
+    """Stream the corpus DB to a temp file then atomic-rename.
+
+    Updates `_corpus_download_progress` with downloaded/total bytes so
+    the SSE wrapper can poll. Errors propagate to the future; the SSE
+    wrapper catches them and emits a final `error` event.
+    """
+    import shutil
+    import tempfile
+    import urllib.request
+
+    tmp = target.with_suffix(target.suffix + ".part")
+    if tmp.exists():
+        tmp.unlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    req = urllib.request.Request(
+        CORPUS_DOWNLOAD_URL,
+        headers={"User-Agent": "verbatim-studio/corpus-download"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        _corpus_download_progress["total_bytes"] = total
+        downloaded = 0
+        with tmp.open("wb") as f:
+            while chunk := resp.read(1024 * 1024):  # 1 MB chunks
+                f.write(chunk)
+                downloaded += len(chunk)
+                _corpus_download_progress["downloaded_bytes"] = downloaded
+
+    # Atomic replace — never leave a partial DB at the canonical path.
+    if target.exists():
+        target.unlink()
+    tmp.rename(target)
+    _corpus_download_progress["downloaded_bytes"] = target.stat().st_size
+
+    # Tell the retrieval layer to re-open with the new file.
+    try:
+        from services.vocab_retrieval import reload_bundled_conn
+        has_vec = reload_bundled_conn()
+        _corpus_download_progress["has_vec"] = "true" if has_vec else "false"
+    except Exception as e:
+        logger.warning("corpus reload after download failed: %s", e)
+        _corpus_download_progress["has_vec"] = "unknown"
+
+
+class CorpusStatusResponse(BaseModel):
+    """Current state of the full-corpus download."""
+
+    downloaded: bool
+    downloading: bool
+    has_embeddings: bool
+    bytes_on_disk: int | None
+    download_url: str
+
+
+@router.get("/corpus/status", response_model=CorpusStatusResponse)
+async def get_corpus_status() -> CorpusStatusResponse:
+    """Report whether the full embedded corpus has been downloaded."""
+    target = _corpus_target_path()
+    downloaded = target.exists()
+    downloading = (
+        _corpus_download_future is not None
+        and not _corpus_download_future.done()
+    )
+
+    has_embeddings = False
+    if downloaded:
+        # Probe the vec table to confirm this isn't a stale slim copy.
+        import sqlite3
+        try:
+            conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+            try:
+                conn.enable_load_extension(True)
+                import sqlite_vec
+                sqlite_vec.load(conn)
+                conn.execute("SELECT 1 FROM vocab_bundled_vec LIMIT 1").fetchone()
+                has_embeddings = True
+            except Exception:
+                has_embeddings = False
+            finally:
+                conn.close()
+        except Exception:
+            has_embeddings = False
+
+    return CorpusStatusResponse(
+        downloaded=downloaded,
+        downloading=downloading,
+        has_embeddings=has_embeddings,
+        bytes_on_disk=target.stat().st_size if downloaded else None,
+        download_url=CORPUS_DOWNLOAD_URL,
+    )
+
+
+@router.post("/corpus/download")
+async def download_full_corpus() -> StreamingResponse:
+    """Begin downloading the full embedded corpus.
+
+    Streams Server-Sent-Events with `{status, downloaded_bytes, total_bytes,
+    percent}` payloads. The download continues even if the client
+    disconnects — clients can re-attach via /corpus/status to see
+    progress and replay the final state.
+    """
+    global _corpus_download_future
+
+    if _corpus_download_future is not None and not _corpus_download_future.done():
+        raise HTTPException(status_code=409, detail="Download already in progress")
+
+    target = _corpus_target_path()
+    _corpus_download_progress.clear()
+    _corpus_download_future = _corpus_download_executor.submit(
+        _do_corpus_download, target,
+    )
+
+    async def _stream():
+        yield f"data: {json.dumps({'status': 'starting'})}\n\n"
+        last_emitted = -1
+        while True:
+            await asyncio.sleep(1)
+            done = _corpus_download_future.done()
+            downloaded = int(_corpus_download_progress.get("downloaded_bytes", 0) or 0)
+            total = int(_corpus_download_progress.get("total_bytes", 0) or 0)
+            percent = int(downloaded / total * 100) if total else 0
+            if percent != last_emitted:
+                last_emitted = percent
+                yield f"data: {json.dumps({'status': 'progress', 'downloaded_bytes': downloaded, 'total_bytes': total, 'percent': percent})}\n\n"
+            if done:
+                exc = _corpus_download_future.exception()
+                if exc:
+                    yield f"data: {json.dumps({'status': 'error', 'message': str(exc)})}\n\n"
+                else:
+                    has_vec = _corpus_download_progress.get("has_vec", "unknown")
+                    yield f"data: {json.dumps({'status': 'complete', 'has_embeddings': has_vec == 'true', 'bytes_on_disk': downloaded})}\n\n"
+                return
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@router.delete("/corpus")
+async def remove_full_corpus() -> dict:
+    """Delete the downloaded full corpus, falling back to the slim
+    BM25-only DB shipped with the installer.
+
+    Useful when the user wants to free disk space or roll back a bad
+    corpus version.
+    """
+    if _corpus_download_future is not None and not _corpus_download_future.done():
+        raise HTTPException(status_code=409, detail="Cannot remove while a download is in progress")
+
+    target = _corpus_target_path()
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="No downloaded corpus to remove")
+
+    target.unlink()
+
+    try:
+        from services.vocab_retrieval import reload_bundled_conn
+        has_vec = reload_bundled_conn()
+    except Exception as e:
+        logger.warning("retrieval reload after removal failed: %s", e)
+        has_vec = False
+
+    return {"removed": True, "has_embeddings": has_vec}

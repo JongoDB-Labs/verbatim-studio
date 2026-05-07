@@ -309,6 +309,20 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
   // doc-extracted via Phase C).
   const [dictEntries, setDictEntries] = useState<DictionaryEntry[]>([]);
 
+  // Full embedded-corpus download state. The installer ships the slim
+  // BM25-only DB; this surface lets users opt into the ~1.1 GB hybrid
+  // variant from verbatim-studio-releases.
+  const [corpusStatus, setCorpusStatus] = useState<{
+    downloaded: boolean;
+    downloading: boolean;
+    has_embeddings: boolean;
+    bytes_on_disk: number | null;
+  } | null>(null);
+  const [corpusDownloading, setCorpusDownloading] = useState(false);
+  const [corpusProgress, setCorpusProgress] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
+  const [corpusError, setCorpusError] = useState<string | null>(null);
+  const corpusAbortRef = useRef<{ abort: () => void } | null>(null);
+
   // Post-Transcription Automation state
   const [postTxSettings, setPostTxSettings] = useState<PostTranscriptionSettings>({
     auto_summarize: false,
@@ -465,6 +479,20 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     }
   }, []);
 
+  const loadCorpusStatus = useCallback(async () => {
+    try {
+      const status = await api.dictionary.corpusStatus();
+      setCorpusStatus({
+        downloaded: status.downloaded,
+        downloading: status.downloading,
+        has_embeddings: status.has_embeddings,
+        bytes_on_disk: status.bytes_on_disk,
+      });
+    } catch (err) {
+      console.error('Failed to load corpus status:', err);
+    }
+  }, []);
+
   const loadPostTxSettings = useCallback(async () => {
     try {
       const data = await api.postTranscription.get();
@@ -485,6 +513,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
     api.archive.info().then(setArchiveInfo).catch(console.error);
     api.config.getTranscription().then(setTxSettings).catch(console.error);
     loadDictionary();
+    loadCorpusStatus();
     loadPostTxSettings();
     api.ai.listModels().then((r) => setAiModels(r.models)).catch(console.error);
     api.config.getAI().then(setAiSettings).catch(console.error);
@@ -514,7 +543,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       api.system.gpuStatus().then(setGpuStatus).catch(console.error);
     }
     loadStorageLocations();
-  }, [loadStorageLocations, loadDictionary, loadPostTxSettings]);
+  }, [loadStorageLocations, loadDictionary, loadCorpusStatus, loadPostTxSettings]);
 
   // Load update settings on mount
   useEffect(() => {
@@ -790,6 +819,43 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
       setDictEntries([]);
     } catch (err) {
       console.error('Failed to clear dictionary:', err);
+    }
+  };
+
+  const handleDownloadCorpus = () => {
+    if (corpusDownloading) return;
+    setCorpusError(null);
+    setCorpusDownloading(true);
+    setCorpusProgress({ percent: 0, downloaded: 0, total: 0 });
+    corpusAbortRef.current = api.dictionary.downloadCorpus((event) => {
+      if (event.status === 'starting') {
+        setCorpusProgress({ percent: 0, downloaded: 0, total: 0 });
+      } else if (event.status === 'progress') {
+        setCorpusProgress({
+          percent: event.percent,
+          downloaded: event.downloaded_bytes,
+          total: event.total_bytes,
+        });
+      } else if (event.status === 'complete') {
+        setCorpusDownloading(false);
+        setCorpusProgress(null);
+        loadCorpusStatus();
+      } else if (event.status === 'error') {
+        setCorpusError(event.message);
+        setCorpusDownloading(false);
+        setCorpusProgress(null);
+      }
+    });
+  };
+
+  const handleRemoveCorpus = async () => {
+    if (!confirm('Remove the downloaded full corpus? Retrieval will fall back to the slim BM25-only variant. You can re-download anytime.')) return;
+    try {
+      await api.dictionary.removeCorpus();
+      await loadCorpusStatus();
+    } catch (err) {
+      console.error('Failed to remove corpus:', err);
+      setCorpusError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -1787,6 +1853,85 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs }: Setti
                 Tip: if you correct a transcribed word manually, Verbatim auto-adds it
                 to your vocabulary too — no separate step needed.
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Optional: download the full embedded corpus for semantic retrieval.
+            Slim BM25-only DB ships in the installer; this tile upgrades to
+            hybrid (BM25 + cosine) by pulling the embedded variant from
+            verbatim-studio-releases. */}
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
+          <div className="flex items-start gap-3">
+            <div className="text-2xl" aria-hidden>🧠</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    Semantic vocabulary corpus
+                    {corpusStatus?.has_embeddings && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                        active
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {corpusStatus?.has_embeddings
+                      ? `Hybrid retrieval is on. Verbatim can match terms semantically (e.g. "Marine Corps administration" surfacing MARCORSEPMAN even without a literal token match). Stored: ${corpusStatus.bytes_on_disk ? (corpusStatus.bytes_on_disk / 1024 / 1024).toFixed(0) : '?'} MB.`
+                      : 'Optional ~1.1 GB download. Adds semantic retrieval on top of the lexical (BM25) matching that already ships. Useful for projects where the relevant term might not share any literal tokens with your project description.'}
+                  </p>
+                </div>
+                <div className="flex-shrink-0">
+                  {corpusStatus?.has_embeddings ? (
+                    <button
+                      onClick={handleRemoveCorpus}
+                      disabled={corpusDownloading}
+                      className="px-3 py-1.5 text-sm font-medium text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  ) : corpusDownloading ? (
+                    <button
+                      onClick={() => corpusAbortRef.current?.abort()}
+                      className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleDownloadCorpus}
+                      className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                    >
+                      Download (~1.1 GB)
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {corpusDownloading && corpusProgress && (
+                <div className="mt-3">
+                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                    <span>
+                      {corpusProgress.total > 0
+                        ? `${(corpusProgress.downloaded / 1024 / 1024).toFixed(0)} / ${(corpusProgress.total / 1024 / 1024).toFixed(0)} MB`
+                        : 'Connecting…'}
+                    </span>
+                    <span>{corpusProgress.percent}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-all"
+                      style={{ width: `${corpusProgress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {corpusError && (
+                <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                  Download failed: {corpusError}
+                </p>
+              )}
             </div>
           </div>
         </div>
