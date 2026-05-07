@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from ..pronunciation import derive_acronym_pronunciations
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,31 @@ _TERMS: list[tuple[str, str]] = [
 ]
 
 
+# Acronyms commonly pronounced AS A WORD rather than spelled out.
+# These get an explicit word-form sounds_like hint so phonetic
+# correction can match audio that produces the spoken word.
+_WORD_PRONOUNCED: dict[str, list[str]] = {
+    "NASA": ["nah-suh", "nass-uh"],
+    "NATO": ["nay-toh", "nay-doh"],
+    "FEMA": ["fee-muh"],
+    "FAFSA": ["faf-suh"],
+    "OSHA": ["oh-shuh"],
+    "ASEAN": ["ah-see-on", "ah-zee-on"],
+    "OPEC": ["oh-peck"],
+    "UNESCO": ["yu-nes-koh"],
+    "UNICEF": ["yu-ni-sef"],
+    "OPM": ["oh pee em"],  # spelled-out
+    "PCI-DSS": ["pee see eye dee ess ess"],
+    "COBRA": ["koh-bruh"],
+    "USPS": ["yu ess pee ess"],
+    "FAA": ["ef ay ay", "faa"],
+    "CMS": ["see em ess"],
+    "USAID": ["you-ess-aid", "yu-said"],
+    "EXIM": ["ex-im"],
+    "FDIC": ["ef dee eye see"],
+}
+
+
 def iter_terms() -> Iterable[RawTerm]:
     seen: set[str] = set()
     for canonical, expansion in _TERMS:
@@ -146,11 +172,17 @@ def iter_terms() -> Iterable[RawTerm]:
             "DOD", "DHS", "VA", "OSHA", "FAFSA", "Medicare", "Medicaid",
             "SSA", "SNAP", "DMV",
         } else 0.6
+        # Auto-derive letter-by-letter + layer in word-form hints when known.
+        sounds_like = derive_acronym_pronunciations(
+            canonical,
+            extra_hints=_WORD_PRONOUNCED.get(canonical, []),
+        )
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="government",
             subcategory="agency",
+            sounds_like=sounds_like,
             context_blurb=expansion[:140],
             popularity_score=score,
             source="Curated US government acronyms (DOJ + agency websites)",

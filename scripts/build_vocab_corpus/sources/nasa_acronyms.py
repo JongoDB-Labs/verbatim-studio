@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
+from ..pronunciation import derive_acronym_pronunciations
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -124,11 +125,19 @@ def iter_terms() -> Iterable[RawTerm]:
         # → 0.6, 4-5 chars → 0.4, 6+ → 0.2.
         score = 0.6 if len(canonical) <= 3 else 0.4 if len(canonical) <= 5 else 0.2
 
+        # Auto-derived letter-by-letter pronunciation. NASA's CSV doesn't
+        # tell us which acronyms are spoken as words (NASA, JPL) vs.
+        # spelled out (FY, ROI), so we ship the safe letter-form only.
+        # Curated sources (military_acronyms, business_acronyms) layer
+        # explicit word-form hints on top.
+        sounds_like = derive_acronym_pronunciations(canonical)
+
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="business",  # most NASA acronyms are gov/biz/tech crossover
             subcategory="acronym",
+            sounds_like=sounds_like,
             context_blurb=definition[:120] if definition else "",
             popularity_score=score,
             source="NASA-Acronyms (MIT)",

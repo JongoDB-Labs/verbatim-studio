@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from ..pronunciation import derive_acronym_pronunciations
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -157,17 +158,56 @@ _OTHER: list[tuple[str, str]] = [
 ]
 
 
+_LE_WORD_PRONOUNCED: dict[str, list[str]] = {
+    "BOLO": ["boh-loh", "boe-low"],
+    "APB": ["ay pee bee"],
+    "DOA": ["dee oh ay"],
+    "DUI": ["dee you eye"],
+    "DWI": ["dee double-u eye"],
+    "OUI": ["oh you eye", "oh-you-eye"],
+    "SWAT": ["swat"],
+    "K-9": ["kay nine", "kay-nine", "canine"],
+    "MDT": ["em dee tee"],
+    "AVL": ["ay vee ell"],
+    "CAD": ["cad"],
+    "RMS": ["ar em ess"],
+    "CHP": ["see aitch pee"],
+    "PD": ["pee dee"],
+    "SO": ["ess oh"],
+    "HP": ["aitch pee"],
+    "SRT": ["ess ar tee"],
+}
+
+
+def _ten_code_pronunciation(code: str) -> list[str]:
+    """Ten-codes are spoken in two patterns: \"ten four\" or \"one zero
+    four\". Both should land in sounds_like so phonetic match catches
+    either form."""
+    if not code.startswith("10-"):
+        return []
+    rest = code[3:]
+    return [
+        f"ten {rest}",
+        f"ten-{rest}",
+        f"ten dash {rest}",
+        f"one zero {rest}",
+        f"ten oh {rest}" if len(rest) == 1 else "",
+    ]
+
+
 def iter_terms() -> Iterable[RawTerm]:
     seen: set[str] = set()
     for canonical, gloss in _TEN_CODES:
         if canonical in seen:
             continue
         seen.add(canonical)
+        sounds_like = [s for s in _ten_code_pronunciation(canonical) if s]
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="law_enforcement",
             subcategory="ten_code",
+            sounds_like=sounds_like,
             context_blurb=gloss[:140],
             popularity_score=0.6,
             source="APCO ten-codes (Wikipedia CC-BY-SA)",
@@ -176,11 +216,20 @@ def iter_terms() -> Iterable[RawTerm]:
         if canonical in seen:
             continue
         seen.add(canonical)
+        # Don't auto-derive on multi-word entries like "Code 3"
+        if " " in canonical or canonical.isalnum() and not canonical.isupper():
+            sounds_like = _LE_WORD_PRONOUNCED.get(canonical, [])
+        else:
+            sounds_like = derive_acronym_pronunciations(
+                canonical,
+                extra_hints=_LE_WORD_PRONOUNCED.get(canonical, []),
+            )
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="law_enforcement",
             subcategory="abbreviation",
+            sounds_like=sounds_like,
             context_blurb=gloss[:140],
             popularity_score=0.7,
             source="Curated LE abbreviations (Wikipedia + agency public)",

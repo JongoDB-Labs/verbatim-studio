@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from typing import Iterable
 
+from ..pronunciation import letter_by_letter
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -82,11 +83,19 @@ def iter_terms() -> Iterable[RawTerm]:
 
         if iata and len(iata) == 3 and iata not in seen_iata:
             seen_iata.add(iata)
+            # Airport codes are spoken letter-by-letter ("J F K") — bake
+            # both the spaced and hyphenated forms in so the post-pass
+            # phonetic match catches "jay ef kay" → "JFK".
+            sounds_like_iata = [
+                letter_by_letter(iata, joiner=" "),
+                letter_by_letter(iata, joiner="-"),
+            ]
             yield RawTerm(
                 term=iata,
                 canonical_form=iata,
                 category="aviation",
                 subcategory="iata",
+                sounds_like=sounds_like_iata,
                 context_blurb=f"{name} IATA code",
                 popularity_score=size_score,
                 source="OurAirports (public domain)",
@@ -95,11 +104,16 @@ def iter_terms() -> Iterable[RawTerm]:
 
         if icao and 3 <= len(icao) <= 4 and icao not in seen_icao and icao != iata:
             seen_icao.add(icao)
+            sounds_like_icao = [
+                letter_by_letter(icao, joiner=" "),
+                letter_by_letter(icao, joiner="-"),
+            ]
             yield RawTerm(
                 term=icao,
                 canonical_form=icao,
                 category="aviation",
                 subcategory="icao",
+                sounds_like=sounds_like_icao,
                 context_blurb=f"{name} ICAO code",
                 popularity_score=size_score * 0.7,  # ICAO less commonly spoken
                 source="OurAirports (public domain)",

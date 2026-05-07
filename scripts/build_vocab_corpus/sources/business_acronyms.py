@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from ..pronunciation import derive_acronym_pronunciations
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,38 @@ _TERMS: list[tuple[str, str]] = [
 ]
 
 
+# Business acronyms commonly pronounced as words.
+_WORD_PRONOUNCED: dict[str, list[str]] = {
+    "EBITDA": ["ee-bit-duh", "ee bit duh"],
+    "GAAP": ["gap"],
+    "SOX": ["socks"],
+    "FOMC": ["ef oh em see"],
+    "WACC": ["whack"],
+    "OPEX": ["oh-pex", "op ex"],
+    "CAPEX": ["cap-ex", "cap ex"],
+    "COGS": ["cogs"],
+    "BHAG": ["bee hag", "bee-hag"],
+    "EULA": ["yu-luh"],
+    "SCRUM": ["scrum"],
+    "AML": ["ay em ell"],
+    "KYC": ["kay why see"],
+    "HSA": ["aitch ess ay"],
+    "FSA": ["ef ess ay"],
+    "IRA": ["eye ar ay", "eye-ar-ay"],
+    "PPO": ["pee pee oh"],
+    "HMO": ["aitch em oh"],
+    "HDHP": ["aitch dee aitch pee"],
+    "PCI-DSS": ["pee see eye dee ess ess"],
+    "COBRA": ["koh-bruh", "koh bruh"],
+    "FOMO": ["foh moh"],
+    "Fed": ["fed"],
+    "SPAC": ["spack"],
+    "SPV": ["ess pee vee"],
+    "REIT": ["reet", "ree it"],
+    "FOMC": ["ef oh em see"],
+}
+
+
 def iter_terms() -> Iterable[RawTerm]:
     seen: set[str] = set()
     for canonical, expansion in _TERMS:
@@ -180,11 +213,16 @@ def iter_terms() -> Iterable[RawTerm]:
         if key in seen:
             continue
         seen.add(key)
+        sounds_like = derive_acronym_pronunciations(
+            canonical,
+            extra_hints=_WORD_PRONOUNCED.get(canonical, []),
+        )
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="business",
             subcategory="acronym",
+            sounds_like=sounds_like,
             context_blurb=expansion[:140],
             popularity_score=0.7,
             source="Curated business / finance abbreviations",

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from ..pronunciation import derive_acronym_pronunciations
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -294,6 +295,85 @@ _TERMS: list[tuple[str, str, str]] = [
 ]
 
 
+# Tech terms with non-obvious / community-standard pronunciations.
+# Letter-form is auto-derived for ALL-CAPS acronyms; word-form is
+# explicit for things Whisper consistently mishears.
+_TECH_PRONUNCIATIONS: dict[str, list[str]] = {
+    "AWS": ["ay double-u ess", "ay-double-u-ess"],
+    "GCP": ["gee see pee"],
+    "API": ["ay pee eye"],
+    "SDK": ["ess dee kay"],
+    "REST": ["rest"],
+    "GraphQL": ["graph cue ell", "graph-q-l", "graph que ell"],
+    "gRPC": ["gee ar pee see"],
+    "HTTP": ["aitch tee tee pee"],
+    "HTTPS": ["aitch tee tee pee ess"],
+    "TCP": ["tee see pee"],
+    "UDP": ["you dee pee"],
+    "DNS": ["dee en ess"],
+    "SSH": ["ess ess aitch"],
+    "TLS": ["tee ell ess"],
+    "SSL": ["ess ess ell"],
+    "OAuth": ["oh auth", "oh-auth"],
+    "JWT": ["jay double-u tee", "jot"],
+    "SAML": ["sam ull", "sam-ull"],
+    "LDAP": ["ell dap", "ell-dap"],
+    "WASM": ["wazm", "wah-zm"],
+    "CORS": ["kors"],
+    "CSRF": ["sea surf", "see surf"],
+    "XSS": ["ex ess ess"],
+    "DDoS": ["dee dos", "dee-dos"],
+    "MFA": ["em ef ay"],
+    "2FA": ["two ef ay", "two-ef-ay"],
+    "SSO": ["ess ess oh"],
+    "RBAC": ["are back", "ar-back"],
+    "ABAC": ["ay back", "ay-back"],
+    "CDN": ["see dee en"],
+    "ORM": ["oh ar em"],
+    "CRUD": ["cruhd"],
+    "MVC": ["em vee see"],
+    "MVVM": ["em vee vee em"],
+    "DDD": ["dee dee dee"],
+    "TDD": ["tee dee dee"],
+    "BDD": ["bee dee dee"],
+    "CI/CD": ["see eye see dee", "see-eye see-dee"],
+    "DevOps": ["dev ops"],
+    "MLOps": ["em ell ops"],
+    "SRE": ["ess ar ee"],
+    "AIOps": ["ay eye ops"],
+    "FinOps": ["fin ops"],
+    "FaaS": ["fass"],
+    "PaaS": ["pass"],
+    "IaaS": ["eye ass", "eye-ass"],
+    "SaaS": ["sass"],
+    "BaaS": ["bass"],
+    "WebAssembly": ["web assembly"],
+    "k8s": ["kates", "kay eights"],
+    "kubectl": ["cube cuttle", "cube control", "cube cuddle"],
+    "kubelet": ["cube let", "kube-let"],
+    "etcd": ["et see dee", "etsy dee"],
+    "nginx": ["engine ex", "engine x"],
+    "pnpm": ["pee enem", "pee en pee em"],
+    "npm": ["en pee em"],
+    "uv": ["you vee"],
+    "pipx": ["pip ex", "pip-ex"],
+    "Bazel": ["bay zel"],
+    "PostgreSQL": ["postgres"],
+    "MySQL": ["my ess cue ell", "my sequel"],
+    "SQLite": ["sequel light", "ess cue ell light"],
+    "Redis": ["red iss", "ree dis"],
+    "DuckDB": ["duck dee bee"],
+    "ClickHouse": ["click house"],
+    "DALL-E": ["dolly", "dahl ee"],
+    "GPT-4": ["gee pee tee four"],
+    "GPT-4o": ["gee pee tee four oh"],
+    "LLaMA": ["lah mah"],
+    "Llama": ["lah mah"],
+    "JAX": ["jax"],
+    "Pyramid": ["pir-uh-mid"],  # Web framework, not the geometric one
+}
+
+
 def iter_terms() -> Iterable[RawTerm]:
     seen: set[str] = set()
     for canonical, gloss, subcat in _TERMS:
@@ -301,13 +381,22 @@ def iter_terms() -> Iterable[RawTerm]:
         if key in seen:
             continue
         seen.add(key)
-        # Industry-standard terms get a high baseline.
+        # Build sounds_like:
+        # - All-caps short acronyms (AWS, GCP, REST, SQL): auto + explicit hints
+        # - Mixed-case names (Cloudflare, Postgres, Vercel): explicit hints only
+        # - Underscored / dashed (Next.js, F-35): explicit hints only
+        explicit = _TECH_PRONUNCIATIONS.get(canonical, [])
+        if canonical.replace("-", "").replace("/", "").isalnum() and canonical.isupper() and 2 <= len(canonical) <= 6:
+            sounds_like = derive_acronym_pronunciations(canonical, extra_hints=explicit)
+        else:
+            sounds_like = list(explicit)
         score = 0.7
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="tech",
             subcategory=subcat,
+            sounds_like=sounds_like,
             context_blurb=gloss[:140],
             popularity_score=score,
             source="Curated tech terms",

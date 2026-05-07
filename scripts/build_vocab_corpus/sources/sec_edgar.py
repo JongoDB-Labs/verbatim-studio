@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
+from ..pronunciation import letter_by_letter
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -111,11 +112,17 @@ def iter_terms() -> Iterable[RawTerm]:
             # Tickers often spoken as letter-by-letter — short ones get
             # higher popularity since they're recurring (AMZN, AAPL).
             score = 0.6 if 2 <= len(ticker) <= 4 else 0.4
+            ticker_upper = ticker.upper()
+            sounds_like = [
+                letter_by_letter(ticker_upper, joiner=" "),
+                letter_by_letter(ticker_upper, joiner="-"),
+            ]
             yield RawTerm(
-                term=ticker.upper(),
-                canonical_form=ticker.upper(),
+                term=ticker_upper,
+                canonical_form=ticker_upper,
                 category="business",
                 subcategory="ticker",
+                sounds_like=sounds_like,
                 context_blurb=f"Stock ticker for {_clean_name(title)}",
                 popularity_score=score,
                 source="SEC EDGAR (public domain)",

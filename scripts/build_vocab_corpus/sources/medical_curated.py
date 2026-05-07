@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from ..pronunciation import derive_acronym_pronunciations
 from ..types import RawTerm
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,142 @@ _TERMS: list[tuple[str, str, str]] = [
 ]
 
 
+# Pronunciation hints for medical terms. Drug names especially are
+# pronunciation traps — Whisper hears the audio and can't decide
+# between brand vs. generic, or between similar-sounding compounds.
+# These hints are how the spoken form usually gets typed:
+_MED_PRONUNCIATIONS: dict[str, list[str]] = {
+    # Drugs — generic
+    "atorvastatin": ["uh tor vah stat in", "a-tor-va-stat-in"],
+    "rosuvastatin": ["ros oo vah stat in", "ros-oo-va-stat-in"],
+    "apixaban": ["uh pix uh ban", "a-pix-uh-ban"],
+    "rivaroxaban": ["riv ar ox uh ban"],
+    "clopidogrel": ["kloh pid uh grel"],
+    "levothyroxine": ["lee voh thigh rox een"],
+    "furosemide": ["fyu roh suh mide"],
+    "duloxetine": ["du lox uh teen"],
+    "pregabalin": ["preh gab uh lin"],
+    "escitalopram": ["es sit al uh pram"],
+    "sertraline": ["sir truh leen"],
+    "fluoxetine": ["floo ox uh teen"],
+    "bupropion": ["byu proh pee on"],
+    "venlafaxine": ["ven luh fax een"],
+    "semaglutide": ["sem uh gloo tide"],
+    "tirzepatide": ["tirz ep uh tide"],
+    "dulaglutide": ["du la gloo tide"],
+    "metformin": ["met for min"],
+    "empagliflozin": ["em puh gluh floh zin"],
+    "dapagliflozin": ["dap uh gluh floh zin"],
+    "adalimumab": ["a duh lim oo mab"],
+    "etanercept": ["eh tan er sept"],
+    "infliximab": ["in flix ih mab"],
+    "ustekinumab": ["yoo steh kin oo mab"],
+    "risankizumab": ["riss an kiz oo mab"],
+    "ibuprofen": ["eye byu proh fen"],
+    "acetaminophen": ["uh see tuh min uh fen"],
+    "naproxen": ["nuh prox en"],
+    # Drugs — brand
+    "Lipitor": ["lip ih tor"],
+    "Eliquis": ["el ih kwis"],
+    "Xarelto": ["zah rel toh"],
+    "Plavix": ["play vix"],
+    "Crestor": ["kres tor"],
+    "Synthroid": ["sin throid"],
+    "Lasix": ["lay six"],
+    "Cymbalta": ["sim bal tuh"],
+    "Lyrica": ["lear ih kuh"],
+    "Lexapro": ["lex uh pro"],
+    "Zoloft": ["zoh loft"],
+    "Prozac": ["proh zak"],
+    "Wellbutrin": ["well byu trin"],
+    "Effexor": ["ef ex or"],
+    "Adderall": ["ad er all"],
+    "Vyvanse": ["vy vance"],
+    "Ritalin": ["rit uh lin"],
+    "Concerta": ["kun sair tuh"],
+    "Ozempic": ["oh zem pik"],
+    "Wegovy": ["weh goh vee"],
+    "Mounjaro": ["mown jar oh"],
+    "Zepbound": ["zep bownd"],
+    "Trulicity": ["troo liss ih tee"],
+    "Glucophage": ["gloo koh fage"],
+    "Jardiance": ["jar dee ans"],
+    "Farxiga": ["far zee guh"],
+    "Humira": ["hyu meer uh"],
+    "Enbrel": ["en brel"],
+    "Remicade": ["rem ih kade"],
+    "Stelara": ["stuh lar uh"],
+    "Skyrizi": ["sky rye zee"],
+    "Tylenol": ["tie len ol"],
+    # Conditions
+    "myocardial infarction": ["my oh kar dee ul in fark shun"],
+    "atrial fibrillation": ["ay tree ul fib ruh lay shun", "a fib"],
+    "AFib": ["ay fib"],
+    "hypothyroidism": ["hi poh thigh roi diz um"],
+    "hyperthyroidism": ["hi per thigh roi diz um"],
+    "hashimoto thyroiditis": ["hah shee moh toh thigh roi die tis"],
+    "schizophrenia": ["skit suh free nee uh"],
+    "fibromyalgia": ["fye broh my al jee uh"],
+    "rheumatoid arthritis": ["roo muh toid ar thrye tis"],
+    "osteoarthritis": ["os tee oh ar thrye tis"],
+    # Procedures
+    "colonoscopy": ["koh luh nos koh pee"],
+    "endoscopy": ["en dos koh pee"],
+    "esophagogastroduodenoscopy": ["eh sof uh go gas troh dyu od en os koh pee"],
+    "EGD": ["ee gee dee"],
+    "ERCP": ["ee ar see pee"],
+    "MRI": ["em ar eye"],
+    "CT scan": ["see tee scan"],
+    "PET scan": ["pet scan"],
+    "EKG": ["ee kay gee"],
+    "ECG": ["ee see gee"],
+    "EEG": ["ee ee gee"],
+    "appendectomy": ["uh pen dek tuh mee"],
+    "cholecystectomy": ["koh leh sis tek tuh mee"],
+    "hysterectomy": ["his ter ek tuh mee"],
+    "mastectomy": ["mass tek tuh mee"],
+    "lumpectomy": ["lump ek tuh mee"],
+    "CABG": ["cabbage"],  # Coronary Artery Bypass Graft is universally "cabbage"
+    "PCI": ["pee see eye"],
+    # Anatomy
+    "aorta": ["ay or tuh"],
+    "cerebellum": ["sair uh bell um"],
+    "hippocampus": ["hip oh kam pus"],
+    "amygdala": ["uh mig duh luh"],
+    "hypothalamus": ["hi poh thal uh mus"],
+    "esophagus": ["eh sof uh gus"],
+    "trachea": ["tray kee uh"],
+    "larynx": ["lar inks"],
+    "pharynx": ["fair inks"],
+    "duodenum": ["dyu uh dee num", "dyu od en um"],
+    "jejunum": ["jeh jew num"],
+    "ileum": ["ill ee um"],
+    "femur": ["fee mer"],
+    "humerus": ["hyu mer us"],
+    "clavicle": ["klav ih kul"],
+    "scapula": ["skap yu luh"],
+    # Specialties
+    "cardiology": ["kar dee ol oh jee"],
+    "oncology": ["on kol oh jee"],
+    "neurology": ["nyu rol oh jee"],
+    "endocrinology": ["en doh krin ol oh jee"],
+    "gastroenterology": ["gas troh en ter ol oh jee"],
+    "nephrology": ["neh frol oh jee"],
+    "pulmonology": ["pul mon ol oh jee"],
+    "rheumatology": ["roo muh tol oh jee"],
+    "dermatology": ["der muh tol oh jee"],
+    "ophthalmology": ["off thal mol oh jee"],
+    "otolaryngology": ["oh toh lair in gol oh jee"],
+    "orthopedics": ["or thoh pee diks"],
+    "anesthesiology": ["an es thee zee ol oh jee"],
+    "radiology": ["ray dee ol oh jee"],
+    "pathology": ["puh thol oh jee"],
+    "psychiatry": ["sye kye uh tree"],
+    "obstetrics": ["ob stet riks"],
+    "gynecology": ["gye nuh kol oh jee", "jin uh kol oh jee"],
+}
+
+
 def iter_terms() -> Iterable[RawTerm]:
     seen: set[str] = set()
     for canonical, gloss, subcat in _TERMS:
@@ -208,11 +345,20 @@ def iter_terms() -> Iterable[RawTerm]:
             continue
         seen.add(key)
         score = 0.7 if subcat in {"drug_brand", "condition", "specialty"} else 0.55
+        # Prefer explicit pronunciation when curated; otherwise leave
+        # blank (Whisper handles common medical terms fine without
+        # phonetic hints — only the hard cases are in _MED_PRONUNCIATIONS).
+        explicit = _MED_PRONUNCIATIONS.get(canonical, [])
+        if canonical.isupper() and len(canonical) <= 6:
+            sounds_like = derive_acronym_pronunciations(canonical, extra_hints=explicit)
+        else:
+            sounds_like = list(explicit)
         yield RawTerm(
             term=canonical,
             canonical_form=canonical,
             category="medical",
             subcategory=subcat,
+            sounds_like=sounds_like,
             context_blurb=gloss[:140],
             popularity_score=score,
             source="Curated medical terms",

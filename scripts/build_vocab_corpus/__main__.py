@@ -75,6 +75,7 @@ SOURCE_MODULES = [
     "medical_curated",
     "religious_cultural",
     "cooking_food",
+    "science_terms",
     # Future modules (commented until source extractors land):
     # "scowl",
     # "cmudict",
@@ -430,6 +431,21 @@ awk -F, '$4 ~ /^[a-z]+$/' vocab_corpus.csv | head
 
 # Find dups across categories
 cut -d, -f3 vocab_corpus.csv | sort | uniq -c | sort -rn | head
+
+# Terms with empty sounds_like (no pronunciation hints) — useful for
+# auditing where Phase 2 phonetic correction has weaker recall
+awk -F, '$5 == "" && $1 == "military"' by_category/military.csv | head
+
+# Coverage check: does an expected term exist?
+grep -i "MARCORSEPMAN" vocab_corpus.csv
+
+# Count how many terms have pronunciation hints per category
+for f in by_category/*.csv; do
+  cat=$(basename "$f" .csv)
+  with=$(awk -F, 'NR>1 && $5 != ""' "$f" | wc -l)
+  total=$(($(wc -l < "$f") - 1))
+  printf "%-20s %d/%d with sounds_like\\n" "$cat" "$with" "$total"
+done
 ```
 """)
 
