@@ -167,11 +167,29 @@ def _normalize_term(t: RawTerm) -> RawTerm | None:
     )
 
 
+_ACRONYM_RE = __import__("re").compile(r"^[A-Z][A-Z0-9]{1,9}$")
+
+
+def _looks_acronym(canonical: str) -> bool:
+    """Heuristic: does this term need auto-derived pronunciations?
+
+    True for 2-10 char tokens that are all uppercase letters / digits.
+    Catches FBI / NATO / MCTSSA / Q4 / F35 / USCG. Excludes anything
+    with spaces, lowercase, or punctuation — those are full names or
+    multi-word terms we don't auto-derive for.
+    """
+    if not canonical:
+        return False
+    return bool(_ACRONYM_RE.match(canonical))
+
+
 def _bulk_insert(conn: sqlite3.Connection, terms: Iterable[RawTerm]) -> dict[str, int]:
     """Insert terms into vocab_bundled, deduping by deterministic ID.
 
     Returns per-category insertion counts for the build report.
     """
+    from .pronunciation import derive_acronym_pronunciations
+
     counts: dict[str, int] = {}
     seen_ids: set[int] = set()
     rows: list[tuple] = []
@@ -185,7 +203,24 @@ def _bulk_insert(conn: sqlite3.Connection, terms: Iterable[RawTerm]) -> dict[str
             continue
         seen_ids.add(row_id)
         primary, secondary = _doublemetaphone(norm.canonical_form)
-        sounds_like_str = ",".join(norm.sounds_like) if norm.sounds_like else None
+
+        # Auto-augment sounds_like for acronym-shaped canonicals across
+        # ALL sources. Curated sources (military_acronyms etc.) already
+        # call derive_acronym_pronunciations themselves and pass the
+        # output via norm.sounds_like; this universal pass catches the
+        # bulk sources (SCOWL, Wikidata, OurAirports) where we just
+        # ingested raw text without per-term curation.
+        sounds_like_final = list(norm.sounds_like)
+        if _looks_acronym(norm.canonical_form):
+            derived = derive_acronym_pronunciations(
+                norm.canonical_form, extra_hints=norm.sounds_like,
+            )
+            seen = {s.lower() for s in sounds_like_final}
+            for d in derived:
+                if d.lower() not in seen:
+                    sounds_like_final.append(d)
+                    seen.add(d.lower())
+        sounds_like_str = ",".join(sounds_like_final) if sounds_like_final else None
         rows.append((
             row_id,
             norm.term,
