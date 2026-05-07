@@ -38,6 +38,8 @@ extraResources:
     filter:
       - "*.wav"
       - "*.txt"
+  - from: ../../build/resources/vocab_bundled.db
+    to: vocab_bundled.db
   # EXCLUDED from update builds (all persist in user data dir):
   # - python (~1.2-1.5GB) — migrated on first launch
   # - ffmpeg (~50MB) — migrated on first launch

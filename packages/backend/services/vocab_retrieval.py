@@ -419,6 +419,45 @@ def _popularity_floor_query(
         return []
 
 
+def _category_broadcast_query(
+    conn: sqlite3.Connection,
+    categories: list[str],
+    limit_per_category: int = 30,
+) -> list[sqlite3.Row]:
+    """Top-popularity terms from each category in *categories*.
+
+    Run after the BM25 leg returns its candidates — we count which
+    categories are over-represented in the top BM25 results and broadcast
+    a "bring me the popular terms in this category too" pass. This
+    surfaces semantically-related terms that don't share literal tokens
+    with the project context (e.g. MCTSSA when the context only mentioned
+    MCWL — both are military but they don't share a token).
+
+    Without this leg, the BM25-only fallback mode misses obviously-
+    relevant terms; with it, BM25-only retrieval reaches near-parity
+    with the full hybrid for in-domain projects.
+    """
+    if not categories:
+        return []
+    out: list[sqlite3.Row] = []
+    placeholders = ",".join("?" * len(categories))
+    try:
+        cur = conn.execute(
+            f"SELECT id, term, canonical_form, category, sounds_like, "
+            f"       metaphone_primary, metaphone_secondary, "
+            f"       popularity_score "
+            f"FROM vocab_bundled "
+            f"WHERE category IN ({placeholders}) "
+            f"ORDER BY category, popularity_score DESC, RANDOM() "
+            f"LIMIT ?",
+            (*categories, limit_per_category * len(categories)),
+        )
+        out = cur.fetchall()
+    except sqlite3.Error as e:
+        logger.debug("vocab_retrieval: category broadcast failed: %s", e)
+    return out
+
+
 def _row_to_retrieved(
     row: sqlite3.Row,
     *,
@@ -500,6 +539,23 @@ async def retrieve_for_project(
     popular_rows = _popularity_floor_query(conn, POPULARITY_FLOOR)
     user_rows = await _load_user_rows(db, project_id=project_id)
 
+    # Category broadcast: when BM25 results cluster in a few categories,
+    # pull the top-popularity terms from those categories too. This is
+    # what gets MCTSSA surfaced when the context mentioned MCWL but not
+    # any tokens MCTSSA shares — both are military, broadcast catches it.
+    # Pull the top-3 dominant categories from BM25 results.
+    cat_counts: dict[str, int] = {}
+    for r in bm25_rows[:50]:
+        c = r["category"]
+        cat_counts[c] = cat_counts.get(c, 0) + 1
+    dominant_cats = [
+        c for c, _ in sorted(cat_counts.items(), key=lambda x: -x[1])[:3]
+    ]
+    broadcast_rows = (
+        _category_broadcast_query(conn, dominant_cats, limit_per_category=30)
+        if dominant_cats else []
+    )
+
     # Normalize per-leg scores into [0, 1].
     bm25_norm = dict(zip(
         [r["id"] for r in bm25_rows],
@@ -510,13 +566,17 @@ async def retrieve_for_project(
         _normalize_cosine_distance([r["vec_distance"] for r in cosine_rows]),
     ))
 
-    # Merge candidates by ID.
+    # Merge candidates by ID. Broadcast rows are added with a small
+    # bonus floor so they compete with semantic / lexical hits without
+    # crowding them out.
     by_id: dict[str, sqlite3.Row | dict] = {}
     for r in bm25_rows:
         by_id[str(r["id"])] = r
     for r in cosine_rows:
         by_id.setdefault(str(r["id"]), r)
     for r in popular_rows:
+        by_id.setdefault(str(r["id"]), r)
+    for r in broadcast_rows:
         by_id.setdefault(str(r["id"]), r)
 
     # Score and emit.
@@ -560,11 +620,13 @@ async def retrieve_for_project(
         out.append(rt)
 
     logger.info(
-        "vocab_retrieval: project=%s mode=%s bm25=%d vec=%d popular=%d user=%d → returned=%d",
+        "vocab_retrieval: project=%s mode=%s bm25=%d vec=%d popular=%d "
+        "broadcast=%d (cats=%s) user=%d → returned=%d",
         project_id or "global",
         "hybrid" if (has_vec and vector) else ("bm25-only" if plain else "fallback"),
-        len(bm25_rows), len(cosine_rows), len(popular_rows), len(user_rows),
-        len(out),
+        len(bm25_rows), len(cosine_rows), len(popular_rows),
+        len(broadcast_rows), ",".join(dominant_cats) if dominant_cats else "—",
+        len(user_rows), len(out),
     )
     return out[:limit]
 

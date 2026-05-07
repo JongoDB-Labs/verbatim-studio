@@ -1,0 +1,114 @@
+name: Build Vocabulary Corpus
+
+# Builds vocab_bundled.db (SQLite + FTS5 + sqlite-vec) from the bundled
+# corpus sources, runs Nomic embeddings over every term, and uploads the
+# result as a workflow artifact. The Electron build pulls the artifact
+# at release time so end users get the full hybrid retrieval experience
+# (BM25 + cosine) instead of the BM25-only fallback.
+#
+# Triggers:
+#   - manual dispatch (for ad-hoc rebuilds while iterating on sources)
+#   - push to main when corpus sources change (auto-refresh)
+#   - tag push starting with "v" (cuts a release-aligned corpus)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/build_vocab_corpus/**'
+      - '.github/workflows/build-vocab-corpus.yml'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # required for action-gh-release
+
+jobs:
+  build:
+    name: Assemble corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache corpus source downloads
+        uses: actions/cache@v4
+        with:
+          path: assets/vocab_corpus_cache
+          # Bust cache when source modules change (new download URLs etc.)
+          key: vocab-corpus-cache-${{ hashFiles('scripts/build_vocab_corpus/sources/*.py') }}
+          restore-keys: |
+            vocab-corpus-cache-
+
+      - name: Cache HuggingFace embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-nomic-embed-v1-5
+          restore-keys: |
+            hf-nomic-
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install metaphone sqlite-vec sentence-transformers einops PyMuPDF
+
+      - name: Build corpus with embeddings
+        env:
+          CORPUS_VERSION: ${{ github.ref_name }}
+        run: |
+          python -m scripts.build_vocab_corpus \
+            --output assets/vocab_bundled.db \
+            --csv-export-dir assets/vocab_corpus_export \
+            --corpus-version "${CORPUS_VERSION:-dev}" \
+            --verbose
+
+      - name: Verify corpus integrity
+        run: |
+          python <<'PYEOF'
+          import sqlite3, sys
+          conn = sqlite3.connect("assets/vocab_bundled.db")
+          cur = conn.cursor()
+          (term_count,) = cur.execute("SELECT COUNT(*) FROM vocab_bundled").fetchone()
+          assert term_count >= 100_000, f"corpus suspiciously small: {term_count}"
+          required = ["MCWL", "MCTSSA", "MARCORSEPMAN", "MARFORPAC",
+                      "ADSEP", "MARADMIN", "MARCORSYSCOM",
+                      "EBITDA", "FAFSA", "NATO", "FBI"]
+          missing = [t for t in required
+                     if not cur.execute("SELECT 1 FROM vocab_bundled WHERE term = ? LIMIT 1", (t,)).fetchone()]
+          assert not missing, f"corpus missing required terms: {missing}"
+          (pron, total) = cur.execute(
+              "SELECT COUNT(*) FILTER (WHERE sounds_like IS NOT NULL AND sounds_like != ''), "
+              "COUNT(*) FROM vocab_bundled WHERE category='military'"
+          ).fetchone()
+          assert pron > 200, f"military pronunciation coverage too low: {pron}/{total}"
+          print(f"Corpus integrity OK: {term_count:,} terms, {pron} military pronunciations")
+          conn.close()
+          PYEOF
+
+      - name: Upload corpus artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vocab-corpus-${{ github.sha }}
+          path: |
+            assets/vocab_bundled.db
+            assets/vocab_corpus_export/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload corpus to release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/vocab_bundled.db
+          fail_on_unmatched_files: true
+          token: ${{ secrets.GITHUB_TOKEN }}

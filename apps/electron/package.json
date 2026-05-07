@@ -117,6 +117,10 @@
           "*.wav",
           "*.txt"
         ]
+      },
+      {
+        "from": "../../build/resources/vocab_bundled.db",
+        "to": "vocab_bundled.db"
       }
     ],
     "mac": {
