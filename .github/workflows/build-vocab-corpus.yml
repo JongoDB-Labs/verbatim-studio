@@ -117,15 +117,22 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Upload corpus to release (on tag push)
+      - name: Upload corpus to public releases repo (on tag push)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          # Both variants attach to the release. The auto-updater + Settings
-          # tile pulls vocab_bundled_full.db; vocab_bundled_slim.db is for
-          # auditing / inspection but matches what the installer ships.
+          # Target the PUBLIC releases repo so the F1 download endpoint
+          # (which points at JongoDB/verbatim-studio-releases/releases/latest/download/...)
+          # resolves correctly. Uploading to this repo's own releases would
+          # 404 for end users since this repo is private.
+          repository: JongoDB/verbatim-studio-releases
+          tag_name: ${{ github.ref_name }}
           files: |
             assets/vocab_bundled_full.db
             assets/vocab_bundled_slim.db
           fail_on_unmatched_files: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # The Electron build workflow already creates the release in the
+          # public repo via dispatched workflow; we attach corpus assets
+          # to that same release. If timing is such that this runs first,
+          # action-gh-release creates a draft we can flesh out later.
+          token: ${{ secrets.RELEASES_TOKEN }}
