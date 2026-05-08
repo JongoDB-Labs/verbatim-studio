@@ -126,6 +126,40 @@ export function TourTooltip({
           </a>
         )}
 
+        {/* Recommended-toggle tips. Each card is a concrete "try this"
+            suggestion with reasoning, surfaced inline so users learn
+            the non-obvious power-user toggles right when they're
+            standing in the relevant settings tab. */}
+        {step.recommendations && step.recommendations.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+              Try this
+            </p>
+            {step.recommendations.map((rec, idx) => (
+              <div
+                key={idx}
+                className="rounded-md border border-amber-300/60 dark:border-amber-700/60 bg-amber-50/60 dark:bg-amber-950/30 p-2.5"
+              >
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                      {rec.label}
+                    </p>
+                    {rec.reason && (
+                      <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-200/70 leading-relaxed">
+                        {rec.reason}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Actions */}
         <div className="flex items-center justify-between">
           <button

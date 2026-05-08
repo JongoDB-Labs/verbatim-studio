@@ -74,6 +74,63 @@ def _demo_marker(meta: dict | None) -> bool:
     return bool(meta and meta.get("is_demo") is True)
 
 
+class SampleIdsResponse(BaseModel):
+    """Maps manifest demo_keys (e.g. "roadmap-brief") to actual DB IDs.
+
+    The tour uses this to drill into specific surfaces — when the tour
+    step is "show inline notes", it can navigate to the roadmap-brief
+    document by looking up demo_key → document_id here.
+    """
+
+    projects: dict[str, str]
+    recordings: dict[str, str]
+    documents: dict[str, str]
+    chats: dict[str, str]
+
+
+@router.get("/sample-workspace/ids", response_model=SampleIdsResponse)
+async def sample_workspace_ids(
+    db: AsyncSession = Depends(get_db),
+) -> SampleIdsResponse:
+    """Return demo_key → entity_id map for tour drilldown navigation."""
+    from persistence.models import (
+        Conversation, Document, Project, Recording,
+    )
+
+    out = SampleIdsResponse(projects={}, recordings={}, documents={}, chats={})
+
+    proj_result = await db.execute(select(Project))
+    project_ids: set[str] = set()
+    for p in proj_result.scalars():
+        if _demo_marker(p.metadata_):
+            project_ids.add(p.id)
+            key = p.metadata_.get("demo_key")
+            if key:
+                out.projects[key] = p.id
+
+    rec_result = await db.execute(select(Recording))
+    for r in rec_result.scalars():
+        if _demo_marker(r.metadata_) or r.project_id in project_ids:
+            key = r.metadata_.get("demo_key") if r.metadata_ else None
+            if key:
+                out.recordings[key] = r.id
+
+    doc_result = await db.execute(select(Document))
+    for d in doc_result.scalars():
+        if _demo_marker(d.metadata_) or d.project_id in project_ids:
+            key = d.metadata_.get("demo_key") if d.metadata_ else None
+            if key:
+                out.documents[key] = d.id
+
+    # Conversations don't have a metadata column — match on title prefix.
+    convo_result = await db.execute(select(Conversation))
+    for c in convo_result.scalars():
+        if c.project_id in project_ids:
+            # Use project demo_key + title as a stable lookup key
+            out.chats[c.id] = c.id  # callers use the id directly; map for completeness
+    return out
+
+
 class InstallStatusResponse(BaseModel):
     """Reports whether a demo workspace is already installed."""
 

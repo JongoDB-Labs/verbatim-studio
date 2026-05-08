@@ -3662,6 +3662,18 @@ class ApiClient {
         '/api/onboarding/sample-workspace',
         { method: 'DELETE' },
       ),
+
+    /** Map demo_key → entity_id for sample-workspace drilldown nav.
+     *  Tour uses this to navigate to specific recording/document/chat
+     *  surfaces by their manifest key (e.g. "roadmap-brief") instead
+     *  of hardcoding IDs. */
+    sampleWorkspaceIds: () =>
+      this.request<{
+        projects: Record<string, string>;
+        recordings: Record<string, string>;
+        documents: Record<string, string>;
+        chats: Record<string, string>;
+      }>('/api/onboarding/sample-workspace/ids'),
   };
 
   // Post-Transcription Settings

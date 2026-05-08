@@ -286,6 +286,139 @@ function TrashSettings() {
   );
 }
 
+function SampleWorkspaceSection() {
+  // Show install / remove state for the onboarding sample workspace.
+  // Lives in Settings → General so users have a discoverable home for
+  // it after the tour ends — no need to remember "the modal during
+  // onboarding" if they want to remove it later.
+  const [status, setStatus] = useState<{ installed: boolean; primary_project_id: string | null; primary_project_name: string | null } | null>(null);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retakeTour, setRetakeTour] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await api.onboarding.sampleWorkspaceStatus();
+      setStatus({
+        installed: s.installed,
+        primary_project_id: s.primary_project_id,
+        primary_project_name: s.primary_project_name,
+      });
+    } catch (e) {
+      console.error('sample workspace status failed:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const handleRemove = async () => {
+    if (!confirm('Remove the sample workspace and all its data? This cannot be undone.')) return;
+    setError(null);
+    setWorking(true);
+    try {
+      await api.onboarding.removeSampleWorkspace();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Remove failed');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleInstall = async () => {
+    setError(null);
+    setWorking(true);
+    try {
+      await api.onboarding.installSampleWorkspace();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Install failed');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleRetakeTour = () => {
+    // Re-open the tour by clearing the completed/skipped flags and
+    // reloading. The tour mounts at app boot via the WelcomeModal.
+    localStorage.removeItem('verbatim-tour-completed');
+    localStorage.removeItem('verbatim-tour-skipped');
+    setRetakeTour(true);
+    // Small delay so users see the tooltip before reload.
+    setTimeout(() => window.location.reload(), 400);
+  };
+
+  return (
+    <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Onboarding Tour</h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          Walk-through of Verbatim's full feature surface, with optional sample data.
+        </p>
+      </div>
+      <div className="px-5 py-4 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Retake the tour</p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              Replays the welcome modal and the full guided tour. {retakeTour ? 'Reloading…' : 'App will reload.'}
+            </p>
+          </div>
+          <button
+            onClick={handleRetakeTour}
+            disabled={retakeTour}
+            className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+          >
+            Retake tour
+          </button>
+        </div>
+
+        <div className="flex items-start justify-between gap-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              Sample workspace
+              {status?.installed && (
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                  installed
+                </span>
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              {status?.installed
+                ? `Sample data lives in "${status.primary_project_name ?? 'Tour: Sample Workspace'}". Remove anytime — your real data is not affected.`
+                : 'A small (~250 KB) curated workspace with real public-domain content (Apollo 11 audio, NIST docs, Unsplash photo, sample chat history) so the tour has something to point at.'}
+            </p>
+            {error && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
+            )}
+          </div>
+          <div className="flex-shrink-0">
+            {status?.installed ? (
+              <button
+                onClick={handleRemove}
+                disabled={working}
+                className="px-3 py-1.5 text-sm font-medium text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-lg disabled:opacity-50"
+              >
+                {working ? 'Removing…' : 'Remove sample data'}
+              </button>
+            ) : (
+              <button
+                onClick={handleInstall}
+                disabled={working}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+              >
+                {working ? 'Installing…' : 'Install sample workspace'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavigateToDocuments }: SettingsPageProps) {
   const [settings, setSettings] = useState(() => getStoredSettings());
   const [saved, setSaved] = useState(false);
@@ -5567,9 +5700,11 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
         </>
       )}
 
-      {/* ===== GENERAL TAB (continued) - About ===== */}
+      {/* ===== GENERAL TAB (continued) - Onboarding Tour ===== */}
       {activeTab === 'general' && (
         <>
+      <SampleWorkspaceSection />
+
       {/* About Section */}
       <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">

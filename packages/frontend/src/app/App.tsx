@@ -511,12 +511,17 @@ function AppContent() {
   const handleInstallSampleWorkspace = useCallback(async () => {
     const result = await api.onboarding.installSampleWorkspace();
     setShowSampleModal(false);
+    // Cache demo entity IDs so tour-step `document:roadmap-brief` etc
+    // can drill into specific seed entities.
+    try {
+      demoIdsRef.current = await api.onboarding.sampleWorkspaceIds();
+    } catch {
+      demoIdsRef.current = null;
+    }
     setIsTourActive(true);
     // Navigate to the seeded primary project so step 1 of the tour
     // points at populated content.
     if (result.primary_project_id) {
-      // Project navigation goes through the project store — mirror
-      // what happens when the user picks a project in the dropdown.
       try {
         const { useProjectStore } = await import('@/stores/projectStore');
         useProjectStore.getState().setSelectedProjects([{
@@ -535,7 +540,60 @@ function AppContent() {
     setIsTourActive(true);
   }, []);
 
+  // Used when the user retakes the tour and the sample workspace is
+  // already installed — skip the install and just resume into the
+  // tour overlay against existing seed data.
+  const handleProceedWithExistingSample = useCallback(async () => {
+    setShowSampleModal(false);
+    try {
+      const status = await api.onboarding.sampleWorkspaceStatus();
+      if (status.primary_project_id) {
+        const { useProjectStore } = await import('@/stores/projectStore');
+        useProjectStore.getState().setSelectedProjects([{
+          id: status.primary_project_id,
+          name: status.primary_project_name ?? 'Tour: Sample Workspace',
+        }]);
+      }
+      // Cache demo IDs for drilldown nav — same as the install path.
+      demoIdsRef.current = await api.onboarding.sampleWorkspaceIds();
+    } catch {
+      // Best-effort scoping; tour still works without it.
+    }
+    setIsTourActive(true);
+  }, []);
+
+  // Demo entity IDs cache — populated on tour start for drilldown
+  // navigation. demo_key (e.g. "roadmap-brief") → DB ID.
+  const demoIdsRef = useRef<{
+    projects: Record<string, string>;
+    recordings: Record<string, string>;
+    documents: Record<string, string>;
+  } | null>(null);
+
   const handleTourNavigate = useCallback((target: string) => {
+    // Drilldown patterns first — these resolve to specific entities
+    // in the seed-installed sample workspace (no-op if user skipped
+    // the workspace install).
+    if (target.startsWith('document:')) {
+      const key = target.split(':')[1];
+      const id = demoIdsRef.current?.documents?.[key];
+      if (id) {
+        setNavigation({ type: 'document-viewer', documentId: id });
+      } else {
+        setNavigation({ type: 'documents' });
+      }
+      return;
+    }
+    if (target.startsWith('recording:')) {
+      const key = target.split(':')[1];
+      const id = demoIdsRef.current?.recordings?.[key];
+      if (id) {
+        setNavigation({ type: 'transcript', recordingId: id });
+      } else {
+        setNavigation({ type: 'recordings' });
+      }
+      return;
+    }
     if (target === 'settings') {
       setNavigation({ type: 'settings' });
       return;
@@ -868,12 +926,14 @@ function AppContent() {
             isOpen={showSampleModal && !isConnecting && !error}
             onInstall={handleInstallSampleWorkspace}
             onSkip={handleSkipSampleWorkspace}
+            onProceedWithExisting={handleProceedWithExistingSample}
           />
           <OnboardingTour
             isActive={isTourActive}
             onComplete={handleTourComplete}
             onSkip={handleTourSkip}
             onNavigate={handleTourNavigate}
+            hasSampleWorkspace={demoIdsRef.current !== null}
           />
           <TourToast
             isVisible={showTourToast}

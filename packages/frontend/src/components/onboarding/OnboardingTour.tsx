@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TourTooltip } from './TourTooltip';
 import { TOUR_STEPS, TOUR_STORAGE_KEYS } from './tourSteps';
@@ -8,14 +8,25 @@ interface OnboardingTourProps {
   onComplete: () => void;
   onSkip: () => void;
   onNavigate?: (target: string) => void;
+  // When true, steps tagged requiresDemo are included. When false,
+  // they're filtered out so users without seed data don't get pointed
+  // at empty surfaces.
+  hasSampleWorkspace?: boolean;
 }
 
-export function OnboardingTour({ isActive, onComplete, onSkip, onNavigate }: OnboardingTourProps) {
+export function OnboardingTour({ isActive, onComplete, onSkip, onNavigate, hasSampleWorkspace = false }: OnboardingTourProps) {
+  // Filter steps based on whether the user has the sample workspace
+  // installed. Filtering happens once per tour activation so step
+  // indices stay stable across renders.
+  const steps = useMemo(
+    () => (hasSampleWorkspace ? TOUR_STEPS : TOUR_STEPS.filter((s) => !s.requiresDemo)),
+    [hasSampleWorkspace],
+  );
   const [currentStep, setCurrentStep] = useState(0);
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
 
-  const step = TOUR_STEPS[currentStep];
+  const step = steps[currentStep];
 
   // Handle navigation when step changes
   useEffect(() => {
@@ -98,7 +109,7 @@ export function OnboardingTour({ isActive, onComplete, onSkip, onNavigate }: Onb
       targetElement.removeAttribute('data-tour-active');
     }
 
-    if (currentStep < TOUR_STEPS.length - 1) {
+    if (currentStep < steps.length - 1) {
       setCurrentStep((prev) => prev + 1);
     } else {
       // Tour complete
@@ -171,7 +182,7 @@ export function OnboardingTour({ isActive, onComplete, onSkip, onNavigate }: Onb
       <TourTooltip
         step={step}
         currentStep={currentStep}
-        totalSteps={TOUR_STEPS.length}
+        totalSteps={steps.length}
         onNext={handleNext}
         onBack={handleBack}
         onSkip={handleSkip}

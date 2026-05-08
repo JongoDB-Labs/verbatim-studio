@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { api } from '@/lib/api';
 
 interface SampleWorkspaceModalProps {
   isOpen: boolean;
   onInstall: () => Promise<void>;
   onSkip: () => void;
+  // Called when the modal detects an existing install and the user
+  // chooses to keep it + proceed with the tour (no second install).
+  onProceedWithExisting?: () => void;
 }
 
 /**
@@ -12,10 +16,35 @@ interface SampleWorkspaceModalProps {
  * (~250 KB download) so the rest of the tour has real content to
  * point at? Skip is fine — the tour still walks the surface, just
  * without populated examples.
+ *
+ * If the user has already installed the sample workspace before
+ * (i.e. retaking the tour), we skip the install pitch and go
+ * straight to a "you already have it — start tour?" prompt.
  */
-export function SampleWorkspaceModal({ isOpen, onInstall, onSkip }: SampleWorkspaceModalProps) {
+export function SampleWorkspaceModal({ isOpen, onInstall, onSkip, onProceedWithExisting }: SampleWorkspaceModalProps) {
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [alreadyInstalled, setAlreadyInstalled] = useState<boolean | null>(null);
+
+  // Detect existing install when modal opens
+  useEffect(() => {
+    if (!isOpen) {
+      setAlreadyInstalled(null);
+      return;
+    }
+    let cancelled = false;
+    api.onboarding
+      .sampleWorkspaceStatus()
+      .then((status) => {
+        if (!cancelled) setAlreadyInstalled(status.installed);
+      })
+      .catch(() => {
+        if (!cancelled) setAlreadyInstalled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -39,6 +68,37 @@ export function SampleWorkspaceModal({ isOpen, onInstall, onSkip }: SampleWorksp
         aria-modal="true"
         aria-labelledby="sample-title"
       >
+        {/* Already-installed branch — shown when user retakes the tour
+            after they previously opted in. Don't re-download / re-seed,
+            just let them proceed into the tour. */}
+        {alreadyInstalled === true && (
+          <div className="p-7">
+            <h2 id="sample-title" className="text-xl font-bold text-foreground mb-2">
+              Sample workspace already installed
+            </h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              You already have the sample workspace from a previous tour.
+              We'll skip the install step and jump straight back into the
+              walkthrough.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={onSkip}
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Skip the tour
+              </button>
+              <button
+                onClick={onProceedWithExisting ?? onSkip}
+                className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+              >
+                Start tour
+              </button>
+            </div>
+          </div>
+        )}
+
+        {alreadyInstalled === false && (
         <div className="p-7">
           <h2 id="sample-title" className="text-xl font-bold text-foreground mb-2">
             Want a sample workspace to follow along?
@@ -111,6 +171,17 @@ export function SampleWorkspaceModal({ isOpen, onInstall, onSkip }: SampleWorksp
             </button>
           </div>
         </div>
+        )}
+
+        {/* Loading state while we check the install status */}
+        {alreadyInstalled === null && (
+          <div className="p-12 flex items-center justify-center">
+            <svg className="w-6 h-6 animate-spin text-muted-foreground" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+        )}
       </div>
     </div>,
     document.body,
