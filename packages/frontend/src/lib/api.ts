@@ -3638,6 +3638,32 @@ class ApiClient {
       this.request<CalendarEvent[]>(`/api/calendar/events?max_results=${maxResults}`),
   };
 
+  // Onboarding — sample-workspace install/remove for the feature tour
+  onboarding = {
+    sampleWorkspaceStatus: () =>
+      this.request<{
+        installed: boolean;
+        project_count: number;
+        primary_project_id: string | null;
+        primary_project_name: string | null;
+      }>('/api/onboarding/sample-workspace/status'),
+
+    installSampleWorkspace: () =>
+      this.request<{
+        installed: boolean;
+        project_ids: string[];
+        primary_project_id: string | null;
+        counts: Record<string, number>;
+        message: string;
+      }>('/api/onboarding/sample-workspace/install', { method: 'POST' }),
+
+    removeSampleWorkspace: () =>
+      this.request<{ removed: boolean; counts: Record<string, number> }>(
+        '/api/onboarding/sample-workspace',
+        { method: 'DELETE' },
+      ),
+  };
+
   // Post-Transcription Settings
   postTranscription = {
     get: () =>

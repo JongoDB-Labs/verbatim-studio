@@ -402,8 +402,13 @@ def _embed_corpus(conn: sqlite3.Connection) -> int:
                 (term_id, vec.tobytes())
                 for term_id, vec in zip(chunk_ids, chunk_q)
             ]
+            # Wrap with vec_int8() so sqlite-vec interprets the raw
+            # bytes as int8 vectors. Without this it tries to guess
+            # from byte count and fails (768 bytes could be int8[768]
+            # or float16[384]).
             conn.executemany(
-                "INSERT OR REPLACE INTO vocab_bundled_vec (term_id, embedding) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO vocab_bundled_vec (term_id, embedding) "
+                "VALUES (?, vec_int8(?))",
                 data,
             )
             embedded += len(data)

@@ -167,6 +167,14 @@ jobs:
         # downloaded by users opting into hybrid retrieval.
         run: cp assets/vocab_bundled.db assets/vocab_bundled_full.db
 
+      - name: Build tour-demo zip
+        # The onboarding tour offers an opt-in sample workspace. We
+        # build the zip here (cheap — no embeddings, no network) so it
+        # can ride along on the same release upload.
+        run: |
+          pip install python-docx reportlab Pillow
+          python scripts/build_tour_demo.py --output assets/tour-demo.zip --verbose
+
       - name: Upload corpus artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -192,6 +200,7 @@ jobs:
             assets/vocab_bundled_full.db
             assets/vocab_bundled_slim.db
             assets/corpus_metadata.json
+            assets/tour-demo.zip
           fail_on_unmatched_files: true
           # The Electron build workflow already creates the release in the
           # public repo via dispatched workflow; we attach corpus assets

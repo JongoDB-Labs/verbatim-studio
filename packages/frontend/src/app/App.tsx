@@ -26,7 +26,7 @@ import type { ChatMessage } from '@/components/ai/ChatMessages';
 import type { ChatAttachment } from '@/components/ai/AttachmentPicker';
 import { ChatsPage } from '@/pages/chats/ChatsPage';
 import { ArchivePage } from '@/pages/archive/ArchivePage';
-import { OnboardingTour, WelcomeModal, TourToast, TOUR_STORAGE_KEYS } from '@/components/onboarding';
+import { OnboardingTour, WelcomeModal, SampleWorkspaceModal, TourToast, TOUR_STORAGE_KEYS } from '@/components/onboarding';
 import { UpdatePrompt, WhatsNewDialog } from '@/components/updates';
 import { useProjectStore } from '@/stores/projectStore';
 
@@ -497,8 +497,41 @@ function AppContent() {
   }, []);
 
   // Tour handlers
+  // Modal sequence on first launch: WelcomeModal → SampleWorkspaceModal
+  // → tour overlay. Skipping welcome ends the sequence; skipping the
+  // sample workspace just starts the tour without seeded content.
+  const [showSampleModal, setShowSampleModal] = useState(false);
+
   const handleStartTour = useCallback(() => {
     setShowWelcomeModal(false);
+    // Show the sample-workspace prompt before starting the tour.
+    setShowSampleModal(true);
+  }, []);
+
+  const handleInstallSampleWorkspace = useCallback(async () => {
+    const result = await api.onboarding.installSampleWorkspace();
+    setShowSampleModal(false);
+    setIsTourActive(true);
+    // Navigate to the seeded primary project so step 1 of the tour
+    // points at populated content.
+    if (result.primary_project_id) {
+      // Project navigation goes through the project store — mirror
+      // what happens when the user picks a project in the dropdown.
+      try {
+        const { useProjectStore } = await import('@/stores/projectStore');
+        useProjectStore.getState().setSelectedProjects([{
+          id: result.primary_project_id,
+          name: 'Tour: Sample Workspace',
+        }]);
+      } catch {
+        // Best-effort — store contract may shift; tour still works
+        // without auto-scoping.
+      }
+    }
+  }, []);
+
+  const handleSkipSampleWorkspace = useCallback(() => {
+    setShowSampleModal(false);
     setIsTourActive(true);
   }, []);
 
@@ -830,6 +863,11 @@ function AppContent() {
             isOpen={showWelcomeModal && !isConnecting && !error}
             onStartTour={handleStartTour}
             onSkip={handleWelcomeSkip}
+          />
+          <SampleWorkspaceModal
+            isOpen={showSampleModal && !isConnecting && !error}
+            onInstall={handleInstallSampleWorkspace}
+            onSkip={handleSkipSampleWorkspace}
           />
           <OnboardingTour
             isActive={isTourActive}

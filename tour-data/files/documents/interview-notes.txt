@@ -1,0 +1,20 @@
+User Research — Interview Notes
+
+Participant: P03 — Senior PM at fintech startup
+Date: October 2026
+Format: 30-min remote interview
+
+Key findings:
+
+1. Privacy is the primary purchase motivator. P03 ruled out Otter and Fireflies because of cloud-only architecture. "My CFO transcripts can't leave my laptop."
+
+2. Existing tools fail on domain vocabulary. P03 cited consistent misrecognition of company-specific acronyms — they switch to manual editing 5-10 times per transcript.
+
+3. Project-based organization is critical. P03 manages 8 ongoing client engagements; needs each transcript / document / note tied to a specific client folder.
+
+4. Voice search > keyboard search. P03 prefers asking the assistant a question over crafting search queries. "What did Sarah say about the pricing model?" feels more natural than "sarah pricing model."
+
+Action items:
+- Verify our vocabulary correction handles their acronym list
+- Confirm project isolation is intuitive in onboarding
+- Test voice chat with Max on multi-speaker transcripts

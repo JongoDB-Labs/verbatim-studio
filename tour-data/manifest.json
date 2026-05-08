@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "marker_key": "is_demo",
+  "marker_value": true,
+  "description": "Verbatim sample workspace — installed by users who opt in during the feature tour. Tag-marked for one-click removal.",
+
+  "projects": [
+    {
+      "key": "primary",
+      "name": "Tour: Sample Workspace",
+      "description": "A small sample project used by the feature tour. Contains a recording with a real transcript, a few documents (PDF, DOCX, image), notes anchored to the documents, and a chat history with Max. Safe to remove anytime — Settings → Trash.",
+      "icon": "🎓",
+      "color": "#3b82f6"
+    },
+    {
+      "key": "research",
+      "name": "Tour: Research Project",
+      "description": "A second sample project demonstrating project isolation. Switch between this and the primary project using the dropdown in the top-left to see Verbatim re-scope everything (recordings, documents, search results, chat).",
+      "icon": "🔬",
+      "color": "#10b981"
+    }
+  ],
+
+  "recordings": [
+    {
+      "key": "apollo11",
+      "project": "primary",
+      "title": "Apollo 11 — One Small Step (Neil Armstrong)",
+      "description": "The iconic moment from Apollo 11 (July 20, 1969) when Commander Neil Armstrong became the first human to walk on the lunar surface. Demonstrates Verbatim's transcription on real archived audio with low-fidelity historic speech — exactly the kind of recording vocabulary correction is designed to repair.",
+      "filename": "audio/apollo11-small-step.mp3",
+      "language": "en",
+      "duration_seconds": 13.0,
+      "attribution": {
+        "title": "Apollo 11 — \"One Small Step\" audio",
+        "source_url": "https://www.nasa.gov/audio-and-ringtones/",
+        "license": "Public Domain (US Government work — NASA)"
+      },
+      "transcript": {
+        "segments": [
+          {
+            "start": 0.0,
+            "end": 6.5,
+            "speaker": "CDR",
+            "text": "That's one small step for man,",
+            "confidence": 0.91
+          },
+          {
+            "start": 6.5,
+            "end": 13.0,
+            "speaker": "CDR",
+            "text": "one giant leap for mankind.",
+            "confidence": 0.94
+          }
+        ]
+      }
+    }
+  ],
+
+  "documents": [
+    {
+      "key": "nist-overview",
+      "project": "primary",
+      "title": "NIST Cybersecurity Framework — Overview",
+      "filename": "documents/nist-cybersecurity-overview.pdf",
+      "mime_type": "application/pdf",
+      "extracted_text": "NIST Cybersecurity Framework Overview\n\nThe Framework provides a common language for managing cybersecurity risk. It consists of five core functions: Identify, Protect, Detect, Respond, and Recover. Together these functions provide a high-level strategic view of the lifecycle of an organization's management of cybersecurity risk.\n\nIDENTIFY: Develop organizational understanding to manage cybersecurity risk to systems, assets, data, and capabilities. The activities in this function are foundational for effective use of the Framework. Examples: Asset Management, Business Environment, Governance, Risk Assessment.\n\nPROTECT: Develop and implement appropriate safeguards to ensure delivery of critical services. The Protect function supports the ability to limit or contain the impact of a potential cybersecurity event. Examples: Identity Management, Awareness and Training, Data Security, Information Protection Processes.\n\nDETECT: Develop and implement appropriate activities to identify the occurrence of a cybersecurity event. Examples: Anomalies and Events, Security Continuous Monitoring, Detection Processes.\n\nRESPOND: Develop and implement appropriate activities regarding a detected cybersecurity event. Examples: Response Planning, Communications, Analysis, Mitigation, Improvements.\n\nRECOVER: Develop and implement appropriate activities to maintain plans for resilience and to restore any capabilities or services that were impaired due to a cybersecurity event. Examples: Recovery Planning, Improvements, Communications.",
+      "attribution": {
+        "title": "Cybersecurity Framework — NIST",
+        "source_url": "https://www.nist.gov/cyberframework",
+        "license": "Public Domain (US Government work)"
+      }
+    },
+    {
+      "key": "roadmap-brief",
+      "project": "primary",
+      "title": "Q4 Product Roadmap Brief",
+      "filename": "documents/q4-roadmap-brief.docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "extracted_text": "Q4 Product Roadmap Brief\n\nGoals\n\nThis quarter we are focused on three deliverables: improved transcription accuracy on domain vocabulary, GPU acceleration on Windows, and the Chrome extension launch.\n\nTranscription Accuracy\n\nThe primary success metric is reducing acronym misrecognition rate (e.g., MCTSSA → Mctissa) below 5%. Approach: expand the bundled vocabulary corpus to include MeSH (medical), C4ISR (defense), and the Latin legal vocabulary. Ship int8-quantized embeddings to keep the corpus under 700 MB.\n\nGPU Acceleration\n\nTarget Apple Silicon (already shipping via mlx-whisper) and Windows (CUDA via faster-whisper). Goal: 3x throughput improvement on a 30-minute recording.\n\nChrome Extension\n\nLaunch on Chrome Web Store by end of Q4. Features: capture audio from any tab, screen recording, side-panel chat with Max, and one-click upload to the local Verbatim app.\n\nTimeline\n\nWeek 1-2: vocabulary corpus expansion + int8 quantization\nWeek 3-4: Windows GPU code path + testing\nWeek 5-6: Chrome extension polish + Web Store submission\nWeek 7-8: Buffer + post-launch fixes",
+      "attribution": {
+        "title": "Sample roadmap brief",
+        "source_url": "(created for Verbatim demo)",
+        "license": "CC0"
+      }
+    },
+    {
+      "key": "whiteboard",
+      "project": "primary",
+      "title": "Whiteboard photo — sprint planning",
+      "filename": "images/whiteboard-photo.jpg",
+      "mime_type": "image/jpeg",
+      "extracted_text": "SPRINT PLANNING\n\nMust have:\n- Vocab corpus int8 quantization\n- MCTSSA / NIPR / SIPR fix\n- Onboarding tour rewrite\n\nNice to have:\n- Chrome extension submission\n- Voice chat polish\n\nOpen questions:\n- Whisper engine selection on Windows?\n- Default to local or cloud storage?",
+      "attribution": {
+        "title": "Whiteboard photograph",
+        "source_url": "https://unsplash.com/photos/whiteboard-with-writing",
+        "license": "Unsplash License (commercial use, modification, redistribution permitted)"
+      }
+    },
+    {
+      "key": "interview-notes",
+      "project": "research",
+      "title": "User research interview notes",
+      "filename": "documents/interview-notes.txt",
+      "mime_type": "text/plain",
+      "extracted_text": "User Research — Interview Notes\n\nParticipant: P03 — Senior PM at fintech startup\nDate: October 2026\nFormat: 30-min remote interview\n\nKey findings:\n\n1. Privacy is the primary purchase motivator. P03 ruled out Otter and Fireflies because of cloud-only architecture. \"My CFO transcripts can't leave my laptop.\"\n\n2. Existing tools fail on domain vocabulary. P03 cited consistent misrecognition of company-specific acronyms — they switch to manual editing 5-10 times per transcript.\n\n3. Project-based organization is critical. P03 manages 8 ongoing client engagements; needs each transcript / document / note tied to a specific client folder.\n\n4. Voice search > keyboard search. P03 prefers asking the assistant a question over crafting search queries. \"What did Sarah say about the pricing model?\" feels more natural than \"sarah pricing model.\"\n\nAction items:\n- Verify our vocabulary correction handles their acronym list\n- Confirm project isolation is intuitive in onboarding\n- Test voice chat with Max on multi-speaker transcripts\n",
+      "attribution": {
+        "title": "Sample research notes",
+        "source_url": "(created for Verbatim demo)",
+        "license": "CC0"
+      }
+    }
+  ],
+
+  "notes": [
+    {
+      "document": "roadmap-brief",
+      "anchor_type": "selection",
+      "anchor_data": {
+        "text": "MCTSSA → Mctissa",
+        "page": 1
+      },
+      "content": "This is the exact regression that drove the int8 corpus rebuild. See: vocab_correction.py phonetic gates."
+    },
+    {
+      "document": "nist-overview",
+      "anchor_type": "page",
+      "anchor_data": {
+        "page": 1
+      },
+      "content": "Verbatim's privacy-first architecture maps cleanly to the PROTECT function — local-only data + per-user encryption."
+    },
+    {
+      "document": "whiteboard",
+      "anchor_type": "page",
+      "anchor_data": {
+        "page": 1
+      },
+      "content": "Confirmed scope for the next two weeks. Voice chat polish moved to Q1."
+    }
+  ],
+
+  "chats": [
+    {
+      "project": "primary",
+      "title": "Roadmap brief — what are the action items?",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Can you summarize the action items from the Q4 roadmap brief?"
+        },
+        {
+          "role": "assistant",
+          "content": "From the Q4 Product Roadmap Brief, the action items are:\n\n1. **Transcription accuracy** — Expand the bundled vocabulary corpus to include MeSH (medical), C4ISR (defense), and Latin legal terms. Ship int8-quantized embeddings to keep corpus under 700 MB. Target: reduce acronym misrecognition below 5%.\n\n2. **GPU acceleration** — Target Apple Silicon (already shipping via mlx-whisper) and Windows (CUDA via faster-whisper). Goal: 3x throughput improvement on a 30-minute recording.\n\n3. **Chrome extension** — Launch on Chrome Web Store by end of Q4. Features include audio capture from any tab, screen recording, side-panel chat, and one-click upload.\n\n**Timeline**: 8 weeks total. Weeks 1-2 are vocabulary work, 3-4 are Windows GPU, 5-6 are Chrome extension, and 7-8 are buffer + post-launch fixes."
+        },
+        {
+          "role": "user",
+          "content": "What's the highest-risk item in that timeline?"
+        },
+        {
+          "role": "assistant",
+          "content": "Based on the brief and typical execution risk, the **Windows GPU acceleration** in weeks 3-4 carries the highest risk:\n\n- **Platform-specific code path** — CUDA via faster-whisper is more brittle than the mlx-whisper Apple Silicon path. Driver mismatches, CUDA version compatibility, and varying Windows GPU configs (NVIDIA vs Intel Arc vs AMD) all introduce variability.\n- **Performance target is aggressive** — 3x throughput on a 30-minute recording requires careful batch sizing and may hit memory constraints on consumer GPUs.\n- **No buffer in the schedule** — Chrome extension polish in weeks 5-6 is a hard handoff with no slack if GPU work runs over.\n\nOne mitigation worth considering: kick off Chrome extension work in parallel with GPU testing (week 3) since they're independent tracks."
+        }
+      ]
+    },
+    {
+      "project": "research",
+      "title": "What did P03 say about vocabulary issues?",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What did P03 say about vocabulary issues with their current transcription tool?"
+        },
+        {
+          "role": "assistant",
+          "content": "From the P03 interview notes:\n\nP03 cited **consistent misrecognition of company-specific acronyms** as a major pain point. They reported having to switch to manual editing **5-10 times per transcript** because of these errors.\n\nThis aligns directly with finding #2 in the interview: existing tools fail on domain vocabulary. The action item linked to this finding is: \"Verify our vocabulary correction handles their acronym list.\"\n\nWould you like me to draft a follow-up question to send to P03 asking for a sample of the acronyms that consistently fail?"
+        }
+      ]
+    }
+  ]
+}

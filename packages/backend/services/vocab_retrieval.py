@@ -453,9 +453,13 @@ def _vec_query(
         except Exception as e:
             logger.debug("vocab_retrieval: int8 quantize failed: %s", e)
             return []
+        # vec_int8() wrapper so sqlite-vec interprets the raw bytes as
+        # int8 (matching the storage type of vocab_bundled_vec).
+        match_expr = "vec_int8(?)"
     else:
-        # Legacy float32 corpus — pack as float32.
+        # Legacy float32 corpus — pack as float32, no wrapper needed.
         packed = struct.pack(f"<{len(vector)}f", *vector)
+        match_expr = "?"
     try:
         cur = conn.execute(
             "SELECT b.id, b.term, b.canonical_form, b.category, b.sounds_like, "
@@ -464,7 +468,7 @@ def _vec_query(
             "       v.distance AS vec_distance "
             "FROM vocab_bundled_vec v "
             "JOIN vocab_bundled b ON b.id = v.term_id "
-            "WHERE v.embedding MATCH ? AND k = ? "
+            f"WHERE v.embedding MATCH {match_expr} AND k = ? "
             "ORDER BY v.distance",
             (packed, limit),
         )
