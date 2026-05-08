@@ -59,6 +59,9 @@ tiktoken>=0.7.0
 # metaphone: Double Metaphone phonetic algorithm for the post-correction
 # pass. ~14KB pure Python. Used to find dictionary terms that sound like
 # misrecognized words so we can repair them after Whisper completes.
+# CRITICAL: missing this dependency makes Phase 2 a silent no-op.
+# The install-bundled-deps.sh script verifies its presence after install.
+# Cache buster: 2026-05-08 — bumped to force fresh install on CI.
 metaphone>=0.6
 
 # english-words: ~470k-word standard English wordlist. Used as the second

@@ -84,6 +84,25 @@ fi
   $CORE_EXTRA_ARGS \
   -r "$REQUIREMENTS_CORE"
 
+# Verify Phase 2 vocab-correction dependencies after the core install.
+# These are catastrophic-loss-class — Phase 2 silently no-ops without
+# metaphone (the entire phonetic-correction pass becomes dead code) so
+# the build MUST fail loudly if either failed to install. We've shipped
+# at least one release where the cached Python env didn't have metaphone
+# and Phase 2 was effectively disabled across all users (v0.64.5-v0.64.11).
+echo ""
+echo "=== Verifying Phase 2 vocab-correction dependencies ==="
+if ! "$PYTHON_BIN" -c "import metaphone; from metaphone import doublemetaphone; doublemetaphone('test')" 2>&1; then
+    echo "ERROR: metaphone import/use failed — Phase 2 vocab correction will be a no-op."
+    echo "       Check requirements-core.txt and pip output above for clues."
+    exit 1
+fi
+if ! "$PYTHON_BIN" -c "from english_words import get_english_words_set; get_english_words_set(['web2'], lower=True)" 2>&1; then
+    echo "ERROR: english_words import/use failed — Phase 2 standard-word gate inactive (more false positives)."
+    exit 1
+fi
+echo "Phase 2 deps verified OK (metaphone + english_words)"
+
 # =============================================================================
 # Install ML dependencies with STRICT version pins
 # Uses requirements-ml.txt which has exact version pins (==)

@@ -124,9 +124,13 @@ def _have_metaphone() -> bool:
         from metaphone import doublemetaphone  # noqa: F401
         return True
     except ImportError:
-        logger.warning(
-            "metaphone package not available — phonetic correction is disabled. "
-            "Install with: pip install metaphone."
+        logger.error(
+            "[CRITICAL] metaphone package not installed — Phase 2 phonetic "
+            "correction is COMPLETELY DISABLED. All vocabulary corrections "
+            "will silently no-op until this is fixed. Install with: "
+            "pip install metaphone>=0.6. If this is a packaged install, "
+            "the bundled Python is missing the dep — re-run "
+            "scripts/install-bundled-deps.sh."
         )
         return False
 
