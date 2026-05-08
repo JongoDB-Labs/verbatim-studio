@@ -469,8 +469,17 @@ _MED_PRONUNCIATIONS: dict[str, list[str]] = {
 
 
 def iter_terms() -> Iterable[RawTerm]:
+    # Process med_acronym entries FIRST so they win the dedup race
+    # against earlier "condition"/"procedure" duplicates (PTSD, ADHD,
+    # MRI, EKG, etc). The med_acronym entries carry the misread-shape
+    # sounds_like + critical-tier 0.95 popularity that the older
+    # entries lack.
     seen: set[str] = set()
-    for canonical, gloss, subcat in _TERMS:
+    sorted_terms = sorted(
+        _TERMS,
+        key=lambda t: 0 if t[2] == "med_acronym" else 1,
+    )
+    for canonical, gloss, subcat in sorted_terms:
         key = canonical.lower()
         if key in seen:
             continue

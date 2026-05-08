@@ -416,9 +416,26 @@ def _should_correct(
             return None
 
     # Gate 2 — not a normal English word.
-    # If the wordlist isn't loaded, we skip this gate but log it once.
+    # BUT: skip this gate if the word matches an explicit `sounds_like`
+    # entry for any dictionary term. Curated sounds_like is an explicit
+    # "this English-sounding word IS a misread of this canonical"
+    # assertion (Speechmatics-style). Without this exception, gate 2
+    # would reject "nipper" / "sipper" / "hippo" before the phonetic
+    # match could route them to NIPR / SIPR / HIPAA.
     if standard_word_gate_active and core_lower in standard_words:
-        return None
+        in_curated_sounds_like = False
+        for term in phonetic_index:
+            for spellings in term.code_to_spellings.values():
+                for spelling in spellings:
+                    if spelling.lower() == core_lower:
+                        in_curated_sounds_like = True
+                        break
+                if in_curated_sounds_like:
+                    break
+            if in_curated_sounds_like:
+                break
+        if not in_curated_sounds_like:
+            return None
 
     # Gate 3 — phonetic match + edit distance.
     candidate_codes = _phonetic_codes(core)
