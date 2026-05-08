@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
@@ -276,19 +276,337 @@ async def create_entry(
     return _row_to_response(row)
 
 
-# UUID regex for entry_id path parameter — entries are UUIDv4, but
-# more importantly: this constraint prevents `/corpus`, `/import`,
-# `/extract-from-document`, `/commit-extracted-terms` from accidentally
-# matching the `/{entry_id}` catchall when those specific routes are
-# registered later in the file. (FastAPI matches routes top-down; we
-# don't want to physically move the corpus block above this one.)
-_ENTRY_ID_PATTERN = r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
+# ── Full-corpus download (BM25-only → BM25 + cosine hybrid) ─────────
+#
+# The installer ships a slim vocab_bundled.db (BM25 only) — ~95 MB,
+# enough for full lexical retrieval + category broadcast. Users who
+# want semantic recall (e.g. "Marine Corps administration" surfacing
+# MARCORSEPMAN even without a matching token) opt into downloading
+# the full embedded variant from verbatim-studio-releases.
+#
+# The runtime locator already prefers ${DATA_DIR}/vocab_bundled.db
+# over the resources copy (see services/vocab_retrieval.py:_bundled_db_path),
+# so writing the downloaded full DB into user data dir transparently
+# upgrades retrieval to hybrid mode without an app restart.
+
+import asyncio  # noqa: E402  (lazy in the corpus block)
+import concurrent.futures  # noqa: E402
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Where the full-corpus artifact lives. `latest/download/<file>` redirects
+# to the most recent release's asset with that filename — corpus updates
+# follow the app release cadence, so "latest" is correct here.
+CORPUS_DOWNLOAD_URL = (
+    "https://github.com/JongoDB/verbatim-studio-releases"
+    "/releases/latest/download/vocab_bundled_full.db"
+)
+CORPUS_METADATA_URL = (
+    "https://github.com/JongoDB/verbatim-studio-releases"
+    "/releases/latest/download/corpus_metadata.json"
+)
+
+# Track the in-flight download so a second POST returns 409 instead of
+# kicking off a duplicate.
+_corpus_download_future: concurrent.futures.Future | None = None
+_corpus_download_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+_corpus_download_progress: dict[str, int | str] = {}
+
+
+def _corpus_target_path() -> Path:
+    """Where the downloaded full corpus is written. Takes precedence
+    over the bundled slim DB at runtime."""
+    from core.config import settings
+    settings.ensure_directories()
+    return Path(settings.DATA_DIR) / "vocab_bundled.db"
+
+
+def _do_corpus_download(target: Path) -> None:
+    """Stream the corpus DB to a temp file then atomic-rename.
+
+    Updates `_corpus_download_progress` with downloaded/total bytes so
+    the SSE wrapper can poll. Errors propagate to the future; the SSE
+    wrapper catches them and emits a final `error` event.
+    """
+    import shutil
+    import tempfile
+    import urllib.request
+
+    tmp = target.with_suffix(target.suffix + ".part")
+    if tmp.exists():
+        tmp.unlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    req = urllib.request.Request(
+        CORPUS_DOWNLOAD_URL,
+        headers={"User-Agent": "verbatim-studio/corpus-download"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        _corpus_download_progress["total_bytes"] = total
+        downloaded = 0
+        with tmp.open("wb") as f:
+            while chunk := resp.read(1024 * 1024):  # 1 MB chunks
+                f.write(chunk)
+                downloaded += len(chunk)
+                _corpus_download_progress["downloaded_bytes"] = downloaded
+
+    # Atomic replace — never leave a partial DB at the canonical path.
+    if target.exists():
+        target.unlink()
+    tmp.rename(target)
+    _corpus_download_progress["downloaded_bytes"] = target.stat().st_size
+
+    # Tell the retrieval layer to re-open with the new file.
+    try:
+        from services.vocab_retrieval import reload_bundled_conn
+        has_vec = reload_bundled_conn()
+        _corpus_download_progress["has_vec"] = "true" if has_vec else "false"
+    except Exception as e:
+        logger.warning("corpus reload after download failed: %s", e)
+        _corpus_download_progress["has_vec"] = "unknown"
+
+
+class CorpusStatusResponse(BaseModel):
+    """Current state of the full-corpus download."""
+
+    downloaded: bool
+    downloading: bool
+    has_embeddings: bool
+    bytes_on_disk: int | None
+    download_url: str
+
+
+@router.get("/corpus/status", response_model=CorpusStatusResponse)
+async def get_corpus_status() -> CorpusStatusResponse:
+    """Report whether the full embedded corpus has been downloaded."""
+    target = _corpus_target_path()
+    downloaded = target.exists()
+    downloading = (
+        _corpus_download_future is not None
+        and not _corpus_download_future.done()
+    )
+
+    has_embeddings = False
+    if downloaded:
+        # Probe sqlite_master directly — the vec virtual table appears in
+        # the catalog even without the sqlite-vec extension loaded, so we
+        # don't depend on extension-loading capability or URI-mode quirks
+        # (URI mode + paths with spaces / unicode is a known foot-gun).
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(target))
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE name = 'vocab_bundled_vec' AND type = 'table' LIMIT 1"
+                ).fetchone()
+                has_embeddings = row is not None
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("corpus status probe failed for %s: %s", target, e)
+            has_embeddings = False
+
+    return CorpusStatusResponse(
+        downloaded=downloaded,
+        downloading=downloading,
+        has_embeddings=has_embeddings,
+        bytes_on_disk=target.stat().st_size if downloaded else None,
+        download_url=CORPUS_DOWNLOAD_URL,
+    )
+
+
+@router.post("/corpus/download")
+async def download_full_corpus() -> StreamingResponse:
+    """Begin downloading the full embedded corpus.
+
+    Streams Server-Sent-Events with `{status, downloaded_bytes, total_bytes,
+    percent}` payloads. The download continues even if the client
+    disconnects — clients can re-attach via /corpus/status to see
+    progress and replay the final state.
+    """
+    global _corpus_download_future
+
+    if _corpus_download_future is not None and not _corpus_download_future.done():
+        raise HTTPException(status_code=409, detail="Download already in progress")
+
+    target = _corpus_target_path()
+    _corpus_download_progress.clear()
+    _corpus_download_future = _corpus_download_executor.submit(
+        _do_corpus_download, target,
+    )
+
+    async def _stream():
+        yield f"data: {json.dumps({'status': 'starting'})}\n\n"
+        last_emitted = -1
+        while True:
+            await asyncio.sleep(1)
+            done = _corpus_download_future.done()
+            downloaded = int(_corpus_download_progress.get("downloaded_bytes", 0) or 0)
+            total = int(_corpus_download_progress.get("total_bytes", 0) or 0)
+            percent = int(downloaded / total * 100) if total else 0
+            if percent != last_emitted:
+                last_emitted = percent
+                yield f"data: {json.dumps({'status': 'progress', 'downloaded_bytes': downloaded, 'total_bytes': total, 'percent': percent})}\n\n"
+            if done:
+                exc = _corpus_download_future.exception()
+                if exc:
+                    yield f"data: {json.dumps({'status': 'error', 'message': str(exc)})}\n\n"
+                else:
+                    has_vec = _corpus_download_progress.get("has_vec", "unknown")
+                    yield f"data: {json.dumps({'status': 'complete', 'has_embeddings': has_vec == 'true', 'bytes_on_disk': downloaded})}\n\n"
+                return
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+def _read_local_corpus_meta(db_path: Path) -> dict[str, str | int]:
+    """Read corpus_version and term_count from a corpus DB's metadata table."""
+    if not db_path.exists():
+        return {}
+    import sqlite3
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            out: dict[str, str | int] = {}
+            for key in ("corpus_version", "total_terms", "embedded_count", "built_at"):
+                row = conn.execute(
+                    "SELECT value FROM metadata WHERE key = ? LIMIT 1", (key,),
+                ).fetchone()
+                if row:
+                    val = row[0]
+                    # Some values are JSON-encoded ints / floats; try to parse.
+                    try:
+                        out[key] = json.loads(val)
+                    except (json.JSONDecodeError, TypeError):
+                        out[key] = val
+            return out
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("local corpus metadata read failed: %s", e)
+        return {}
+
+
+class CorpusUpdateCheckResponse(BaseModel):
+    """Result of comparing local corpus to the latest release."""
+
+    has_update: bool
+    local_version: str | None
+    remote_version: str | None
+    local_term_count: int | None
+    remote_term_count: int | None
+    remote_built_at: str | None
+    error: str | None = None
+
+
+@router.get("/corpus/check-update", response_model=CorpusUpdateCheckResponse)
+async def check_corpus_update() -> CorpusUpdateCheckResponse:
+    """Compare local corpus version to the latest published release.
+
+    Cheap (~500 byte JSON fetch). The frontend uses this to decide
+    whether to surface an "Update available" badge on the corpus tile,
+    so users can keep their local corpus current as we roll out new
+    pronunciation forms / popularity boosts / source modules.
+
+    Resolution order for "local":
+      1. ${DATA_DIR}/vocab_bundled.db (user-downloaded full corpus)
+      2. resources/vocab_bundled.db (slim DB shipped with installer)
+    The first is what the runtime uses; that's what we compare against.
+    """
+    from core.config import settings
+
+    # Find the active local corpus to read its metadata.
+    local_meta: dict = {}
+    user_data_db = Path(settings.DATA_DIR) / "vocab_bundled.db"
+    if user_data_db.exists():
+        local_meta = _read_local_corpus_meta(user_data_db)
+    else:
+        # Fall back to bundled resources copy.
+        try:
+            from services.vocab_retrieval import _bundled_db_path
+            bundled = _bundled_db_path()
+            if bundled and bundled.exists():
+                local_meta = _read_local_corpus_meta(bundled)
+        except Exception as e:
+            logger.debug("bundled corpus path lookup failed: %s", e)
+
+    # Fetch remote metadata. Small file, no streaming needed.
+    import urllib.request
+    import urllib.error
+    remote_meta: dict = {}
+    error_msg: str | None = None
+    try:
+        req = urllib.request.Request(
+            CORPUS_METADATA_URL,
+            headers={"User-Agent": "verbatim-studio/corpus-update-check"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            remote_meta = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # 404 means the latest release didn't ship a metadata sidecar
+        # (e.g. legacy releases before v0.64.7). Treat as "no update info"
+        # rather than as an error — UI just won't show update badge.
+        if e.code == 404:
+            error_msg = None
+        else:
+            error_msg = f"HTTP {e.code}: {e.reason}"
+    except Exception as e:
+        error_msg = str(e)
+
+    local_version = local_meta.get("corpus_version") if local_meta else None
+    remote_version = remote_meta.get("corpus_version") if remote_meta else None
+
+    has_update = (
+        bool(remote_version)
+        and remote_version != local_version
+    )
+
+    return CorpusUpdateCheckResponse(
+        has_update=has_update,
+        local_version=str(local_version) if local_version else None,
+        remote_version=str(remote_version) if remote_version else None,
+        local_term_count=int(local_meta.get("total_terms") or 0) or None,
+        remote_term_count=int(remote_meta.get("total_terms") or 0) or None,
+        remote_built_at=str(remote_meta.get("built_at")) if remote_meta else None,
+        error=error_msg,
+    )
+
+
+@router.delete("/corpus")
+async def remove_full_corpus() -> dict:
+    """Delete the downloaded full corpus, falling back to the slim
+    BM25-only DB shipped with the installer.
+
+    Useful when the user wants to free disk space or roll back a bad
+    corpus version.
+    """
+    if _corpus_download_future is not None and not _corpus_download_future.done():
+        raise HTTPException(status_code=409, detail="Cannot remove while a download is in progress")
+
+    target = _corpus_target_path()
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="No downloaded corpus to remove")
+
+    target.unlink()
+
+    try:
+        from services.vocab_retrieval import reload_bundled_conn
+        has_vec = reload_bundled_conn()
+    except Exception as e:
+        logger.warning("retrieval reload after removal failed: %s", e)
+        has_vec = False
+
+    return {"removed": True, "has_embeddings": has_vec}
+
+
 
 
 @router.put("/{entry_id}", response_model=DictionaryEntryResponse)
 async def update_entry(
+    entry_id: str,
     body: DictionaryEntryUpdate,
-    entry_id: str = Path(..., regex=_ENTRY_ID_PATTERN),
     db: AsyncSession = Depends(get_db),
 ) -> DictionaryEntryResponse:
     """Update a dictionary entry. Only fields present in the request are touched."""
@@ -338,7 +656,7 @@ async def update_entry(
     response_class=Response,
 )
 async def delete_entry(
-    entry_id: str = Path(..., regex=_ENTRY_ID_PATTERN),
+    entry_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     result = await db.execute(
@@ -691,328 +1009,3 @@ async def extract_from_document_endpoint(
         new_term_ids=result.new_term_ids,
         errors=result.errors,
     )
-
-
-# ── Full-corpus download (BM25-only → BM25 + cosine hybrid) ─────────
-#
-# The installer ships a slim vocab_bundled.db (BM25 only) — ~95 MB,
-# enough for full lexical retrieval + category broadcast. Users who
-# want semantic recall (e.g. "Marine Corps administration" surfacing
-# MARCORSEPMAN even without a matching token) opt into downloading
-# the full embedded variant from verbatim-studio-releases.
-#
-# The runtime locator already prefers ${DATA_DIR}/vocab_bundled.db
-# over the resources copy (see services/vocab_retrieval.py:_bundled_db_path),
-# so writing the downloaded full DB into user data dir transparently
-# upgrades retrieval to hybrid mode without an app restart.
-
-import asyncio  # noqa: E402  (lazy in the corpus block)
-import concurrent.futures  # noqa: E402
-import json  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-# Where the full-corpus artifact lives. `latest/download/<file>` redirects
-# to the most recent release's asset with that filename — corpus updates
-# follow the app release cadence, so "latest" is correct here.
-CORPUS_DOWNLOAD_URL = (
-    "https://github.com/JongoDB/verbatim-studio-releases"
-    "/releases/latest/download/vocab_bundled_full.db"
-)
-CORPUS_METADATA_URL = (
-    "https://github.com/JongoDB/verbatim-studio-releases"
-    "/releases/latest/download/corpus_metadata.json"
-)
-
-# Track the in-flight download so a second POST returns 409 instead of
-# kicking off a duplicate.
-_corpus_download_future: concurrent.futures.Future | None = None
-_corpus_download_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-_corpus_download_progress: dict[str, int | str] = {}
-
-
-def _corpus_target_path() -> Path:
-    """Where the downloaded full corpus is written. Takes precedence
-    over the bundled slim DB at runtime."""
-    from core.config import settings
-    settings.ensure_directories()
-    return Path(settings.DATA_DIR) / "vocab_bundled.db"
-
-
-def _do_corpus_download(target: Path) -> None:
-    """Stream the corpus DB to a temp file then atomic-rename.
-
-    Updates `_corpus_download_progress` with downloaded/total bytes so
-    the SSE wrapper can poll. Errors propagate to the future; the SSE
-    wrapper catches them and emits a final `error` event.
-    """
-    import shutil
-    import tempfile
-    import urllib.request
-
-    tmp = target.with_suffix(target.suffix + ".part")
-    if tmp.exists():
-        tmp.unlink()
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    req = urllib.request.Request(
-        CORPUS_DOWNLOAD_URL,
-        headers={"User-Agent": "verbatim-studio/corpus-download"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        _corpus_download_progress["total_bytes"] = total
-        downloaded = 0
-        with tmp.open("wb") as f:
-            while chunk := resp.read(1024 * 1024):  # 1 MB chunks
-                f.write(chunk)
-                downloaded += len(chunk)
-                _corpus_download_progress["downloaded_bytes"] = downloaded
-
-    # Atomic replace — never leave a partial DB at the canonical path.
-    if target.exists():
-        target.unlink()
-    tmp.rename(target)
-    _corpus_download_progress["downloaded_bytes"] = target.stat().st_size
-
-    # Tell the retrieval layer to re-open with the new file.
-    try:
-        from services.vocab_retrieval import reload_bundled_conn
-        has_vec = reload_bundled_conn()
-        _corpus_download_progress["has_vec"] = "true" if has_vec else "false"
-    except Exception as e:
-        logger.warning("corpus reload after download failed: %s", e)
-        _corpus_download_progress["has_vec"] = "unknown"
-
-
-class CorpusStatusResponse(BaseModel):
-    """Current state of the full-corpus download."""
-
-    downloaded: bool
-    downloading: bool
-    has_embeddings: bool
-    bytes_on_disk: int | None
-    download_url: str
-
-
-@router.get("/corpus/status", response_model=CorpusStatusResponse)
-async def get_corpus_status() -> CorpusStatusResponse:
-    """Report whether the full embedded corpus has been downloaded."""
-    target = _corpus_target_path()
-    downloaded = target.exists()
-    downloading = (
-        _corpus_download_future is not None
-        and not _corpus_download_future.done()
-    )
-
-    has_embeddings = False
-    if downloaded:
-        # Probe sqlite_master directly — the vec virtual table appears in
-        # the catalog even without the sqlite-vec extension loaded, so we
-        # don't depend on extension-loading capability or URI-mode quirks
-        # (URI mode + paths with spaces / unicode is a known foot-gun).
-        import sqlite3
-        try:
-            conn = sqlite3.connect(str(target))
-            try:
-                row = conn.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE name = 'vocab_bundled_vec' AND type = 'table' LIMIT 1"
-                ).fetchone()
-                has_embeddings = row is not None
-            finally:
-                conn.close()
-        except Exception as e:
-            logger.warning("corpus status probe failed for %s: %s", target, e)
-            has_embeddings = False
-
-    return CorpusStatusResponse(
-        downloaded=downloaded,
-        downloading=downloading,
-        has_embeddings=has_embeddings,
-        bytes_on_disk=target.stat().st_size if downloaded else None,
-        download_url=CORPUS_DOWNLOAD_URL,
-    )
-
-
-@router.post("/corpus/download")
-async def download_full_corpus() -> StreamingResponse:
-    """Begin downloading the full embedded corpus.
-
-    Streams Server-Sent-Events with `{status, downloaded_bytes, total_bytes,
-    percent}` payloads. The download continues even if the client
-    disconnects — clients can re-attach via /corpus/status to see
-    progress and replay the final state.
-    """
-    global _corpus_download_future
-
-    if _corpus_download_future is not None and not _corpus_download_future.done():
-        raise HTTPException(status_code=409, detail="Download already in progress")
-
-    target = _corpus_target_path()
-    _corpus_download_progress.clear()
-    _corpus_download_future = _corpus_download_executor.submit(
-        _do_corpus_download, target,
-    )
-
-    async def _stream():
-        yield f"data: {json.dumps({'status': 'starting'})}\n\n"
-        last_emitted = -1
-        while True:
-            await asyncio.sleep(1)
-            done = _corpus_download_future.done()
-            downloaded = int(_corpus_download_progress.get("downloaded_bytes", 0) or 0)
-            total = int(_corpus_download_progress.get("total_bytes", 0) or 0)
-            percent = int(downloaded / total * 100) if total else 0
-            if percent != last_emitted:
-                last_emitted = percent
-                yield f"data: {json.dumps({'status': 'progress', 'downloaded_bytes': downloaded, 'total_bytes': total, 'percent': percent})}\n\n"
-            if done:
-                exc = _corpus_download_future.exception()
-                if exc:
-                    yield f"data: {json.dumps({'status': 'error', 'message': str(exc)})}\n\n"
-                else:
-                    has_vec = _corpus_download_progress.get("has_vec", "unknown")
-                    yield f"data: {json.dumps({'status': 'complete', 'has_embeddings': has_vec == 'true', 'bytes_on_disk': downloaded})}\n\n"
-                return
-
-    return StreamingResponse(_stream(), media_type="text/event-stream")
-
-
-def _read_local_corpus_meta(db_path: Path) -> dict[str, str | int]:
-    """Read corpus_version and term_count from a corpus DB's metadata table."""
-    if not db_path.exists():
-        return {}
-    import sqlite3
-    try:
-        conn = sqlite3.connect(str(db_path))
-        try:
-            out: dict[str, str | int] = {}
-            for key in ("corpus_version", "total_terms", "embedded_count", "built_at"):
-                row = conn.execute(
-                    "SELECT value FROM metadata WHERE key = ? LIMIT 1", (key,),
-                ).fetchone()
-                if row:
-                    val = row[0]
-                    # Some values are JSON-encoded ints / floats; try to parse.
-                    try:
-                        out[key] = json.loads(val)
-                    except (json.JSONDecodeError, TypeError):
-                        out[key] = val
-            return out
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning("local corpus metadata read failed: %s", e)
-        return {}
-
-
-class CorpusUpdateCheckResponse(BaseModel):
-    """Result of comparing local corpus to the latest release."""
-
-    has_update: bool
-    local_version: str | None
-    remote_version: str | None
-    local_term_count: int | None
-    remote_term_count: int | None
-    remote_built_at: str | None
-    error: str | None = None
-
-
-@router.get("/corpus/check-update", response_model=CorpusUpdateCheckResponse)
-async def check_corpus_update() -> CorpusUpdateCheckResponse:
-    """Compare local corpus version to the latest published release.
-
-    Cheap (~500 byte JSON fetch). The frontend uses this to decide
-    whether to surface an "Update available" badge on the corpus tile,
-    so users can keep their local corpus current as we roll out new
-    pronunciation forms / popularity boosts / source modules.
-
-    Resolution order for "local":
-      1. ${DATA_DIR}/vocab_bundled.db (user-downloaded full corpus)
-      2. resources/vocab_bundled.db (slim DB shipped with installer)
-    The first is what the runtime uses; that's what we compare against.
-    """
-    from core.config import settings
-
-    # Find the active local corpus to read its metadata.
-    local_meta: dict = {}
-    user_data_db = Path(settings.DATA_DIR) / "vocab_bundled.db"
-    if user_data_db.exists():
-        local_meta = _read_local_corpus_meta(user_data_db)
-    else:
-        # Fall back to bundled resources copy.
-        try:
-            from services.vocab_retrieval import _bundled_db_path
-            bundled = _bundled_db_path()
-            if bundled and bundled.exists():
-                local_meta = _read_local_corpus_meta(bundled)
-        except Exception as e:
-            logger.debug("bundled corpus path lookup failed: %s", e)
-
-    # Fetch remote metadata. Small file, no streaming needed.
-    import urllib.request
-    import urllib.error
-    remote_meta: dict = {}
-    error_msg: str | None = None
-    try:
-        req = urllib.request.Request(
-            CORPUS_METADATA_URL,
-            headers={"User-Agent": "verbatim-studio/corpus-update-check"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            remote_meta = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        # 404 means the latest release didn't ship a metadata sidecar
-        # (e.g. legacy releases before v0.64.7). Treat as "no update info"
-        # rather than as an error — UI just won't show update badge.
-        if e.code == 404:
-            error_msg = None
-        else:
-            error_msg = f"HTTP {e.code}: {e.reason}"
-    except Exception as e:
-        error_msg = str(e)
-
-    local_version = local_meta.get("corpus_version") if local_meta else None
-    remote_version = remote_meta.get("corpus_version") if remote_meta else None
-
-    has_update = (
-        bool(remote_version)
-        and remote_version != local_version
-    )
-
-    return CorpusUpdateCheckResponse(
-        has_update=has_update,
-        local_version=str(local_version) if local_version else None,
-        remote_version=str(remote_version) if remote_version else None,
-        local_term_count=int(local_meta.get("total_terms") or 0) or None,
-        remote_term_count=int(remote_meta.get("total_terms") or 0) or None,
-        remote_built_at=str(remote_meta.get("built_at")) if remote_meta else None,
-        error=error_msg,
-    )
-
-
-@router.delete("/corpus")
-async def remove_full_corpus() -> dict:
-    """Delete the downloaded full corpus, falling back to the slim
-    BM25-only DB shipped with the installer.
-
-    Useful when the user wants to free disk space or roll back a bad
-    corpus version.
-    """
-    if _corpus_download_future is not None and not _corpus_download_future.done():
-        raise HTTPException(status_code=409, detail="Cannot remove while a download is in progress")
-
-    target = _corpus_target_path()
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="No downloaded corpus to remove")
-
-    target.unlink()
-
-    try:
-        from services.vocab_retrieval import reload_bundled_conn
-        has_vec = reload_bundled_conn()
-    except Exception as e:
-        logger.warning("retrieval reload after removal failed: %s", e)
-        has_vec = False
-
-    return {"removed": True, "has_embeddings": has_vec}
