@@ -26,7 +26,7 @@ permissions:
 jobs:
   build:
     name: Assemble corpus
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, jongodb]
     # Embedding 339K terms via Nomic on a CPU-only ubuntu-latest runner
     # takes 60-150 min depending on runner load. 90 was too tight (saw
     # 91-min timeouts cancel both v0.64.2 and v0.64.3 corpus builds).
