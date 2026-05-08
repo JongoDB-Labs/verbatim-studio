@@ -73,6 +73,7 @@ SOURCE_MODULES = [
     "wikidata_entities",
     "tech_terms",
     "medical_curated",
+    "medical_mesh",
     "religious_cultural",
     "cooking_food",
     "science_terms",
