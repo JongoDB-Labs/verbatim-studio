@@ -198,6 +198,87 @@ _TERMS: list[tuple[str, str, str]] = [
     ("pediatrics", "child medicine", "specialty"),
     ("obstetrics", "pregnancy medicine", "specialty"),
     ("gynecology", "women's reproductive medicine", "specialty"),
+    # ── Medical acronyms commonly mistranscribed ────────────────────
+    # These are uppercase, frequently spoken, and Whisper's phonetic
+    # confusion produces real-English-sounding pseudo-words. Each
+    # carries explicit sounds_like in _MED_PRONUNCIATIONS below for
+    # the misread shapes.
+    ("HIPAA", "Health Insurance Portability and Accountability Act", "med_acronym"),
+    ("PHI", "Protected Health Information", "med_acronym"),
+    ("EHR", "Electronic Health Record", "med_acronym"),
+    ("EMR", "Electronic Medical Record", "med_acronym"),
+    ("PHR", "Personal Health Record", "med_acronym"),
+    ("HMO", "Health Maintenance Organization", "med_acronym"),
+    ("PPO", "Preferred Provider Organization", "med_acronym"),
+    ("ACA", "Affordable Care Act", "med_acronym"),
+    ("CMS", "Centers for Medicare and Medicaid Services", "med_acronym"),
+    ("FDA", "Food and Drug Administration", "med_acronym"),
+    ("CDC", "Centers for Disease Control and Prevention", "med_acronym"),
+    ("WHO", "World Health Organization", "med_acronym"),
+    ("NIH", "National Institutes of Health", "med_acronym"),
+    ("PTSD", "Post-Traumatic Stress Disorder", "med_acronym"),
+    ("ADHD", "Attention-Deficit/Hyperactivity Disorder", "med_acronym"),
+    ("ADD", "Attention Deficit Disorder", "med_acronym"),
+    ("OCD", "Obsessive-Compulsive Disorder", "med_acronym"),
+    ("PPD", "Postpartum Depression", "med_acronym"),
+    ("COPD", "Chronic Obstructive Pulmonary Disease", "med_acronym"),
+    ("CHF", "Congestive Heart Failure", "med_acronym"),
+    ("MI", "Myocardial Infarction (heart attack)", "med_acronym"),
+    ("CVA", "Cerebrovascular Accident (stroke)", "med_acronym"),
+    ("DVT", "Deep Vein Thrombosis", "med_acronym"),
+    ("PE", "Pulmonary Embolism", "med_acronym"),
+    ("CKD", "Chronic Kidney Disease", "med_acronym"),
+    ("ESRD", "End-Stage Renal Disease", "med_acronym"),
+    ("UTI", "Urinary Tract Infection", "med_acronym"),
+    ("BPH", "Benign Prostatic Hyperplasia", "med_acronym"),
+    ("GERD", "Gastroesophageal Reflux Disease", "med_acronym"),
+    ("IBS", "Irritable Bowel Syndrome", "med_acronym"),
+    ("IBD", "Inflammatory Bowel Disease", "med_acronym"),
+    ("RA", "Rheumatoid Arthritis", "med_acronym"),
+    ("OA", "Osteoarthritis", "med_acronym"),
+    ("SLE", "Systemic Lupus Erythematosus (lupus)", "med_acronym"),
+    ("MS", "Multiple Sclerosis", "med_acronym"),
+    ("ALS", "Amyotrophic Lateral Sclerosis", "med_acronym"),
+    ("TBI", "Traumatic Brain Injury", "med_acronym"),
+    ("CT", "Computed Tomography (CT scan)", "med_acronym"),
+    ("MRI", "Magnetic Resonance Imaging", "med_acronym"),
+    ("PET", "Positron Emission Tomography", "med_acronym"),
+    ("EKG", "Electrocardiogram", "med_acronym"),
+    ("ECG", "Electrocardiogram", "med_acronym"),
+    ("EEG", "Electroencephalogram", "med_acronym"),
+    ("CBC", "Complete Blood Count", "med_acronym"),
+    ("BMP", "Basic Metabolic Panel", "med_acronym"),
+    ("CMP", "Comprehensive Metabolic Panel", "med_acronym"),
+    ("PT/INR", "Prothrombin Time / International Normalized Ratio", "med_acronym"),
+    ("BUN", "Blood Urea Nitrogen", "med_acronym"),
+    ("HbA1c", "Hemoglobin A1c (glycated hemoglobin)", "med_acronym"),
+    ("LDL", "Low-Density Lipoprotein (cholesterol)", "med_acronym"),
+    ("HDL", "High-Density Lipoprotein (cholesterol)", "med_acronym"),
+    ("BMI", "Body Mass Index", "med_acronym"),
+    ("BP", "Blood Pressure", "med_acronym"),
+    ("HR", "Heart Rate", "med_acronym"),
+    ("ICU", "Intensive Care Unit", "med_acronym"),
+    ("NICU", "Neonatal Intensive Care Unit", "med_acronym"),
+    ("PICU", "Pediatric Intensive Care Unit", "med_acronym"),
+    ("ER", "Emergency Room", "med_acronym"),
+    ("ED", "Emergency Department", "med_acronym"),
+    ("OR", "Operating Room", "med_acronym"),
+    ("PACU", "Post-Anesthesia Care Unit", "med_acronym"),
+    ("NPO", "Nothing By Mouth (nil per os)", "med_acronym"),
+    ("IV", "Intravenous", "med_acronym"),
+    ("IM", "Intramuscular", "med_acronym"),
+    ("SubQ", "Subcutaneous (medication route)", "med_acronym"),
+    ("PRN", "As needed (pro re nata)", "med_acronym"),
+    ("STAT", "Immediately (statim)", "med_acronym"),
+    ("SOB", "Shortness of Breath", "med_acronym"),
+    ("DNR", "Do Not Resuscitate", "med_acronym"),
+    ("DNI", "Do Not Intubate", "med_acronym"),
+    ("CPR", "Cardiopulmonary Resuscitation", "med_acronym"),
+    ("AED", "Automated External Defibrillator", "med_acronym"),
+    ("BLS", "Basic Life Support", "med_acronym"),
+    ("ACLS", "Advanced Cardiac Life Support", "med_acronym"),
+    ("PEA", "Pulseless Electrical Activity", "med_acronym"),
+    ("ROSC", "Return of Spontaneous Circulation", "med_acronym"),
 ]
 
 
@@ -334,6 +415,56 @@ _MED_PRONUNCIATIONS: dict[str, list[str]] = {
     "psychiatry": ["sye kye uh tree"],
     "obstetrics": ["ob stet riks"],
     "gynecology": ["gye nuh kol oh jee", "jin uh kol oh jee"],
+    # ── Medical acronym misread shapes ──────────────────────────────
+    # Each entry catches the plausible-English pseudo-words Whisper
+    # produces when it can't tell the acronym from a real word.
+    "HIPAA": ["hippa", "hippo", "hip-uh", "hip-ah", "hippah", "h-i-p-double-a"],
+    "PHI": ["fee eye", "f-i", "phee-eye", "p-h-i", "fai"],
+    "EHR": ["ee aitch ar", "e-h-r"],
+    "EMR": ["ee em ar", "e-m-r"],
+    "PTSD": ["pee tee ess dee", "petizidi", "petesedee", "petsd"],
+    "ADHD": ["ay dee aitch dee", "addy h d", "add-h-d"],
+    "OCD": ["oh see dee", "ocidi", "ocede"],
+    "COPD": ["see oh pee dee", "copid", "copede", "co-pee-dee"],
+    "GERD": ["gerd", "gurd", "gird"],
+    "IBS": ["eye bee ess", "ibis", "ibbis"],
+    "IBD": ["eye bee dee", "ibid", "ibide"],
+    "SLE": ["ess ell ee", "slee", "sleigh"],
+    "ALS": ["ay ell ess", "als", "ahls"],
+    "TBI": ["tee bee eye", "tibi", "tibby"],
+    "MRI": ["em ar eye", "miry", "mireye"],
+    "EKG": ["ee kay gee", "ekg", "ekge"],
+    "ECG": ["ee see gee", "ekg", "essegi"],
+    "EEG": ["ee ee gee", "eeg", "eege"],
+    "CBC": ["see bee see", "cb-see", "cbcee"],
+    "BUN": ["bee you en", "bun", "buhn"],
+    "HbA1c": ["aitch bee ay one see", "h-b-a-one-c", "h-b-a-1-c", "hbaonec"],
+    "LDL": ["ell dee ell", "lidil", "ledel"],
+    "HDL": ["aitch dee ell", "hidil", "hedel"],
+    "BMI": ["bee em eye", "bimi", "bimmy"],
+    "ICU": ["eye see you", "icu", "icyoo", "i-see-you"],
+    "NICU": ["nick you", "nick-you", "nickyou", "nick-u"],
+    "PICU": ["pick you", "pick-you", "pickyou", "pick-u"],
+    "ER": ["ee ar", "er"],
+    "PACU": ["pak you", "pack-you", "pa-cu", "packyou"],
+    "NPO": ["en pee oh", "nipo", "nee-poh"],
+    "PRN": ["pee ar en", "prin", "pee-r-n"],
+    "STAT": ["stat", "staht"],
+    "SOB": ["ess oh bee", "sob", "sobb"],
+    "DNR": ["dee en ar", "diner", "dyner"],
+    "DNI": ["dee en eye", "deny", "den-eye"],
+    "CPR": ["see pee ar", "ciper", "syper"],
+    "AED": ["ay ee dee", "aid", "aide"],
+    "BLS": ["bee ell ess", "blss", "biles"],
+    "ACLS": ["ay see ell ess", "ackles", "akless", "aclis"],
+    "PEA": ["pee ee ay", "pea", "pee-ay"],
+    "ROSC": ["rosk", "rosc", "rosec"],
+    "ESRD": ["ee ess ar dee", "eserd", "ezerd"],
+    "BPH": ["bee pee aitch", "bph", "buf"],
+    "CHF": ["see aitch ef", "chiff", "chef"],
+    "DVT": ["dee vee tee", "divit", "devit"],
+    "UTI": ["you tee eye", "uti", "yoo-tee-eye"],
+    "CKD": ["see kay dee", "cked", "ckedi"],
 }
 
 
@@ -344,7 +475,16 @@ def iter_terms() -> Iterable[RawTerm]:
         if key in seen:
             continue
         seen.add(key)
-        score = 0.7 if subcat in {"drug_brand", "condition", "specialty"} else 0.55
+        # Medical acronyms get critical-tier 0.95 — they're frequently
+        # spoken in clinical recordings and Whisper produces confident
+        # pseudo-word misreads ("hippa"/"hippo" for HIPAA, "petsd" for
+        # PTSD) that the standard 3-gate test would miss.
+        if subcat == "med_acronym":
+            score = 0.95
+        elif subcat in {"drug_brand", "condition", "specialty"}:
+            score = 0.7
+        else:
+            score = 0.55
         # Prefer explicit pronunciation when curated; otherwise leave
         # blank (Whisper handles common medical terms fine without
         # phonetic hints — only the hard cases are in _MED_PRONUNCIATIONS).

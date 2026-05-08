@@ -185,6 +185,64 @@ _LATIN_PRONUNCIATIONS: dict[str, list[str]] = {
 }
 
 
+# Critical-tier English legal acronyms — courts, discovery, statutes,
+# litigation. Each has explicit sounds_like for the misread shapes
+# Whisper produces. These are catastrophic-loss class for legal
+# transcripts where the right canonical is essential for case work.
+_LEGAL_ACRONYMS: list[tuple[str, str, list[str]]] = [
+    # Court rules / procedure
+    ("FRCP", "Federal Rules of Civil Procedure", ["ef ar see pee", "fer-cup", "fer-cap"]),
+    ("FRCrP", "Federal Rules of Criminal Procedure", ["ef ar see ar pee", "fer-crip"]),
+    ("FRE", "Federal Rules of Evidence", ["ef ar ee", "fre", "free"]),
+    ("FRAP", "Federal Rules of Appellate Procedure", ["frap", "ef-rap"]),
+    ("FRBP", "Federal Rules of Bankruptcy Procedure", ["fer-bp"]),
+    # Discovery / e-discovery
+    ("ESI", "Electronically Stored Information", ["ee ess eye", "esi", "essee"]),
+    ("MSJ", "Motion for Summary Judgment", ["em ess jay", "msj"]),
+    ("MIL", "Motion in Limine", ["mill", "em eye ell", "limine"]),
+    ("TRO", "Temporary Restraining Order", ["tee ar oh", "trow", "trio"]),
+    ("PI", "Preliminary Injunction", ["pee eye"]),
+    # Courts
+    ("SCOTUS", "Supreme Court of the United States", ["scoh tuss", "scotus", "skoh-tuss"]),
+    ("SDNY", "Southern District of New York", ["ess dee en why"]),
+    ("EDNY", "Eastern District of New York", ["ee dee en why"]),
+    ("CDCA", "Central District of California", ["see dee see ay"]),
+    ("NDCA", "Northern District of California", ["en dee see ay"]),
+    ("DDC", "District of Columbia (federal court)", ["dee dee see"]),
+    # Statutes / regulators
+    ("ADA", "Americans with Disabilities Act", ["ay dee ay", "ada"]),
+    ("FOIA", "Freedom of Information Act", ["foya", "foy-uh", "foi-uh"]),
+    ("DMCA", "Digital Millennium Copyright Act", ["dee em see ay", "dee-em-see-ay"]),
+    ("CFAA", "Computer Fraud and Abuse Act", ["see ef double-a", "see-ef-double-a"]),
+    ("ECPA", "Electronic Communications Privacy Act", ["ee see pee ay"]),
+    ("ITAR", "International Traffic in Arms Regulations", ["eye tar", "i-tar"]),
+    ("EAR", "Export Administration Regulations", ["ee ay ar", "ear"]),
+    ("FCPA", "Foreign Corrupt Practices Act", ["ef see pee ay"]),
+    ("HIPAA", "Health Insurance Portability and Accountability Act", ["hippa", "hippo"]),
+    ("FERPA", "Family Educational Rights and Privacy Act", ["fer-pa", "ferpah"]),
+    ("FERC", "Federal Energy Regulatory Commission", ["furk", "ferk"]),
+    ("FCC", "Federal Communications Commission", ["ef see see"]),
+    ("FTC", "Federal Trade Commission", ["ef tee see"]),
+    ("SEC", "Securities and Exchange Commission", ["sec", "ess ee see"]),
+    ("DOJ", "Department of Justice", ["dee oh jay"]),
+    ("DOL", "Department of Labor", ["dee oh ell"]),
+    ("USPTO", "United States Patent and Trademark Office", ["yoo ess pee tee oh"]),
+    ("USCIS", "US Citizenship and Immigration Services", ["yoo ess see eye ess"]),
+    # Practice areas / titles
+    ("AG", "Attorney General", ["ay gee"]),
+    ("DA", "District Attorney", ["dee ay"]),
+    ("AUSA", "Assistant US Attorney", ["aw-sah", "au-sa", "ay you ess ay"]),
+    ("USAO", "US Attorney's Office", ["yoo ess ay oh"]),
+    ("PD", "Public Defender", ["pee dee"]),
+    ("ADR", "Alternative Dispute Resolution", ["ay dee ar"]),
+    # Filings
+    ("MTD", "Motion to Dismiss", ["em tee dee"]),
+    ("MFR", "Motion for Reconsideration", ["em ef ar"]),
+    ("MTC", "Motion to Compel", ["em tee see"]),
+    ("MTQ", "Motion to Quash", ["em tee cue"]),
+]
+
+
 def iter_terms() -> Iterable[RawTerm]:
     for term, definition in _LATIN_TERMS:
         yield RawTerm(
@@ -197,7 +255,28 @@ def iter_terms() -> Iterable[RawTerm]:
             popularity_score=0.7,
             source="Curated Latin legal terms (public domain)",
         )
-    logger.info("Latin legal: %d terms yielded", len(_LATIN_TERMS))
+    for term, definition, hints in _LEGAL_ACRONYMS:
+        # Auto-derive letter-by-letter + word-form variants on top of
+        # the curated misread-shape hints.
+        from ..pronunciation import derive_acronym_pronunciations
+        if term.replace("-", "").isalnum() and term.isupper():
+            sl = derive_acronym_pronunciations(term, extra_hints=hints)
+        else:
+            sl = list(hints)
+        yield RawTerm(
+            term=term,
+            canonical_form=term,
+            category="legal",
+            subcategory="acronym",
+            sounds_like=sl,
+            context_blurb=definition[:140],
+            popularity_score=0.95,  # critical-tier
+            source="Curated legal acronyms (public domain)",
+        )
+    logger.info(
+        "Legal terms: %d Latin + %d acronyms yielded",
+        len(_LATIN_TERMS), len(_LEGAL_ACRONYMS),
+    )
 
 
 name = "Latin Legal Terms"
