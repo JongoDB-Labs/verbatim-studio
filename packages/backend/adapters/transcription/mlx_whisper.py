@@ -203,7 +203,16 @@ class MlxWhisperTranscriptionEngine(ITranscriptionEngine):
                         word=word_data.get("word", ""),
                         start=word_data.get("start", 0.0),
                         end=word_data.get("end", 0.0),
-                        confidence=word_data.get("probability"),
+                        # mlx-whisper sometimes emits "probability",
+                        # sometimes "score". Try both — Phase 2 vocab
+                        # correction skips words with None confidence,
+                        # so getting this right is required for
+                        # correction to fire on Apple Silicon installs.
+                        confidence=(
+                            word_data.get("probability")
+                            if word_data.get("probability") is not None
+                            else word_data.get("score")
+                        ),
                     )
                 )
 

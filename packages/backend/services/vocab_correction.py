@@ -492,9 +492,21 @@ def correct_segments(
             )
             confidence = getattr(w, "confidence", None)
             if confidence is None and isinstance(w, dict):
-                confidence = w.get("score") or w.get("confidence")
+                # Engines disagree on the confidence field name:
+                #   WhisperX uses "score"
+                #   mlx-whisper uses "probability"
+                #   Some output dict["confidence"] directly
+                confidence = (
+                    w.get("score")
+                    or w.get("probability")
+                    or w.get("confidence")
+                )
             if confidence is None:
-                continue
+                # mlx-whisper occasionally drops probability — default to
+                # 0.0 (low confidence) so gate 1 doesn't outright skip
+                # the word. The phonetic + edit-distance gates still
+                # filter false positives.
+                confidence = 0.0
 
             match = _should_correct(
                 word_text,
