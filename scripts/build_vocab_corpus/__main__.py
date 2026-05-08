@@ -309,11 +309,21 @@ def _get_build_embedder():
 
 
 def _embed_corpus(conn: sqlite3.Connection) -> int:
-    """Compute and insert Nomic embeddings for all rows.
+    """Compute and insert int8-quantized Nomic embeddings for all rows.
 
-    Skipped (with a warning) when sentence-transformers itself isn't
-    available — the runtime falls through to BM25-only retrieval in
-    that case.
+    Two-pass approach:
+      1. Embed everything in float32, accumulating to a numpy array
+      2. Compute per-dim calibration scales from a sample (99.9th
+         percentile of |value| per dim) — this gives near-optimal
+         int8 dynamic range without outlier dominance
+      3. Quantize all vectors to int8 using the scales and insert
+
+    Stores the calibration scales in metadata under "vec_int8_scales"
+    (JSON list of 768 floats). The runtime quantizes the query vector
+    using the same scales before lookup.
+
+    Skipped (with a warning) when sentence-transformers isn't available
+    — runtime falls through to BM25-only retrieval in that case.
 
     Returns count of embedded rows.
     """
@@ -321,6 +331,12 @@ def _embed_corpus(conn: sqlite3.Connection) -> int:
         embedder = _get_build_embedder()
     except Exception as e:
         logger.warning("Embedder unavailable (%s) — building DB without vectors", e)
+        return 0
+
+    try:
+        import numpy as np
+    except ImportError:
+        logger.warning("numpy unavailable — building DB without vectors")
         return 0
 
     cur = conn.execute(
@@ -331,13 +347,11 @@ def _embed_corpus(conn: sqlite3.Connection) -> int:
         return 0
 
     BATCH = 256
-    embedded = 0
-    import struct
+    # Pass 1: embed everything in float32, accumulate.
+    all_vectors: list[np.ndarray] = []
+    all_ids: list[int] = []
     for i in range(0, len(rows), BATCH):
         chunk = rows[i:i + BATCH]
-        # Embed the canonical form plus a short context blurb (the
-        # context disambiguates ambiguous strings like "GO" the
-        # programming language vs. "go" the verb).
         texts = [
             (r["canonical_form"] + " " + (r["context_blurb"] or "")).strip()
             for r in chunk
@@ -347,29 +361,70 @@ def _embed_corpus(conn: sqlite3.Connection) -> int:
         except Exception as exc:
             logger.warning("Embedder batch failed at offset %d: %s — skipping", i, exc)
             continue
+        for r, v in zip(chunk, vectors):
+            all_ids.append(r["id"])
+            all_vectors.append(np.asarray(v, dtype=np.float32))
+        if (i // BATCH) % 10 == 0:
+            logger.info("Embedded (fp32) %d / %d", i + len(chunk), len(rows))
 
-        # Insert into sqlite-vec. The virtual table accepts packed
-        # float32 bytes; we serialise via struct.pack to match the
-        # runtime side's expectations (services/embedding.py uses the
-        # same `<{N}f` packing for stored embeddings).
+    if not all_vectors:
+        return 0
+
+    fp32 = np.stack(all_vectors)  # (N, 768)
+    logger.info("Quantizing %d × %d embeddings to int8…", fp32.shape[0], fp32.shape[1])
+
+    # Pass 2: per-dim calibration. Use 99.9th percentile of |value| per
+    # dim across a 5K sample so outliers don't compress everyone else.
+    # Nomic vectors are L2-normalized so values are mostly in [-1, 1],
+    # and the 99.9% boundary is typically ~0.3-0.5 per dim.
+    sample_size = min(5000, fp32.shape[0])
+    rng = np.random.default_rng(seed=42)  # deterministic
+    sample_idx = rng.choice(fp32.shape[0], sample_size, replace=False)
+    sample = fp32[sample_idx]
+    abs_vals = np.abs(sample)
+    scales = np.percentile(abs_vals, 99.9, axis=0).astype(np.float32)
+    # Floor to avoid divide-by-near-zero (would explode int8 range).
+    scales = np.maximum(scales, 1e-4)
+
+    # Quantize: int8 = clip(round(value / scale * 127), -128, 127).
+    quantized = np.clip(
+        np.round(fp32 / scales * 127.0), -128, 127,
+    ).astype(np.int8)
+
+    # Insert int8 rows.
+    embedded = 0
+    BATCH_INSERT = 1000
+    for i in range(0, quantized.shape[0], BATCH_INSERT):
+        chunk_ids = all_ids[i:i + BATCH_INSERT]
+        chunk_q = quantized[i:i + BATCH_INSERT]
         try:
             data = [
-                (r["id"], struct.pack(f"<{len(v)}f", *v))
-                for r, v in zip(chunk, vectors)
+                (term_id, vec.tobytes())
+                for term_id, vec in zip(chunk_ids, chunk_q)
             ]
             conn.executemany(
                 "INSERT OR REPLACE INTO vocab_bundled_vec (term_id, embedding) VALUES (?, ?)",
                 data,
             )
-            embedded += len(chunk)
+            embedded += len(data)
         except Exception as exc:
             logger.warning("vec insert failed at offset %d: %s — embeddings off", i, exc)
             return 0
 
-        if (i // BATCH) % 10 == 0:
-            logger.info("Embedded %d / %d", i + len(chunk), len(rows))
+    # Persist scales so the runtime can quantize queries with the same
+    # calibration. Store as JSON list of floats in the metadata table.
+    scales_json = json.dumps(scales.tolist())
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        ("vec_int8_scales", scales_json),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        ("vec_int8_scale_count", str(len(scales))),
+    )
 
     conn.commit()
+    logger.info("Quantization complete: %d vectors at int8 precision", embedded)
     return embedded
 
 

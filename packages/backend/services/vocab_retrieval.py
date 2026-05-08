@@ -166,7 +166,7 @@ def reload_bundled_conn() -> bool:
     Returns the new has_vec flag — useful for surfacing "hybrid mode is
     now active" status to the UI after a download completes.
     """
-    global _bundled_conn, _bundled_conn_path, _bundled_has_vec
+    global _bundled_conn, _bundled_conn_path, _bundled_has_vec, _int8_scales_cache
     if _bundled_conn is not None:
         try:
             _bundled_conn.close()
@@ -175,6 +175,7 @@ def reload_bundled_conn() -> bool:
     _bundled_conn = None
     _bundled_conn_path = None
     _bundled_has_vec = False
+    _int8_scales_cache = None
     _, has_vec = _open_bundled_conn()
     return has_vec
 
@@ -400,13 +401,61 @@ def _bm25_query(
         return []
 
 
+_int8_scales_cache: list[float] | None = None
+
+
+def _load_int8_scales(conn: sqlite3.Connection) -> list[float] | None:
+    """Read the per-dim quantization scales from metadata.
+
+    Returns None if the corpus was built with float32 vectors (no
+    scales stored — older format). When present, the runtime quantizes
+    queries with the same per-dim scales before lookup, matching the
+    int8 storage on the corpus side.
+    """
+    global _int8_scales_cache
+    if _int8_scales_cache is not None:
+        return _int8_scales_cache
+    try:
+        row = conn.execute(
+            "SELECT value FROM metadata WHERE key = 'vec_int8_scales' LIMIT 1"
+        ).fetchone()
+        if row and row[0]:
+            import json as _json
+            _int8_scales_cache = _json.loads(row[0])
+            return _int8_scales_cache
+    except sqlite3.Error:
+        pass
+    return None
+
+
 def _vec_query(
     conn: sqlite3.Connection, vector: list[float], limit: int = COSINE_POOL,
 ) -> list[sqlite3.Row]:
-    """Top-N cosine matches against vocab_bundled_vec via sqlite-vec."""
+    """Top-N cosine matches against vocab_bundled_vec via sqlite-vec.
+
+    Detects the storage format from metadata: int8 corpora carry per-dim
+    scales under "vec_int8_scales", in which case the query is quantized
+    with the same calibration. Float32 corpora (older format, no
+    scales metadata) use float32 query packing.
+    """
     if not vector:
         return []
-    packed = struct.pack(f"<{len(vector)}f", *vector)
+    scales = _load_int8_scales(conn)
+    if scales is not None:
+        # int8 quantize the query using the same per-dim scales the
+        # build pipeline used. clip to int8 range.
+        try:
+            import numpy as _np
+            arr = _np.asarray(vector, dtype=_np.float32)
+            sc = _np.asarray(scales, dtype=_np.float32)
+            quantized = _np.clip(_np.round(arr / sc * 127.0), -128, 127).astype(_np.int8)
+            packed = quantized.tobytes()
+        except Exception as e:
+            logger.debug("vocab_retrieval: int8 quantize failed: %s", e)
+            return []
+    else:
+        # Legacy float32 corpus — pack as float32.
+        packed = struct.pack(f"<{len(vector)}f", *vector)
     try:
         cur = conn.execute(
             "SELECT b.id, b.term, b.canonical_form, b.category, b.sounds_like, "

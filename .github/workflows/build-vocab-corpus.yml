@@ -73,7 +73,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: assets/vocab_bundled.db
-          key: vocab-corpus-db-v3-${{ hashFiles('scripts/build_vocab_corpus/**/*.py') }}
+          # v4: schema migrated to INT8 vectors with per-dim calibration
+          # scales stored in metadata. Old v3 cache (FLOAT32 vectors) is
+          # incompatible with the new runtime quantization path.
+          key: vocab-corpus-db-v4-${{ hashFiles('scripts/build_vocab_corpus/**/*.py') }}
 
       - name: Install build dependencies
         if: steps.corpus-db-cache.outputs.cache-hit != 'true'

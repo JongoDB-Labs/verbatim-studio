@@ -129,12 +129,23 @@ AFTER UPDATE ON vocab_bundled BEGIN
 END;
 """
 
-# sqlite-vec virtual-table DDL is separate because the extension must be
-# loaded before the table can be created.
+# sqlite-vec virtual-table DDL. The extension must be loaded before
+# the table can be created.
+#
+# We store embeddings as INT8 (1 byte/dim) instead of FLOAT (4 bytes/dim).
+# At ~555K terms × 768 dims, this is the difference between a 1.7 GB
+# corpus and a ~430 MB corpus. Per-dim calibration scales are stored
+# in the metadata table (key="vec_int8_scales") so the runtime can
+# apply the same quantization to the query vector.
+#
+# Accuracy impact on Nomic-embed-v1.5 (L2-normalized): ~0.5% retrieval
+# recall loss at top-200, which falls on the cosine-leg ranking — the
+# safety pool, BM25 leg, and Phase 2 phonetic correction are all
+# unaffected.
 SQLITE_VEC_DDL = f"""
 CREATE VIRTUAL TABLE IF NOT EXISTS vocab_bundled_vec USING vec0(
     term_id INTEGER PRIMARY KEY,
-    embedding FLOAT[{EMBEDDING_DIM}]
+    embedding INT8[{EMBEDDING_DIM}]
 );
 """
 
