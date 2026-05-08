@@ -271,14 +271,16 @@ async def install_sample_workspace(
             dest_path = dest_dir / src_path.name
             shutil.copy2(src_path, dest_path)
 
+            # Document uses filename + file_size_bytes (different field
+            # names from Recording, which uses file_name + file_size).
             document = Document(
                 id=str(uuid.uuid4()),
                 project_id=project_id,
                 title=doc_spec["title"],
                 file_path=str(dest_path),
-                file_name=src_path.name,
-                file_size=dest_path.stat().st_size,
-                mime_type=doc_spec.get("mime_type"),
+                filename=src_path.name,
+                file_size_bytes=dest_path.stat().st_size,
+                mime_type=doc_spec.get("mime_type") or "application/octet-stream",
                 extracted_text=doc_spec.get("extracted_text"),
                 status="completed",
                 metadata_={
