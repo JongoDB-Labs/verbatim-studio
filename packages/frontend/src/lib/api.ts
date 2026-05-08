@@ -1796,13 +1796,28 @@ class ApiClient {
       if (response.status === 401 && _onAuthRequired) {
         _onAuthRequired();
       }
-      // Try to extract detailed error message from response body
+      // Try to extract detailed error message from response body.
+      // FastAPI 422 validation errors return `detail` as an ARRAY of
+      // {type, loc, msg, ...} objects — stringifying that directly
+      // gives "[object Object]" which is useless to the user. Format
+      // it into a readable string instead.
       let errorMessage = `${response.status} ${response.statusText}`;
       try {
         const errorData = await response.json();
-        if (errorData.detail) {
+        if (Array.isArray(errorData.detail)) {
+          // FastAPI validation error format
+          errorMessage = errorData.detail
+            .map((d: { msg?: string; loc?: unknown[]; type?: string }) => {
+              if (d.msg) return d.msg;
+              if (d.type) return `validation error: ${d.type}`;
+              return JSON.stringify(d);
+            })
+            .join('; ');
+        } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
-        } else if (errorData.message) {
+        } else if (errorData.detail) {
+          errorMessage = JSON.stringify(errorData.detail);
+        } else if (typeof errorData.message === 'string') {
           errorMessage = errorData.message;
         } else if (typeof errorData === 'string') {
           errorMessage = errorData;
