@@ -35,7 +35,7 @@ export function WelcomeModal({ isOpen, onStartTour, onSkip }: WelcomeModalProps)
 
           {/* Description */}
           <p id="welcome-description" className="text-muted-foreground mb-3">
-            Your offline-first, AI-powered workspace for transcription, documents, and intelligent search.
+            An offline-first workspace for transcription, documents, and intelligent search — with a local AI assistant that knows your work.
           </p>
           <p className="text-muted-foreground mb-1">
             <span className="inline-flex items-center gap-1.5">
@@ -49,7 +49,7 @@ export function WelcomeModal({ isOpen, onStartTour, onSkip }: WelcomeModalProps)
             Your data, your device, your rules.
           </p>
           <p className="text-muted-foreground mb-8">
-            Would you like a quick tour of the features?
+            The tour walks the full surface in about 3 minutes. Skip and the toast in the corner will let you start it whenever you want.
           </p>
 
           {/* Actions */}

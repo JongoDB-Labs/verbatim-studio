@@ -504,16 +504,57 @@ function AppContent() {
 
   const handleTourNavigate = useCallback((target: string) => {
     if (target === 'settings') {
-      // Navigate to settings without specific tab
       setNavigation({ type: 'settings' });
-    } else if (target.startsWith('settings#')) {
-      // Navigate to settings with specific tab
+      return;
+    }
+    if (target.startsWith('settings#')) {
       const tab = target.split('#')[1];
       setNavigation({ type: 'settings' });
-      // Update hash for tab selection (SettingsPage listens for hashchange)
+      // SettingsPage listens for hashchange — short delay so the page
+      // mounts before we set the hash.
       setTimeout(() => {
         window.location.hash = tab;
       }, 50);
+      return;
+    }
+    // Top-level pages — let the tour walk through actual surfaces of
+    // the app rather than just sidebar tooltips. The full set of nav
+    // keys is mirrored from Sidebar's NAV_ITEMS.
+    if (target === 'dashboard') {
+      setNavigation({ type: 'dashboard' });
+      return;
+    }
+    if (target === 'projects') {
+      setNavigation({ type: 'projects' });
+      return;
+    }
+    if (target === 'recordings') {
+      setNavigation({ type: 'recordings' });
+      return;
+    }
+    if (target === 'live') {
+      setNavigation({ type: 'live' });
+      return;
+    }
+    if (target === 'documents') {
+      setNavigation({ type: 'documents' });
+      return;
+    }
+    if (target === 'chats') {
+      setNavigation({ type: 'chats' });
+      return;
+    }
+    if (target === 'search') {
+      setNavigation({ type: 'search' });
+      return;
+    }
+    if (target === 'browser') {
+      setNavigation({ type: 'browser' });
+      return;
+    }
+    if (target === 'archive') {
+      setNavigation({ type: 'archive' });
+      return;
     }
   }, []);
 

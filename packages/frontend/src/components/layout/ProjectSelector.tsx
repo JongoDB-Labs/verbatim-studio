@@ -108,6 +108,7 @@ export function ProjectSelector({ collapsed }: ProjectSelectorProps) {
   return (
     <div className="relative" ref={dropdownRef}>
       <button
+        data-tour="project-selector"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium
           bg-zinc-100 dark:bg-slate-800 hover:bg-zinc-200 dark:hover:bg-slate-700
