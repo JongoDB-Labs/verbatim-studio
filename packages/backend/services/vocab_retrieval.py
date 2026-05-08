@@ -445,7 +445,7 @@ def _popularity_floor_query(
 
 
 def _acronym_safety_query(
-    conn: sqlite3.Connection, per_category: int = 50,
+    conn: sqlite3.Connection, per_category: int = 100,
 ) -> list[sqlite3.Row]:
     """Stratified acronym pull, top-N per non-aviation category.
 
@@ -620,7 +620,7 @@ async def retrieve_for_project(
     bm25_rows = _bm25_query(conn, plain, limit=BM25_POOL) if plain else []
     cosine_rows = _vec_query(conn, vector or [], limit=COSINE_POOL) if (has_vec and vector) else []
     popular_rows = _popularity_floor_query(conn, POPULARITY_FLOOR)
-    acronym_rows = _acronym_safety_query(conn, per_category=50)
+    acronym_rows = _acronym_safety_query(conn, per_category=100)
     user_rows = await _load_user_rows(db, project_id=project_id)
 
     # Category broadcast: when BM25 results cluster in a few categories,
