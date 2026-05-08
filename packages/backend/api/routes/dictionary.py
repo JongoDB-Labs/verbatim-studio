@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile, File, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
@@ -276,10 +276,19 @@ async def create_entry(
     return _row_to_response(row)
 
 
+# UUID regex for entry_id path parameter — entries are UUIDv4, but
+# more importantly: this constraint prevents `/corpus`, `/import`,
+# `/extract-from-document`, `/commit-extracted-terms` from accidentally
+# matching the `/{entry_id}` catchall when those specific routes are
+# registered later in the file. (FastAPI matches routes top-down; we
+# don't want to physically move the corpus block above this one.)
+_ENTRY_ID_PATTERN = r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
+
+
 @router.put("/{entry_id}", response_model=DictionaryEntryResponse)
 async def update_entry(
-    entry_id: str,
     body: DictionaryEntryUpdate,
+    entry_id: str = Path(..., regex=_ENTRY_ID_PATTERN),
     db: AsyncSession = Depends(get_db),
 ) -> DictionaryEntryResponse:
     """Update a dictionary entry. Only fields present in the request are touched."""
@@ -329,7 +338,7 @@ async def update_entry(
     response_class=Response,
 )
 async def delete_entry(
-    entry_id: str,
+    entry_id: str = Path(..., regex=_ENTRY_ID_PATTERN),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     result = await db.execute(
@@ -709,6 +718,10 @@ CORPUS_DOWNLOAD_URL = (
     "https://github.com/JongoDB/verbatim-studio-releases"
     "/releases/latest/download/vocab_bundled_full.db"
 )
+CORPUS_METADATA_URL = (
+    "https://github.com/JongoDB/verbatim-studio-releases"
+    "/releases/latest/download/corpus_metadata.json"
+)
 
 # Track the in-flight download so a second POST returns 409 instead of
 # kicking off a duplicate.
@@ -863,6 +876,119 @@ async def download_full_corpus() -> StreamingResponse:
                 return
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+def _read_local_corpus_meta(db_path: Path) -> dict[str, str | int]:
+    """Read corpus_version and term_count from a corpus DB's metadata table."""
+    if not db_path.exists():
+        return {}
+    import sqlite3
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            out: dict[str, str | int] = {}
+            for key in ("corpus_version", "total_terms", "embedded_count", "built_at"):
+                row = conn.execute(
+                    "SELECT value FROM metadata WHERE key = ? LIMIT 1", (key,),
+                ).fetchone()
+                if row:
+                    val = row[0]
+                    # Some values are JSON-encoded ints / floats; try to parse.
+                    try:
+                        out[key] = json.loads(val)
+                    except (json.JSONDecodeError, TypeError):
+                        out[key] = val
+            return out
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("local corpus metadata read failed: %s", e)
+        return {}
+
+
+class CorpusUpdateCheckResponse(BaseModel):
+    """Result of comparing local corpus to the latest release."""
+
+    has_update: bool
+    local_version: str | None
+    remote_version: str | None
+    local_term_count: int | None
+    remote_term_count: int | None
+    remote_built_at: str | None
+    error: str | None = None
+
+
+@router.get("/corpus/check-update", response_model=CorpusUpdateCheckResponse)
+async def check_corpus_update() -> CorpusUpdateCheckResponse:
+    """Compare local corpus version to the latest published release.
+
+    Cheap (~500 byte JSON fetch). The frontend uses this to decide
+    whether to surface an "Update available" badge on the corpus tile,
+    so users can keep their local corpus current as we roll out new
+    pronunciation forms / popularity boosts / source modules.
+
+    Resolution order for "local":
+      1. ${DATA_DIR}/vocab_bundled.db (user-downloaded full corpus)
+      2. resources/vocab_bundled.db (slim DB shipped with installer)
+    The first is what the runtime uses; that's what we compare against.
+    """
+    from core.config import settings
+
+    # Find the active local corpus to read its metadata.
+    local_meta: dict = {}
+    user_data_db = Path(settings.DATA_DIR) / "vocab_bundled.db"
+    if user_data_db.exists():
+        local_meta = _read_local_corpus_meta(user_data_db)
+    else:
+        # Fall back to bundled resources copy.
+        try:
+            from services.vocab_retrieval import _bundled_db_path
+            bundled = _bundled_db_path()
+            if bundled and bundled.exists():
+                local_meta = _read_local_corpus_meta(bundled)
+        except Exception as e:
+            logger.debug("bundled corpus path lookup failed: %s", e)
+
+    # Fetch remote metadata. Small file, no streaming needed.
+    import urllib.request
+    import urllib.error
+    remote_meta: dict = {}
+    error_msg: str | None = None
+    try:
+        req = urllib.request.Request(
+            CORPUS_METADATA_URL,
+            headers={"User-Agent": "verbatim-studio/corpus-update-check"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            remote_meta = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # 404 means the latest release didn't ship a metadata sidecar
+        # (e.g. legacy releases before v0.64.7). Treat as "no update info"
+        # rather than as an error — UI just won't show update badge.
+        if e.code == 404:
+            error_msg = None
+        else:
+            error_msg = f"HTTP {e.code}: {e.reason}"
+    except Exception as e:
+        error_msg = str(e)
+
+    local_version = local_meta.get("corpus_version") if local_meta else None
+    remote_version = remote_meta.get("corpus_version") if remote_meta else None
+
+    has_update = (
+        bool(remote_version)
+        and remote_version != local_version
+    )
+
+    return CorpusUpdateCheckResponse(
+        has_update=has_update,
+        local_version=str(local_version) if local_version else None,
+        remote_version=str(remote_version) if remote_version else None,
+        local_term_count=int(local_meta.get("total_terms") or 0) or None,
+        remote_term_count=int(remote_meta.get("total_terms") or 0) or None,
+        remote_built_at=str(remote_meta.get("built_at")) if remote_meta else None,
+        error=error_msg,
+    )
 
 
 @router.delete("/corpus")

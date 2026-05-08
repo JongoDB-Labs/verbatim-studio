@@ -336,6 +336,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
   const [corpusDownloading, setCorpusDownloading] = useState(false);
   const [corpusProgress, setCorpusProgress] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
   const [corpusError, setCorpusError] = useState<string | null>(null);
+  const [corpusUpdate, setCorpusUpdate] = useState<{ has_update: boolean; local_version: string | null; remote_version: string | null } | null>(null);
   const corpusAbortRef = useRef<{ abort: () => void } | null>(null);
 
   // Post-Transcription Automation state
@@ -505,6 +506,18 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       });
     } catch (err) {
       console.error('Failed to load corpus status:', err);
+    }
+    // Also check for corpus updates — small piggyback on the same load.
+    try {
+      const update = await api.dictionary.corpusCheckUpdate();
+      setCorpusUpdate({
+        has_update: update.has_update,
+        local_version: update.local_version,
+        remote_version: update.remote_version,
+      });
+    } catch (err) {
+      // Update check is best-effort; don't surface failure to UI.
+      console.debug('Corpus update check failed (offline?):', err);
     }
   }, []);
 
@@ -997,7 +1010,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
         });
         loadCorpusStatus();
       } else if (event.status === 'error') {
-        setCorpusError(event.message);
+        setCorpusError(`Download failed: ${event.message}`);
         setCorpusDownloading(false);
         setCorpusProgress(null);
       }
@@ -1006,12 +1019,13 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
 
   const handleRemoveCorpus = async () => {
     if (!confirm('Remove the downloaded full corpus? Retrieval will fall back to the slim BM25-only variant. You can re-download anytime.')) return;
+    setCorpusError(null);
     try {
       await api.dictionary.removeCorpus();
       await loadCorpusStatus();
     } catch (err) {
       console.error('Failed to remove corpus:', err);
-      setCorpusError(err instanceof Error ? err.message : String(err));
+      setCorpusError(`Remove failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -2199,6 +2213,14 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
                         active
                       </span>
                     )}
+                    {corpusStatus?.has_embeddings && corpusUpdate?.has_update && (
+                      <span
+                        className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                        title={`Local: ${corpusUpdate.local_version ?? 'unknown'} → Remote: ${corpusUpdate.remote_version ?? 'unknown'}`}
+                      >
+                        update available
+                      </span>
+                    )}
                   </p>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {corpusStatus?.has_embeddings
@@ -2206,15 +2228,31 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
                       : 'Optional ~1.1 GB download. Adds semantic retrieval on top of the lexical (BM25) matching that already ships. Useful for projects where the relevant term might not share any literal tokens with your project description.'}
                   </p>
                 </div>
-                <div className="flex-shrink-0">
+                <div className="flex-shrink-0 flex flex-col gap-2 items-end">
                   {corpusStatus?.has_embeddings ? (
-                    <button
-                      onClick={handleRemoveCorpus}
-                      disabled={corpusDownloading}
-                      className="px-3 py-1.5 text-sm font-medium text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
+                    <>
+                      {corpusUpdate?.has_update && (
+                        <button
+                          onClick={async () => {
+                            await handleRemoveCorpus();
+                            // Small delay to let removal settle, then redownload.
+                            setTimeout(handleDownloadCorpus, 300);
+                          }}
+                          disabled={corpusDownloading}
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg whitespace-nowrap disabled:opacity-50"
+                          title={`Replace local corpus (${corpusUpdate.local_version ?? '?'}) with remote (${corpusUpdate.remote_version ?? '?'})`}
+                        >
+                          Update Now
+                        </button>
+                      )}
+                      <button
+                        onClick={handleRemoveCorpus}
+                        disabled={corpusDownloading}
+                        className="px-3 py-1.5 text-sm font-medium text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </>
                   ) : corpusDownloading ? (
                     <button
                       onClick={() => corpusAbortRef.current?.abort()}
@@ -2254,7 +2292,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
 
               {corpusError && (
                 <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                  Download failed: {corpusError}
+                  {corpusError}
                 </p>
               )}
             </div>

@@ -1292,6 +1292,16 @@ export interface DictionaryCorpusStatus {
   download_url: string;
 }
 
+export interface CorpusUpdateCheck {
+  has_update: boolean;
+  local_version: string | null;
+  remote_version: string | null;
+  local_term_count: number | null;
+  remote_term_count: number | null;
+  remote_built_at: string | null;
+  error: string | null;
+}
+
 export type ExtractionCandidateClassification =
   | 'new'
   | 'already_bundled'
@@ -3542,6 +3552,12 @@ class ApiClient {
 
     corpusStatus: () =>
       this.request<DictionaryCorpusStatus>('/api/dictionary/corpus/status'),
+
+    /** Check whether a newer corpus is available. Cheap (~500 byte JSON)
+     *  call; safe to run periodically or on Settings load to surface an
+     *  "Update available" badge on the corpus tile. */
+    corpusCheckUpdate: () =>
+      this.request<CorpusUpdateCheck>('/api/dictionary/corpus/check-update'),
 
     /** Stream the full embedded-corpus download from the public release
      *  bucket. Mirrors the OCR/whisper model download pattern: fetch

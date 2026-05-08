@@ -379,6 +379,7 @@ def _write_metadata(
     counts: dict[str, int],
     embedded_count: int,
     duration_s: float,
+    output_path: Path | None = None,
 ) -> None:
     meta = {
         "corpus_version": corpus_version,
@@ -395,6 +396,18 @@ def _write_metadata(
         [(k, json.dumps(v) if not isinstance(v, str) else v) for k, v in meta.items()],
     )
     conn.commit()
+
+    # Also write a sidecar JSON file alongside the DB. The runtime uses
+    # this for delta detection — it's small (~500 bytes), so the
+    # frontend can poll it cheaply to decide whether a corpus update is
+    # worth offering the user without downloading the 1.1 GB DB itself.
+    if output_path:
+        sidecar = output_path.parent / "corpus_metadata.json"
+        try:
+            sidecar.write_text(json.dumps(meta, indent=2))
+            logger.info("corpus_metadata.json sidecar written at %s", sidecar)
+        except Exception as e:
+            logger.warning("failed to write corpus_metadata.json: %s", e)
 
 
 def _write_csv_export(
@@ -596,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
         counts=counts,
         embedded_count=embedded,
         duration_s=duration,
+        output_path=args.output,
     )
 
     # Human-readable CSV export for QA review. Done before VACUUM since

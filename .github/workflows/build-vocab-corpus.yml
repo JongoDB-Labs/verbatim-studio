@@ -188,6 +188,7 @@ jobs:
           files: |
             assets/vocab_bundled_full.db
             assets/vocab_bundled_slim.db
+            assets/corpus_metadata.json
           fail_on_unmatched_files: true
           # The Electron build workflow already creates the release in the
           # public repo via dispatched workflow; we attach corpus assets
