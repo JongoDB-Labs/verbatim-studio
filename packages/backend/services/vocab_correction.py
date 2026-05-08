@@ -479,8 +479,20 @@ def correct_segments(
         seg_corrections: list[WordCorrection] = []
 
         for w_idx, w in enumerate(words):
-            word_text = getattr(w, "text", "") or ""
+            # TranscriptionWord uses `.word` (matching WhisperX's schema);
+            # legacy / dict-shaped objects may use `.text`. Try both so
+            # this works against both ORM rows and freshly-decoded
+            # WhisperX output without an attribute migration.
+            word_text = (
+                getattr(w, "word", None)
+                or getattr(w, "text", None)
+                or (w.get("word") if isinstance(w, dict) else None)
+                or (w.get("text") if isinstance(w, dict) else None)
+                or ""
+            )
             confidence = getattr(w, "confidence", None)
+            if confidence is None and isinstance(w, dict):
+                confidence = w.get("score") or w.get("confidence")
             if confidence is None:
                 continue
 
@@ -512,16 +524,35 @@ def correct_segments(
             corrections.append(wc)
             seg_corrections.append(wc)
 
-            # Apply in place.
+            # Apply in place. Use whichever attribute the word object
+            # actually has (TranscriptionWord uses .word; dict-shaped
+            # rows use ["word"] or ["text"]).
             try:
-                w.text = replacement_word
-            except AttributeError:
+                if hasattr(w, "word"):
+                    w.word = replacement_word
+                elif hasattr(w, "text"):
+                    w.text = replacement_word
+                elif isinstance(w, dict):
+                    if "word" in w:
+                        w["word"] = replacement_word
+                    elif "text" in w:
+                        w["text"] = replacement_word
+            except (AttributeError, TypeError):
                 pass
 
         if seg_corrections:
             # Rebuild segment text from updated words.
             try:
-                seg.text = " ".join((getattr(x, "text", "") or "") for x in words).strip()
+                seg.text = " ".join(
+                    (
+                        getattr(x, "word", None)
+                        or getattr(x, "text", None)
+                        or (x.get("word") if isinstance(x, dict) else None)
+                        or (x.get("text") if isinstance(x, dict) else None)
+                        or ""
+                    )
+                    for x in words
+                ).strip()
             except AttributeError:
                 pass
             # Annotate segment with corrections for UI consumption.
