@@ -432,6 +432,46 @@ _ACRONYMS: list[tuple[str, str, str, list[str]]] = [
      ["lim doo", "lim-doo"]),
     ("NAVPERS", "Navy Personnel Form", "personnel",
      ["nav pers"]),
+    # ── Command, Control, Communications, Computers, Intelligence ─────
+    # C-system family. Each level adds one more "C" or domain. These
+    # are catastrophic-loss class — Whisper hears "see four eye" and
+    # without explicit hints can't tell C4I from CAC (both DM='KK').
+    ("C2", "Command and Control", "c4isr",
+     ["see two", "C-2", "see-too"]),
+    ("C3", "Command, Control, and Communications", "c4isr",
+     ["see three", "C-3", "see-three"]),
+    ("C4", "Command, Control, Communications, and Computers", "c4isr",
+     ["see four", "C-4", "see-fore"]),
+    ("C4I", "Command, Control, Communications, Computers, and Intelligence", "c4isr",
+     ["see four eye", "C-4-I", "see-four-eye", "c4i"]),
+    ("C4ISR", "Command, Control, Communications, Computers, Intelligence, Surveillance, and Reconnaissance", "c4isr",
+     ["see four eye ess ar", "C-4-I-S-R", "see-four-eye-ess-ar"]),
+    ("C5I", "Command, Control, Communications, Computers, Cyber, and Intelligence", "c4isr",
+     ["see five eye", "C-5-I", "see-five-eye"]),
+    ("C5ISR", "Command, Control, Communications, Computers, Cyber, Intelligence, Surveillance, and Reconnaissance", "c4isr",
+     ["see five eye ess ar", "C-5-I-S-R"]),
+    ("ISR", "Intelligence, Surveillance, and Reconnaissance", "c4isr",
+     ["eye ess ar", "I-S-R"]),
+    ("ISRT", "Intelligence, Surveillance, Reconnaissance, and Targeting", "c4isr",
+     ["eye ess ar tee", "I-S-R-T"]),
+    ("MASINT", "Measurement and Signature Intelligence", "c4isr",
+     ["em ay ess int", "ma-sint", "may-sint"]),
+    ("SIGINT", "Signals Intelligence", "c4isr",
+     ["sig int", "SIG-int", "sigh-int"]),
+    ("HUMINT", "Human Intelligence", "c4isr",
+     ["hyoo mint", "hyu-mint", "hew-mint"]),
+    ("OSINT", "Open Source Intelligence", "c4isr",
+     ["oh sint", "oh-sint", "OH-sint"]),
+    ("GEOINT", "Geospatial Intelligence", "c4isr",
+     ["gee oh int", "geo-int", "JEE-oh-int"]),
+    ("ELINT", "Electronic Intelligence", "c4isr",
+     ["ee lint", "EE-lint", "ee-lint"]),
+    ("FININT", "Financial Intelligence", "c4isr",
+     ["fin int", "FIN-int"]),
+    ("CYBINT", "Cyber Intelligence", "c4isr",
+     ["sigh bint", "SI-bint", "cy-bint"]),
+    ("TECHINT", "Technical Intelligence", "c4isr",
+     ["tek int", "TEK-int"]),
     # ── Operations / tactical ─────────────────────────────────────────
     ("OPORD", "Operation Order", "operations",
      ["op ord", "op-ord"]),
@@ -750,6 +790,13 @@ def iter_terms() -> Iterable[RawTerm]:
             "MCEN", "MCEN-N", "MCEN-S", "NIPR", "SIPR", "NIPRNet",
             "SIPRNet", "JWICS", "DODIN", "DISA", "DISN", "DSN",
             "1stMOG", "MARCOMM",
+            # C4ISR family + intelligence disciplines — catastrophic loss
+            # without sounds_like ("see four eye" → CAC because DM='KK')
+            "C2", "C3", "C4", "C4I", "C4ISR", "C5I", "C5ISR",
+            "ISR", "ISRT", "MASINT", "SIGINT", "HUMINT", "OSINT",
+            "GEOINT", "ELINT", "FININT", "CYBINT", "TECHINT",
+            # Operational acronyms commonly misread
+            "ATO", "IATT", "RMF", "OPORD", "FRAGO", "CONOP", "CONOPS",
         }
         score = 0.95 if canonical in critical else 0.85
         yield RawTerm(
