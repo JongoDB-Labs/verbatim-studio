@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 # How many candidates to surface for prompt biasing + post-correction.
 # 100 is empirically enough to fill the 224-token Whisper prompt with
 # the 60-80 most-relevant terms after token-budget trimming.
-DEFAULT_RETRIEVAL_LIMIT = 100
+DEFAULT_RETRIEVAL_LIMIT = 200
 
 # Per-leg candidate pool sizes BEFORE the final rerank → top-K.
 BM25_POOL = 200
@@ -445,7 +445,7 @@ def _popularity_floor_query(
 
 
 def _acronym_safety_query(
-    conn: sqlite3.Connection, per_category: int = 20,
+    conn: sqlite3.Connection, per_category: int = 50,
 ) -> list[sqlite3.Row]:
     """Stratified acronym pull, top-N per non-aviation category.
 
@@ -620,7 +620,7 @@ async def retrieve_for_project(
     bm25_rows = _bm25_query(conn, plain, limit=BM25_POOL) if plain else []
     cosine_rows = _vec_query(conn, vector or [], limit=COSINE_POOL) if (has_vec and vector) else []
     popular_rows = _popularity_floor_query(conn, POPULARITY_FLOOR)
-    acronym_rows = _acronym_safety_query(conn, per_category=20)
+    acronym_rows = _acronym_safety_query(conn, per_category=50)
     user_rows = await _load_user_rows(db, project_id=project_id)
 
     # Category broadcast: when BM25 results cluster in a few categories,
@@ -683,10 +683,11 @@ async def retrieve_for_project(
     # bypass the Phase 2 confidence gate, so pinning them is the only
     # way Phase 2 can repair "Mctissa" → MCTSSA when the project's
     # context didn't trip a military signal.
-    # Cap pinned acronyms at half the retrieval budget — they're a
-    # safety net, not the main course. Leave headroom for project-
-    # context-driven BM25 / cosine retrieval to fill the rest.
-    acronym_pin_cap = max(20, limit // 2)
+    # Cap pinned acronyms at 60% of the retrieval budget — they're a
+    # safety net, but their coverage is critical for the highest-loss
+    # transcription class. Leave 40% for project-context-driven BM25 /
+    # cosine retrieval.
+    acronym_pin_cap = max(50, int(limit * 0.6))
     pinned_acronyms = 0
     for ar in acronym_rows:
         key = str(ar["id"])

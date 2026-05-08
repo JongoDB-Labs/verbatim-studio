@@ -400,6 +400,15 @@ def _should_correct(
 
     core_lower = core.lower()
 
+    # Gate 0 — exact-match exclusion. If the input word IS already a
+    # canonical term in the dictionary (case-insensitive), don't try to
+    # "correct" it. Without this guard, two phonetically similar dictionary
+    # terms (C4I and CAC both DM='KK') compete on edit distance and the
+    # smaller one wins — silently rewriting a correct C4I as CAC.
+    for term in phonetic_index:
+        if term.canonical and term.canonical.lower() == core_lower:
+            return None
+
     # Gate 1 — confidence threshold (with acronym-shape bypass).
     is_acronym_shape = _looks_like_acronym_misread(core)
     if not is_acronym_shape:

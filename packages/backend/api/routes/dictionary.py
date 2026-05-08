@@ -557,11 +557,19 @@ async def check_corpus_update() -> CorpusUpdateCheckResponse:
 
     local_version = local_meta.get("corpus_version") if local_meta else None
     remote_version = remote_meta.get("corpus_version") if remote_meta else None
+    local_built_at = local_meta.get("built_at") if local_meta else None
+    remote_built_at = remote_meta.get("built_at") if remote_meta else None
 
-    has_update = (
-        bool(remote_version)
-        and remote_version != local_version
-    )
+    # built_at takes precedence over corpus_version as the staleness
+    # signal — corpus_version is often hardcoded ("0.1.0" for local
+    # builds, the git tag for CI builds) and doesn't change on
+    # content-only refreshes (same code, new sources, retried build).
+    # built_at is monotonic per build → it always reflects content age.
+    has_update = False
+    if remote_built_at and local_built_at:
+        has_update = str(remote_built_at) > str(local_built_at)
+    elif bool(remote_version) and remote_version != local_version:
+        has_update = True
 
     return CorpusUpdateCheckResponse(
         has_update=has_update,
