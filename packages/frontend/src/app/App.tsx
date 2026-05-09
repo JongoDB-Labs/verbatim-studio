@@ -819,6 +819,8 @@ function AppContent() {
                     onNavigateToDocuments={handleNavigateToDocuments}
                     onViewTranscript={handleViewTranscript}
                     onViewDocument={handleViewDocument}
+                    onNavigateToLive={() => setNavigation({ type: 'live' })}
+                    onNavigateToChats={handleNavigateToChats}
                   />
                 )}
                 {navigation.type === 'project-analytics' && (

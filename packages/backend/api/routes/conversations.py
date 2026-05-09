@@ -57,6 +57,7 @@ class ConversationListItem(BaseModel):
 
     id: str
     title: str | None
+    project_id: str | None
     created_at: datetime
     updated_at: datetime
     message_count: int
@@ -132,6 +133,7 @@ async def list_conversations(
             ConversationListItem(
                 id=conv.id,
                 title=conv.title,
+                project_id=conv.project_id,
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
                 message_count=message_count,

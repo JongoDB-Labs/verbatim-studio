@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { MessageSquare } from 'lucide-react';
 import { api, type Document, type OCRStatusResponse } from '@/lib/api';
 import { NotesPanel, PDFViewer, DOCXViewer } from '@/components/documents';
+import { ProjectAssignmentControl } from '@/components/shared/ProjectAssignmentControl';
 
 interface DocumentViewerPageProps {
   documentId: string;
@@ -414,6 +415,14 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ProjectAssignmentControl
+            currentProjectId={document.project_id}
+            onAssign={async (projectId) => {
+              await api.documents.update(document.id, { project_id: projectId });
+              const fresh = await api.documents.get(document.id);
+              setDocument(fresh);
+            }}
+          />
           {documentSupportsOcr && (
             <button
               data-tour="run-ocr"

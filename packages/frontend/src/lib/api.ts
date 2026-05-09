@@ -1071,6 +1071,7 @@ export interface ConversationMessage {
 export interface Conversation {
   id: string;
   title: string | null;
+  project_id: string | null;
   created_at: string;
   updated_at: string;
   message_count: number;

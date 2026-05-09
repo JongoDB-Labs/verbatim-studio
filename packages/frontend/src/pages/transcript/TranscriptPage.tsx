@@ -13,6 +13,7 @@ import { QualityReviewPanel } from '@/components/transcript/QualityReviewPanel';
 import { FillerDetectionPanel } from '@/components/transcript/FillerDetectionPanel';
 import { TranslateButton } from '@/components/transcript/TranslateButton';
 import { RecorrectVocabularyButton } from '@/components/transcript/RecorrectVocabularyButton';
+import { ProjectAssignmentControl } from '@/components/shared/ProjectAssignmentControl';
 import { useKeyboardShortcuts, getPlaybackShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useKeybindingStore } from '@/stores/keybindingStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -619,6 +620,13 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
             </div>
           )}
           <div className="flex items-center gap-2">
+            <ProjectAssignmentControl
+              currentProjectId={recording.project_ids?.[0] ?? null}
+              onAssign={async (projectId) => {
+                await api.recordings.update(recording.id, { project_id: projectId });
+                await loadData(true);
+              }}
+            />
             <button
               onClick={() => setShowSearch(true)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
