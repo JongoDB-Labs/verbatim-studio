@@ -98,6 +98,27 @@ DIARIZATION_INTERVAL_SECONDS = 4.0
 # prompt; too little gives no benefit.
 PROMPT_CONTEXT_CHARS = 200
 
+# Minimum time-overlap (seconds) for two segments to be considered the
+# same span. Used when deduping new confirmed segments against existing
+# confirmed — Whisper's segmentation drifts slightly between runs, so we
+# need a generous threshold.
+SEGMENT_OVERLAP_THRESHOLD_SEC = 0.4
+
+
+def _overlaps_any(seg: "LiveSegment", others: list["LiveSegment"]) -> bool:
+    """True if *seg*'s time range overlaps any segment in *others* by at
+    least ``SEGMENT_OVERLAP_THRESHOLD_SEC``.
+
+    Used to skip duplicate confirmed segments when the rolling buffer
+    re-transcribes audio that's already been transcribed in a previous
+    run.
+    """
+    for o in others:
+        overlap = min(seg.end, o.end) - max(seg.start, o.start)
+        if overlap >= SEGMENT_OVERLAP_THRESHOLD_SEC:
+            return True
+    return False
+
 
 @dataclass
 class LiveSegment:
@@ -320,22 +341,56 @@ class RollingTranscriber:
         })
 
     async def _retranscribe_buffer(self) -> None:
-        """Run Whisper over the current buffer and update segment state."""
-        # Promote tentative segments that have aged past the stability
-        # boundary to confirmed. Use their CURRENT (latest tentative)
-        # text/speaker — this is the last revision before they lock.
-        stability_cutoff = self.total_duration - STABILITY_SECONDS
+        """Run Whisper over the current buffer and update segment state.
 
+        On each call:
+
+          1. **Promote old tentatives** that are out of the buffer's
+             coverage. A segment whose start time is older than
+             ``buffer_start_time`` (or whose end is before the
+             stability cutoff) won't be re-transcribed — its audio has
+             rolled out — so we lock its current text into ``confirmed``.
+             Without this rule, segments could get wiped from tentative
+             before they age past the stability_cutoff (because Whisper
+             might re-segment the same audio differently on each run).
+
+          2. **Re-transcribe** the buffer with Whisper.
+
+          3. **Split new segments** by the stability boundary:
+
+             * Segments whose end is in the stable region get added to
+               ``confirmed`` (if not already covered by an existing
+               confirmed segment, via time-overlap dedupe).
+             * Segments whose end is in the fresh region replace the
+               tentative list. This is where revision happens.
+        """
+        stability_cutoff = self.total_duration - STABILITY_SECONDS
+        buffer_start = self.state.buffer_start_time
+
+        # Step 1: Aggressively promote tentatives whose audio has rolled
+        # out of the buffer (start < buffer_start) OR that have aged
+        # past stability_cutoff. The buffer-start check is what
+        # prevents segment loss: once a segment's audio is no longer
+        # in the buffer, no new transcription can rediscover it, so we
+        # commit whatever text we have.
+        #
+        # Dedupe against existing confirmed by time-overlap: each chunk
+        # may produce a "shifted" version of a segment we've already
+        # committed (because Whisper sees the same audio at a different
+        # buffer offset on each run). Without the dedupe, the same
+        # speech ends up confirmed multiple times.
         still_tentative: list[LiveSegment] = []
-        newly_confirmed: list[LiveSegment] = []
         for seg in self.state.tentative:
-            if seg.end <= stability_cutoff:
+            out_of_buffer = seg.start < buffer_start
+            past_stability = seg.end <= stability_cutoff
+            if out_of_buffer or past_stability:
                 seg.tentative = False
-                newly_confirmed.append(seg)
+                if not _overlaps_any(seg, self.state.confirmed):
+                    self.state.confirmed.append(seg)
+                # Else: existing confirmed already covers this audio.
+                # Drop silently — keeping both would duplicate text.
             else:
                 still_tentative.append(seg)
-        if newly_confirmed:
-            self.state.confirmed.extend(newly_confirmed)
         self.state.tentative = still_tentative
 
         # Build initial_prompt from the recent confirmed text — gives
@@ -351,9 +406,6 @@ class RollingTranscriber:
                 word_timestamps=self.state.high_detail,
                 initial_prompt=prompt or None,
             )
-            # transcribe_array bypasses ffmpeg entirely on engines that
-            # accept numpy arrays (mlx-whisper). Other engines fall
-            # through the default temp-WAV path.
             try:
                 result = await self.engine.transcribe_array(
                     self.state.pcm,
@@ -364,7 +416,9 @@ class RollingTranscriber:
                 logger.warning("Buffer transcription failed: %s", exc)
                 return
 
-            # Translate buffer-relative times to session-absolute.
+            # Build LiveSegments from the new transcription, splitting by
+            # the stability boundary.
+            new_confirmed: list[LiveSegment] = []
             new_tentative: list[LiveSegment] = []
             prev_text: str | None = (
                 self.state.confirmed[-1].text if self.state.confirmed else None
@@ -384,14 +438,6 @@ class RollingTranscriber:
                 abs_start = self.state.buffer_start_time + seg.start
                 abs_end = self.state.buffer_start_time + seg.end
 
-                # Don't re-emit any segment whose time range is entirely
-                # before the stability boundary — those are confirmed
-                # and we don't want to revise them.
-                if abs_end <= stability_cutoff:
-                    # Skip — confirmed segments were already locked in
-                    # during the promotion step above.
-                    continue
-
                 words_data = None
                 if self.state.high_detail and seg.words:
                     words_data = [
@@ -404,21 +450,38 @@ class RollingTranscriber:
                         for w in seg.words
                     ]
 
-                new_tentative.append(LiveSegment(
+                live = LiveSegment(
                     id=uuid.uuid4().hex,
                     start=abs_start,
                     end=abs_end,
                     text=seg.text.strip(),
                     confidence=seg.confidence,
                     words=words_data,
-                    tentative=True,
-                ))
+                    tentative=abs_end > stability_cutoff,
+                )
+                if live.tentative:
+                    new_tentative.append(live)
+                else:
+                    new_confirmed.append(live)
                 prev_text = seg.text
 
-            self.state.tentative = new_tentative
+            # Add any new-confirmed segments to the confirmed list, but
+            # dedupe against existing confirmed by time-range overlap.
+            # This catches the case where Whisper's segmentation differs
+            # between runs and a previously-tentative segment didn't get
+            # rediscovered in the new transcription's stable region.
+            for live in new_confirmed:
+                if not _overlaps_any(live, self.state.confirmed):
+                    self.state.confirmed.append(live)
+
+            # Tentative list is rebuilt fresh from the new run.
+            self.state.tentative = sorted(new_tentative, key=lambda s: s.start)
         except Exception:
             logger.exception("Re-transcribe pipeline error")
             return
+
+        # Keep confirmed sorted by start time so the frontend renders in order.
+        self.state.confirmed.sort(key=lambda s: s.start)
 
         await self._emit_segments_replace()
 
