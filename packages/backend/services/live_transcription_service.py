@@ -342,18 +342,8 @@ class RollingTranscriber:
         # Whisper continuity context across runs.
         prompt = self._build_prompt_context()
 
-        # Write the buffer to a tempfile (engines accept paths).
-        wav_bytes = pcm_to_wav_bytes(self.state.pcm)
-        if not wav_bytes:
+        if self.state.pcm.size == 0:
             return
-
-        with tempfile.NamedTemporaryFile(
-            suffix=".wav",
-            delete=False,
-            dir=str(self.data_dir),
-        ) as tmp:
-            tmp.write(wav_bytes)
-            tmp_path = tmp.name
 
         try:
             options = TranscriptionOptions(
@@ -361,8 +351,15 @@ class RollingTranscriber:
                 word_timestamps=self.state.high_detail,
                 initial_prompt=prompt or None,
             )
+            # transcribe_array bypasses ffmpeg entirely on engines that
+            # accept numpy arrays (mlx-whisper). Other engines fall
+            # through the default temp-WAV path.
             try:
-                result = await self.engine.transcribe(tmp_path, options)
+                result = await self.engine.transcribe_array(
+                    self.state.pcm,
+                    SAMPLE_RATE,
+                    options,
+                )
             except Exception as exc:
                 logger.warning("Buffer transcription failed: %s", exc)
                 return
@@ -419,11 +416,9 @@ class RollingTranscriber:
                 prev_text = seg.text
 
             self.state.tentative = new_tentative
-        finally:
-            try:
-                Path(tmp_path).unlink()
-            except OSError:
-                pass
+        except Exception:
+            logger.exception("Re-transcribe pipeline error")
+            return
 
         await self._emit_segments_replace()
 

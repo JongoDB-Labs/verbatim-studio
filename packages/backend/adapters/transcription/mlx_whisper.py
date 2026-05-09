@@ -12,6 +12,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from core.interfaces import (
     ITranscriptionEngine,
     TranscriptionOptions,
@@ -121,6 +123,71 @@ class MlxWhisperTranscriptionEngine(ITranscriptionEngine):
             segments=segments,
             language=detected_language,
             language_probability=None,  # mlx-whisper doesn't provide this
+            model_used=f"mlx-whisper/{self._model_size}",
+        )
+
+    async def transcribe_array(
+        self,
+        pcm: np.ndarray,
+        sample_rate: int,
+        options: TranscriptionOptions | None = None,
+    ) -> TranscriptionResult:
+        """Transcribe a PCM array directly, bypassing ffmpeg.
+
+        mlx-whisper accepts numpy arrays as the first argument, so we
+        skip the temp-file → ffmpeg → load_audio cycle entirely. This
+        is what live transcription uses on every chunk.
+
+        Whisper expects 16 kHz mono float32 in [-1, 1]. Live audio is
+        already produced in that format upstream; we still resample if
+        the caller passes something different.
+        """
+        options = options or TranscriptionOptions()
+        if pcm.size == 0:
+            return TranscriptionResult(
+                segments=[], language=options.language or "en",
+                model_used=f"mlx-whisper/{self._model_size}",
+            )
+
+        try:
+            import mlx_whisper
+        except ImportError as exc:
+            raise ImportError(
+                "mlx-whisper is not installed. Install with: pip install mlx-whisper"
+            ) from exc
+
+        # Whisper canonical input: 16 kHz mono float32.
+        if sample_rate != 16_000:
+            ratio = 16_000 / sample_rate
+            new_len = int(round(pcm.size * ratio))
+            xs = np.linspace(0, pcm.size - 1, num=new_len)
+            pcm = np.interp(xs, np.arange(pcm.size), pcm).astype(np.float32)
+
+        if pcm.dtype != np.float32:
+            pcm = pcm.astype(np.float32)
+        # mlx_whisper expects a contiguous array
+        pcm = np.ascontiguousarray(pcm)
+
+        transcribe_kwargs: dict[str, Any] = {
+            "path_or_hf_repo": self._model_repo,
+            "word_timestamps": options.word_timestamps,
+            "language": options.language,
+        }
+        if options.initial_prompt:
+            transcribe_kwargs["initial_prompt"] = options.initial_prompt
+
+        result = await asyncio.to_thread(
+            mlx_whisper.transcribe,
+            pcm,
+            **transcribe_kwargs,
+        )
+
+        detected_language = result.get("language", options.language or "en")
+        segments = self._convert_segments(result.get("segments", []))
+        return TranscriptionResult(
+            segments=segments,
+            language=detected_language,
+            language_probability=None,
             model_used=f"mlx-whisper/{self._model_size}",
         )
 

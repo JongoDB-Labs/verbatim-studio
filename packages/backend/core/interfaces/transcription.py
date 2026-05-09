@@ -7,7 +7,10 @@ to be swapped transparently.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 @dataclass
@@ -94,6 +97,60 @@ class ITranscriptionEngine(ABC):
             TranscriptionResult with segments and metadata
         """
         ...
+
+    async def transcribe_array(
+        self,
+        pcm: "np.ndarray",
+        sample_rate: int,
+        options: TranscriptionOptions | None = None,
+    ) -> TranscriptionResult:
+        """Transcribe a raw PCM audio array.
+
+        Used by the live transcription pipeline to skip the disk-write
+        and ffmpeg-decode cycle that ``transcribe()`` triggers when
+        engines call ``ffmpeg`` to read the file. Engines that can
+        accept arrays natively should override this; the default falls
+        back to writing a temp WAV and calling ``transcribe()``.
+
+        Args:
+            pcm: 1-D numpy array of float32 samples in [-1, 1].
+            sample_rate: Sample rate of *pcm* in Hz.
+            options: Transcription options.
+
+        Returns:
+            TranscriptionResult with segments and metadata.
+        """
+        # Default fallback: write a temp WAV and call transcribe(path).
+        # Slow but guarantees every adapter has a working implementation.
+        import tempfile
+        from pathlib import Path
+        import struct
+
+        import numpy as np
+
+        if pcm.size == 0:
+            return TranscriptionResult(segments=[], language="en")
+
+        clipped = np.clip(pcm, -1.0, 1.0)
+        ints = (clipped * 32767.0).astype(np.int16)
+        data_size = ints.size * 2
+        header = b"".join([
+            b"RIFF", struct.pack("<I", 36 + data_size), b"WAVE",
+            b"fmt ", struct.pack("<I", 16), struct.pack("<H", 1),
+            struct.pack("<H", 1), struct.pack("<I", sample_rate),
+            struct.pack("<I", sample_rate * 2), struct.pack("<H", 2),
+            struct.pack("<H", 16), b"data", struct.pack("<I", data_size),
+        ])
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(header + ints.tobytes())
+            tmp_path = tmp.name
+        try:
+            return await self.transcribe(tmp_path, options)
+        finally:
+            try:
+                Path(tmp_path).unlink()
+            except OSError:
+                pass
 
     @abstractmethod
     async def transcribe_stream(

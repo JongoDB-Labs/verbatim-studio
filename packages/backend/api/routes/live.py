@@ -203,7 +203,16 @@ async def live_transcribe(websocket: WebSocket):
 
     try:
         while True:
-            message = await websocket.receive()
+            try:
+                message = await websocket.receive()
+            except RuntimeError as exc:
+                # Starlette raises RuntimeError when the peer has already
+                # closed the WebSocket and we try to receive again. Treat
+                # as a normal disconnect rather than an error.
+                if "disconnect" in str(exc).lower():
+                    logger.debug("WebSocket peer disconnected: %s", exc)
+                    break
+                raise
 
             # Handle text messages (JSON commands)
             if "text" in message:
