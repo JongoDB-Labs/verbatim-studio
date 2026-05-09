@@ -2943,6 +2943,9 @@ class ApiClient {
     getFileUrl: (id: string, inline: boolean = false): string =>
       `${this.baseUrl}/api/documents/${id}/file${inline ? '?inline=true' : ''}`,
 
+    getThumbnailUrl: (id: string): string =>
+      `${this.baseUrl}/api/documents/${id}/thumbnail`,
+
     reprocess: async (id: string): Promise<void> => {
       await this.request<void>(`/api/documents/${id}/process`, { method: 'POST' });
     },

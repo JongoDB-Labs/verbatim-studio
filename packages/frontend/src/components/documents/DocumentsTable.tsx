@@ -1,6 +1,6 @@
 import { cn, formatDateTime } from '@/lib/utils';
 import type { Document, Tag, Project } from '@/lib/api';
-import { DocumentTypeIcon } from './DocumentTypeIcon';
+import { DocumentThumbnail } from './DocumentThumbnail';
 
 type SortKey = 'created_at' | 'title' | 'file_size_bytes';
 
@@ -19,6 +19,7 @@ interface DocumentsTableProps {
   onSelectAll: (selected: boolean) => void;
   allTags?: Tag[];
   allProjects?: Project[];
+  showPreview?: boolean;
 }
 
 function formatFileSize(bytes: number): string {
@@ -101,6 +102,7 @@ export function DocumentsTable({
   onSelectAll,
   allTags = [],
   allProjects = [],
+  showPreview = true,
 }: DocumentsTableProps) {
   const handleHeaderClick = (key: SortKey) => {
     if (sortBy === key) {
@@ -169,6 +171,7 @@ export function DocumentsTable({
                 onSelectChange={(selected) => onSelectDocument(doc.id, selected)}
                 allTags={allTags}
                 allProjects={allProjects}
+                showPreview={showPreview}
               />
             );
           })}
@@ -190,6 +193,7 @@ function DocumentRow({
   onSelectChange,
   allTags,
   allProjects,
+  showPreview,
 }: {
   document: Document;
   status: { label: string; className: string };
@@ -202,6 +206,7 @@ function DocumentRow({
   onSelectChange: (selected: boolean) => void;
   allTags: Tag[];
   allProjects: Project[];
+  showPreview: boolean;
 }) {
   const docTags = allTags.filter((t) => document.tag_ids?.includes(t.id));
   const docProjects = allProjects.filter((p) => document.project_ids?.includes(p.id));
@@ -239,7 +244,7 @@ function DocumentRow({
       {/* Title */}
       <td className="px-3 py-2.5 min-w-0">
         <div className="flex items-center gap-2">
-          <DocumentTypeIcon mimeType={document.mime_type} size="sm" className="shrink-0" />
+          <DocumentThumbnail document={document} showPreview={showPreview} size="sm" className="shrink-0" />
           <div className="min-w-0 flex-1">
             <h3 className="font-medium text-sm truncate" title={document.title}>
               {document.title}

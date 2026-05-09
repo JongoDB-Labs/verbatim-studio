@@ -1,7 +1,7 @@
 import type { Document, Tag, Project } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils';
 import { cn } from '@/lib/utils';
-import { DocumentTypeIcon } from './DocumentTypeIcon';
+import { DocumentThumbnail } from './DocumentThumbnail';
 
 interface DocumentCardProps {
   document: Document;
@@ -11,6 +11,7 @@ interface DocumentCardProps {
   onSelectChange?: (selected: boolean) => void;
   allTags?: Tag[];
   allProjects?: Project[];
+  showPreview?: boolean;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -35,6 +36,7 @@ export function DocumentCard({
   onSelectChange,
   allTags = [],
   allProjects = [],
+  showPreview = true,
 }: DocumentCardProps) {
   const statusStyle = STATUS_STYLES[document.status] || STATUS_STYLES.pending;
   const docTags = allTags.filter((t) => document.tag_ids?.includes(t.id));
@@ -67,7 +69,7 @@ export function DocumentCard({
       )}
 
       <div className={cn('flex items-start gap-3', onSelectChange && 'ml-6')}>
-        <DocumentTypeIcon mimeType={document.mime_type} />
+        <DocumentThumbnail document={document} showPreview={showPreview} size="md" />
         <div className="flex-1 min-w-0">
           <h3 className="font-medium text-gray-900 dark:text-gray-100 truncate">
             {document.title}

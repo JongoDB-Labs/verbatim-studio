@@ -24,6 +24,7 @@ interface DocumentsPageProps {
 
 const STORAGE_KEY = 'verbatim-document-filters';
 const VIEW_MODE_KEY = 'verbatim-document-view-mode';
+const SHOW_PREVIEWS_KEY = 'verbatim-document-show-previews';
 
 const DEFAULT_FILTERS: DocumentFilterState = {
   search: '',
@@ -95,12 +96,23 @@ function loadSavedViewMode(): ViewMode {
   return 'grid';
 }
 
+function loadSavedShowPreviews(): boolean {
+  try {
+    const saved = localStorage.getItem(SHOW_PREVIEWS_KEY);
+    if (saved === 'false') return false;
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
 export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
   const { selectedProjects } = useProjectStore();
 
   // Local UI state
   const [filters, setFilters] = useState<DocumentFilterState>(loadSavedFilters);
   const [viewMode, setViewMode] = useState<ViewMode>(loadSavedViewMode);
+  const [showPreviews, setShowPreviews] = useState<boolean>(loadSavedShowPreviews);
   const [showUpload, setShowUpload] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -160,6 +172,11 @@ export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
   useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+
+  // Persist preview toggle
+  useEffect(() => {
+    localStorage.setItem(SHOW_PREVIEWS_KEY, showPreviews ? 'true' : 'false');
+  }, [showPreviews]);
 
   // Escape key to clear selection
   useEffect(() => {
@@ -357,6 +374,8 @@ export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
           totalResults={totalDocuments}
           viewMode={viewMode}
           onViewModeChange={handleViewModeChange}
+          showPreviews={showPreviews}
+          onShowPreviewsChange={setShowPreviews}
         />
       </div>
 
@@ -400,6 +419,7 @@ export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
               onSelectChange={(selected) => handleSelectDocument(doc.id, selected)}
               allTags={allTags}
               allProjects={allProjects}
+              showPreview={showPreviews}
             />
           ))}
         </div>
@@ -419,6 +439,7 @@ export function DocumentsPage({ onViewDocument }: DocumentsPageProps) {
           onSelectAll={handleSelectAll}
           allTags={allTags}
           allProjects={allProjects}
+          showPreview={showPreviews}
         />
       )}
 

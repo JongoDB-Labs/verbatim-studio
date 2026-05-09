@@ -776,6 +776,123 @@ async def get_document_properties(
     )
 
 
+async def _resolve_document_path(db: AsyncSession, doc: Document) -> Path | None:
+    """Resolve a document's on-disk path using the same strategies as the
+    file download endpoint. Returns None if the file can't be located.
+    Cloud-stored documents are not supported here (they require an adapter
+    fetch which the thumbnail path stays clear of for latency reasons)."""
+    if doc.storage_location_id:
+        result = await db.execute(
+            select(StorageLocation).where(StorageLocation.id == doc.storage_location_id)
+        )
+        location = result.scalar_one_or_none()
+        if location and location.type == "cloud":
+            return None
+
+    file_path = Path(doc.file_path)
+    if file_path.exists():
+        return file_path
+    if doc.storage_location_id and not file_path.is_absolute():
+        result = await db.execute(
+            select(StorageLocation).where(StorageLocation.id == doc.storage_location_id)
+        )
+        location = result.scalar_one_or_none()
+        if location and location.type == "local" and location.config.get("path"):
+            storage_path = Path(location.config["path"])
+            candidate = storage_path / doc.file_path.lstrip("/")
+            if candidate.exists():
+                return candidate
+            if "/" in doc.file_path:
+                parts = doc.file_path.split("/", 1)
+                if len(parts) > 1:
+                    candidate = storage_path / parts[1]
+                    if candidate.exists():
+                        return candidate
+    if not file_path.is_absolute():
+        fallback = storage_service.get_full_path(doc.file_path)
+        if fallback.exists():
+            return fallback
+    return None
+
+
+_THUMBNAIL_MAX_DIM = 320
+_THUMBNAIL_CACHE_HEADER = "public, max-age=86400, stale-while-revalidate=604800"
+
+
+@router.get("/{document_id}/thumbnail", response_model=None)
+async def get_document_thumbnail(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    document_id: str,
+):
+    """Return a small JPEG thumbnail for the document's first page or image.
+
+    Returns 404 (with a clear reason) for unsupported MIME types so the
+    frontend can fall back to its icon-based rendering. Office documents
+    use the cached PDF preview generated at upload time.
+    """
+    doc = await db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    mime = (doc.mime_type or "").lower()
+    is_image = mime.startswith("image/")
+    is_pdf = mime == "application/pdf"
+    has_pdf_preview = bool(doc.metadata_ and doc.metadata_.get("preview_path"))
+
+    if not (is_image or is_pdf or has_pdf_preview):
+        raise HTTPException(status_code=404, detail="No thumbnail available for this type")
+
+    # Resolve the source file we'll render from. For Office docs we use
+    # the cached PDF preview rather than the original binary.
+    source_path: Path | None = None
+    render_as_pdf = is_pdf or has_pdf_preview
+    if has_pdf_preview and not is_pdf:
+        preview_rel = doc.metadata_["preview_path"]
+        candidate = Path(preview_rel)
+        if not candidate.is_absolute():
+            candidate = storage_service.get_full_path(preview_rel)
+        if candidate.exists():
+            source_path = candidate
+    if source_path is None:
+        source_path = await _resolve_document_path(db, doc)
+    if source_path is None or not source_path.exists():
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    from io import BytesIO
+    from PIL import Image
+
+    try:
+        if render_as_pdf:
+            import fitz  # PyMuPDF
+            pdf_doc = fitz.open(source_path)
+            try:
+                if pdf_doc.page_count == 0:
+                    raise HTTPException(status_code=404, detail="PDF has no pages")
+                page = pdf_doc.load_page(0)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            finally:
+                pdf_doc.close()
+        else:
+            img = Image.open(source_path)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+
+        img.thumbnail((_THUMBNAIL_MAX_DIM, _THUMBNAIL_MAX_DIM), Image.Resampling.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=80, optimize=True)
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": _THUMBNAIL_CACHE_HEADER},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Thumbnail render failed for {document_id}: {e}")
+        raise HTTPException(status_code=404, detail="Thumbnail render failed")
+
+
 @router.get("/{document_id}/file", response_model=None)
 async def download_document_file(
     db: Annotated[AsyncSession, Depends(get_db)],
