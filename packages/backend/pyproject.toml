@@ -1,6 +1,6 @@
 [project]
 name = "verbatim-backend"
-version = "0.65.8"
+version = "0.65.9"
 description = "Verbatim Studio Backend API"
 requires-python = ">=3.11"
 dependencies = [
