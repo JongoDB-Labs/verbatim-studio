@@ -126,6 +126,36 @@ export function TourTooltip({
           </a>
         )}
 
+        {/* Caveats — usually about model downloads required for AI
+            features besides transcription. Surfaced as info cards so
+            users don't get confused why a button is disabled. */}
+        {step.caveats && step.caveats.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {step.caveats.map((cv, idx) => (
+              <div
+                key={idx}
+                className="rounded-md border border-blue-300/60 dark:border-blue-700/60 bg-blue-50/60 dark:bg-blue-950/30 p-2.5"
+              >
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                      {cv.label}
+                    </p>
+                    {cv.detail && (
+                      <p className="mt-0.5 text-xs text-blue-800/80 dark:text-blue-200/70 leading-relaxed">
+                        {cv.detail}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Recommended-toggle tips. Each card is a concrete "try this"
             suggestion with reasoning, surfaced inline so users learn
             the non-obvious power-user toggles right when they're

@@ -115,7 +115,7 @@ export function ChatsPage({ onLoadConversation, onOpenChat }: ChatsPageProps) {
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div data-tour="chat-history-list" className="space-y-3">
           {conversations.map((conversation) => (
             <div
               key={conversation.id}

@@ -36,6 +36,20 @@ export function OnboardingTour({ isActive, onComplete, onSkip, onNavigate, hasSa
     if (step.navigateTo && onNavigate) {
       onNavigate(step.navigateTo);
     }
+
+    // Optional triggerEvent — dispatches a window event the relevant
+    // page component listens for (e.g. "tour-open-notes-panel" makes
+    // the document viewer auto-open its notes side panel so the tour
+    // can highlight a real expanded note rather than just point at a
+    // closed button).
+    if (step.triggerEvent) {
+      const delay = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(step.triggerEvent!.type, {
+          detail: step.triggerEvent!.detail,
+        }));
+      }, 350);
+      return () => clearTimeout(delay);
+    }
   }, [isActive, step, onNavigate, currentStep]);
 
   // Find and highlight the target element

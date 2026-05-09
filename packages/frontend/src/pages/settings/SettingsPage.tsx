@@ -351,7 +351,7 @@ function SampleWorkspaceSection() {
   };
 
   return (
-    <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div data-tour="onboarding-section" className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
         <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Onboarding Tour</h2>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
@@ -2128,7 +2128,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       )}
 
       {/* Custom Vocabulary — bundled-first model */}
-      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div data-tour="settings-vocab" className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Custom Vocabulary</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -2516,7 +2516,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       </div>
 
       {/* Post-Transcription Automation */}
-      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div data-tour="settings-post-tx" className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Post-Transcription Automation</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Actions to run automatically after each transcription completes</p>
@@ -3852,7 +3852,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       )}
 
       {/* Vision Models (OCR) Section */}
-      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div data-tour="settings-ai-vision-models" className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Vision Models (OCR)</h2>
@@ -4119,7 +4119,7 @@ export function SettingsPage({ theme, onThemeChange, pluginSettingsTabs, onNavig
       </div>
 
       {/* Language Models (Summarization + Chat) Section */}
-      <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div data-tour="settings-ai-language-models" className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Language Models (Summarization + Chat)</h2>

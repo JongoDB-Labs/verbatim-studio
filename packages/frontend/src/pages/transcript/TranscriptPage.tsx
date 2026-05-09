@@ -791,16 +791,20 @@ export function TranscriptPage({ recordingId, onBack, initialSeekTime }: Transcr
 
       {/* Speaker Statistics Panel */}
       {speakers.length > 0 && (
-        <SpeakerPanel
-          speakers={speakers}
-          segments={transcript.segments}
-          onSpeakerUpdate={handleSpeakerUpdate}
-          onSpeakerMerge={handleSpeakerMerge}
-        />
+        <div data-tour="speaker-panel">
+          <SpeakerPanel
+            speakers={speakers}
+            segments={transcript.segments}
+            onSpeakerUpdate={handleSpeakerUpdate}
+            onSpeakerMerge={handleSpeakerMerge}
+          />
+        </div>
       )}
 
       {/* AI Analysis Panel */}
-      <AIAnalysisPanel transcriptId={transcript.id} existingSummary={transcript.ai_summary} onSummaryComplete={loadData} />
+      <div data-tour="ai-analysis">
+        <AIAnalysisPanel transcriptId={transcript.id} existingSummary={transcript.ai_summary} onSummaryComplete={loadData} />
+      </div>
 
       {/* Entity Extraction Panel */}
       <EntityPanel transcriptId={transcript.id} onScrollToSegment={handleScrollToSegmentById} />

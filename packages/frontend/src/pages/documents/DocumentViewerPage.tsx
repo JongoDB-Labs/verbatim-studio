@@ -55,6 +55,15 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
     return () => window.removeEventListener('ocr-status-changed', fetchOcrStatus);
   }, []);
 
+  // Tour can dispatch "tour-open-notes-panel" to auto-open the side
+  // panel so the tour step highlights a real expanded note instead
+  // of pointing at a closed toggle button.
+  useEffect(() => {
+    const handler = () => setShowNotes(true);
+    window.addEventListener('tour-open-notes-panel', handler);
+    return () => window.removeEventListener('tour-open-notes-panel', handler);
+  }, []);
+
   // Handle text selection in PDF to create a note
   const handleSelectionNote = useCallback((selection: { text: string; page: number }) => {
     setPendingAnchor({ type: 'selection', data: selection });
@@ -407,6 +416,7 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
         <div className="flex items-center gap-2">
           {documentSupportsOcr && (
             <button
+              data-tour="run-ocr"
               onClick={handleRunOcr}
               disabled={ocrRunning || !ocrStatus?.available}
               title={!ocrStatus?.available ? 'Download OCR model in Settings → AI to enable OCR' : undefined}
@@ -447,6 +457,7 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
           {/* Extract vocabulary — runs Granite over the doc, dedupes,
               adds new acronyms / proper nouns to the user's vocabulary */}
           <button
+            data-tour="extract-vocab"
             onClick={handleExtractVocab}
             disabled={extractRunning || document.status !== 'completed'}
             title="Run AI vocabulary extraction over this document. New acronyms / proper nouns get added to your custom vocabulary so future transcriptions recognize them."
@@ -471,6 +482,7 @@ export function DocumentViewerPage({ documentId, onBack }: DocumentViewerPagePro
           </button>
           {/* Notes toggle button */}
           <button
+            data-tour="notes-toggle"
             onClick={() => setShowNotes(!showNotes)}
             className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
               showNotes

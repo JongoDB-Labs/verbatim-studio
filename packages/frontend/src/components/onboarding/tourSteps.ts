@@ -8,31 +8,29 @@ export interface TourStep {
   externalUrl?: string; // optional URL the user can open from the step
   externalUrlLabel?: string; // CTA label for the external link
   category?: string; // grouping label shown above the title in the tooltip
-  // When true, this step is only included in the tour if the sample
-  // workspace was installed. Skipping the install hides drilldown
-  // steps that wouldn't make sense without seed data.
+  // Steps tagged requiresDemo only show when sample workspace installed
   requiresDemo?: boolean;
-  // Optional recommended-setting toggles surfaced inside the tooltip
-  // as "try this" tips. Each tip has a label + an optional reason.
+  // Inline cards rendered in the tooltip:
   recommendations?: Array<{ label: string; reason?: string }>;
+  // Highlights important caveats — usually about model downloads
+  // required for AI features besides transcription.
+  caveats?: Array<{ label: string; detail?: string }>;
+  // Trigger app actions when step activates (e.g. "open the notes
+  // panel"). The OnboardingTour dispatches a window event the
+  // relevant component listens for.
+  triggerEvent?: { type: string; detail?: Record<string, unknown> };
 }
 
-// The tour is structured as a journey through Verbatim's full surface.
-// Inch-wide-mile-deep: each step shows where a feature lives, names what
-// it does in concrete terms, and trusts the user to dig in once they know
-// the door exists. Steps with `requiresDemo: true` drill into specific
-// seeded entities and only show when the sample workspace is installed.
-//
 // Sections:
 //   1. Workspace foundation (project selector, dashboard)
 //   2. Capture (recordings, live, documents)
-//   3. Process inside content (inline notes, OCR, vocabulary extraction,
-//      transcript editing, speaker labeling)
-//   4. Make sense (Max, voice chat, chat history, org-wide search)
-//   5. Manage state (files browser, trash, project isolation)
-//   6. Customize (settings tabs — general / transcription / AI / system)
-//      with concrete recommended-toggle tips
-//   7. Extend (Chrome extension, quick assistant FAB)
+//   3. Inside your content (transcript editing, inline notes,
+//      OCR/vision, vocabulary extraction)
+//   4. Make sense (Max, voice chat, chat history, search)
+//   5. Manage your data (files, trash)
+//   6. Customize (settings drilldowns into subsections)
+//   7. Extend (Chrome extension, FAB)
+//   8. Where to find this later (sample-data lifecycle)
 export const TOUR_STEPS: TourStep[] = [
   // ── Section 1: Workspace foundation ─────────────────────────────────
   {
@@ -47,8 +45,8 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'dashboard',
     category: 'Workspace',
     target: '[data-tour="dashboard"]',
-    title: 'Dashboard',
-    description: 'At-a-glance home: recent recordings, active projects, today\'s activity, system health, storage usage. Quick links to everything else.',
+    title: 'Dashboard — your home base',
+    description: 'A live snapshot of your workspace: recently viewed recordings and documents, project activity, processing queue (what\'s transcribing right now), storage usage, and ML status (which models are downloaded + active). Use it to jump back into work-in-progress in one click.',
     position: 'right',
     navigateTo: 'dashboard',
   },
@@ -71,15 +69,30 @@ export const TOUR_STEPS: TourStep[] = [
     description: 'Upload audio or video for AI transcription. Speaker diarization, multi-language detection, custom vocabulary correction, and quality review all run automatically. Bulk-upload a batch and walk away.',
     position: 'right',
     navigateTo: 'recordings',
+    caveats: [
+      {
+        label: 'Speaker diarization needs a HuggingFace token',
+        detail: 'Free token from huggingface.co/settings/tokens — paste into Settings → Transcription → HF Token. Without it, transcripts work but won\'t separate speakers.',
+      },
+    ],
   },
   {
     id: 'recording-drilldown',
     category: 'Capture',
-    target: '[data-tour="recordings"]',
-    title: 'Open a transcribed recording',
-    description: 'This is the Apollo 11 recording from your sample workspace — opened to its full transcript. Click any segment to edit, watch speaker labels stay aligned, and notice how the audio scrubs in sync with the words. Try the export, translate, and re-correct vocabulary buttons in the toolbar.',
-    position: 'left',
+    target: '[data-tour="ai-analysis"]',
+    title: 'Transcript page — rich editing surface',
+    description: 'This is the Apollo 11 recording from your sample workspace, opened to its full transcript. Click any segment to edit it. Speaker labels are editable. Toolbar buttons let you export, translate, re-run vocabulary correction, and toggle filler words (uh, um). The AI Analysis panel below auto-summarizes longer recordings.',
+    position: 'top',
     navigateTo: 'recording:apollo11',
+    requiresDemo: true,
+  },
+  {
+    id: 'speaker-panel',
+    category: 'Capture',
+    target: '[data-tour="speaker-panel"]',
+    title: 'Speaker statistics + relabeling',
+    description: 'When diarization is on, Verbatim splits the audio into speakers and gives you stats per speaker (talk time, segment count). Rename "Speaker 1" to a real name and it propagates everywhere — the transcript view, search results, exports.',
+    position: 'top',
     requiresDemo: true,
   },
   {
@@ -96,75 +109,53 @@ export const TOUR_STEPS: TourStep[] = [
     category: 'Capture',
     target: '[data-tour="documents"]',
     title: 'Documents',
-    description: 'PDFs, DOCX, PPTX, XLSX, scanned images, RTF — all become searchable. Local OCR + vision-language models read scanned pages, handwritten notes, and image text without ever leaving your machine.',
+    description: 'PDFs, DOCX, PPTX, XLSX, scanned images, RTF — all become searchable. Extracted text is indexed for search; selections become anchors for inline notes; uploaded files trigger OCR or vocabulary extraction on demand.',
     position: 'right',
     navigateTo: 'documents',
   },
 
-  // ── Section 3: Process inside content ───────────────────────────────
+  // ── Section 3: Inside your content ──────────────────────────────────
   {
     id: 'inline-notes-drilldown',
     category: 'Inside your content',
-    target: '[data-tour="documents"]',
-    title: 'Inline notes — see them in action',
-    description: 'This is the Q4 roadmap brief from your sample workspace. We pre-attached a note to the "MCTSSA → Mctissa" line. Open the Notes panel (top-right of the document viewer) to see it, then try selecting any other text and adding your own — notes anchor to the exact selection so jumping back returns you to the source.',
+    target: '[data-tour="notes-toggle"]',
+    title: 'Inline notes — anchored to your selections',
+    description: 'This is the Q4 roadmap brief from your sample workspace. We pre-attached a note to the phrase "industry jargon" — click the Notes button (highlighted) to open the side panel and see it. Notes anchor to the exact text selection; jumping back from your note returns you here.',
     position: 'left',
     navigateTo: 'document:roadmap-brief',
     requiresDemo: true,
-  },
-  {
-    id: 'inline-notes',
-    category: 'Inside your content',
-    target: '[data-tour="documents"]',
-    title: 'Inline note-taking',
-    description: 'Open any document and select text to attach a note. Notes anchor to the exact page + selection so jumping back from your note returns you to the source. Everything you annotate becomes searchable alongside the document itself.',
-    position: 'right',
+    triggerEvent: { type: 'tour-open-notes-panel' },
   },
   {
     id: 'ocr-vlm-drilldown',
     category: 'Inside your content',
-    target: '[data-tour="documents"]',
-    title: 'OCR & vision models in action',
-    description: 'This is the NIST Cybersecurity Framework PDF — already with extracted text. For scanned or handwritten content like the whiteboard photo in your workspace, click "Run OCR" in the document toolbar. Choose between fast traditional OCR or larger vision-language models for handwriting + complex layouts. All processed locally.',
-    position: 'left',
-    navigateTo: 'document:nist-overview',
+    target: '[data-tour="run-ocr"]',
+    title: 'OCR + vision models — read handwriting and scans',
+    description: 'This is a real handwritten-notes photograph from your sample workspace. Click "Run OCR" (highlighted) to extract the text. Verbatim runs OCR / vision-language models locally — your scans never leave the device.',
+    position: 'bottom',
+    navigateTo: 'document:handwritten-notes',
     requiresDemo: true,
-    recommendations: [
+    caveats: [
       {
-        label: 'Try Run OCR on the whiteboard photo',
-        reason: 'Whiteboard handwriting is exactly what the vision-language model is built for — see how it handles handwritten text.',
+        label: 'Requires a vision model download',
+        detail: 'Settings → AI → Vision Models. The default ships disabled; download a vision model first (ranges from ~500 MB for fast OCR to ~4 GB for full vision-language models that handle handwriting + complex layouts).',
       },
     ],
   },
   {
-    id: 'ocr-vlm',
+    id: 'vocab-extract-drilldown',
     category: 'Inside your content',
-    target: '[data-tour="documents"]',
-    title: 'OCR + vision models',
-    description: 'For scanned or handwritten content, click "Run OCR" on any document. Choose between fast traditional OCR or larger vision-language models for handwriting, complex layouts, and figure descriptions. All processed locally — your scans never leave your device.',
-    position: 'right',
-  },
-  {
-    id: 'vocab-extraction',
-    category: 'Inside your content',
-    target: '[data-tour="documents"]',
+    target: '[data-tour="extract-vocab"]',
     title: 'Extract vocabulary from documents',
-    description: 'Click "Extract vocabulary" on any document and Verbatim\'s local AI pulls out acronyms, proper nouns, and domain terms — then dedupes against the bundled 555K-term corpus before adding genuinely new ones to your vocabulary. Future transcripts pick up your team\'s jargon automatically.',
-    position: 'right',
-    recommendations: [
+    description: 'Click "Extract vocabulary" (highlighted). The local AI scans this document for acronyms, proper nouns, and domain-specific terms; dedupes against the bundled 555K-term corpus; adds genuinely new terms to your vocabulary so future transcriptions recognize them.',
+    position: 'bottom',
+    requiresDemo: true,
+    caveats: [
       {
-        label: 'Try Extract Vocabulary on the roadmap brief',
-        reason: 'The roadmap brief mentions MCTSSA, MeSH, C4ISR — these are exactly the kind of acronyms vocabulary extraction is designed to capture.',
+        label: 'Requires a language model download',
+        detail: 'Settings → AI → Language Models. Granite-Tiny (~2 GB) is the default; needed for vocabulary extraction, AI summarization, and chat with Max.',
       },
     ],
-  },
-  {
-    id: 'transcript-editing',
-    category: 'Inside your content',
-    target: '[data-tour="recordings"]',
-    title: 'Edit transcripts inline',
-    description: 'Click any segment to edit. Speaker labels, word-level corrections, fillers (uh, um) toggleable, multi-language translation, and re-run vocabulary correction on demand. Edits are tracked so you can always see the original.',
-    position: 'right',
   },
 
   // ── Section 4: Make sense of it ─────────────────────────────────────
@@ -173,17 +164,24 @@ export const TOUR_STEPS: TourStep[] = [
     category: 'Make sense of it',
     target: '[data-tour="chats"]',
     title: 'Chat with Max',
-    description: 'Max is your local AI assistant. Ask questions about your transcripts, documents, or project context — Max can read across everything in scope, summarize meetings, draft follow-ups, or pull quotes. Runs on your machine via the bundled Granite model; no API calls leaving your device.',
+    description: 'Max is your local AI assistant. Ask questions about your transcripts, documents, or project context — Max can read across everything in scope, summarize meetings, draft follow-ups, or pull quotes. Runs on your machine; no API calls leaving your device.',
     position: 'right',
     navigateTo: 'chats',
+    caveats: [
+      {
+        label: 'Requires a language model download',
+        detail: 'Settings → AI → Language Models. Without one, the chat bubble shows a tooltip pointing you there — no chat until a model is active.',
+      },
+    ],
   },
   {
-    id: 'chat-history',
+    id: 'chat-history-drilldown',
     category: 'Make sense of it',
-    target: '[data-tour="chats"]',
-    title: 'Chat history is persistent + searchable',
-    description: 'Every conversation with Max is saved and reopenable — see the two pre-saved chats in your sample workspace ("Roadmap brief — what are the action items?" and "What did P03 say about vocabulary issues?"). Pick up where you left off, share a thread (export to Markdown), or search across chats from the Search page.',
-    position: 'right',
+    target: '[data-tour="chat-history-list"]',
+    title: 'Saved chats — every conversation is reopenable',
+    description: 'Each chat with Max is saved automatically. The two threads in your sample workspace ("Roadmap brief — what are the action items?" and "What did P03 say about vocabulary issues?") show real conversational continuity. Click any chat to resume from where you left off; export to Markdown to share; chats stay tied to their project so context follows the conversation.',
+    position: 'top',
+    requiresDemo: true,
   },
   {
     id: 'voice-chat',
@@ -192,24 +190,30 @@ export const TOUR_STEPS: TourStep[] = [
     title: 'Voice chat with Max',
     description: 'Click the assistant bubble (bottom-right) and switch to voice mode. Max speaks responses out loud using your selected TTS voice, including a custom Max voice clone. Useful when your hands are full or you\'re reviewing a transcript hands-free.',
     position: 'top',
+    caveats: [
+      {
+        label: 'Requires a text-to-speech model download',
+        detail: 'Settings → AI → Text-to-Speech Models. Without one, voice chat is text-only.',
+      },
+    ],
   },
   {
     id: 'search',
     category: 'Make sense of it',
     target: '[data-tour="search"]',
     title: 'Org-wide search',
-    description: 'Hybrid search (lexical + semantic) across every transcript, document, note, chat, and recording in your workspace. Filter by source type, project, date range. Type a phrase or ask in plain English — works either way.',
+    description: 'Hybrid search (lexical + semantic) across every transcript, document, note, chat, and recording in your workspace. Filter by source type, project, date range. Type a phrase or ask in plain English — both work.',
     position: 'right',
     navigateTo: 'search',
     recommendations: [
       {
-        label: 'Try searching "MCTSSA" or "ATO"',
-        reason: 'Both terms appear in your sample workspace — see how the same query surfaces hits across the recording transcript, the docx brief, and the chat history.',
+        label: 'Try searching "vocabulary" or "ATO"',
+        reason: 'Both terms appear in your sample workspace — see the same query surface hits across the recording transcript, the docx brief, and the chat history.',
       },
     ],
   },
 
-  // ── Section 5: Manage state ─────────────────────────────────────────
+  // ── Section 5: Manage your data ─────────────────────────────────────
   {
     id: 'browser',
     category: 'Manage your data',
@@ -234,63 +238,70 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'settings',
     category: 'Customize',
     target: '[data-tour="settings"]',
-    title: 'Settings — four tabs, deep coverage',
-    description: 'General, Transcription, AI, System. The defaults work out of the box — visit when you want to tune speed, accuracy, model choice, storage location, or keyboard shortcuts.',
+    title: 'Settings — four tabs of configuration',
+    description: 'General, Transcription, AI, System. Defaults work out of the box; visit when you want to tune accuracy, choose models, set storage location, or customize keyboard shortcuts.',
     position: 'right',
     navigateTo: 'settings',
   },
   {
-    id: 'settings-general',
+    id: 'settings-vocab',
     category: 'Customize',
-    target: '[data-tour="settings-general"]',
-    title: 'General',
-    description: 'Theme (light/dark/system), timezone, default language, default playback speed, full keyboard-shortcut customization, trash auto-purge interval, app updates, and the About page. The "Onboarding Tour" section here is also where you can retake the tour or remove the sample workspace later.',
-    position: 'bottom',
-    navigateTo: 'settings#general',
+    target: '[data-tour="settings-vocab"]',
+    title: 'Custom Vocabulary — keep transcripts accurate',
+    description: 'Verbatim ships with a 555K-term bundled vocabulary. The "Semantic vocabulary corpus" download adds embeddings (~1.1 GB) for hybrid retrieval — the model can match terms semantically even without exact token overlap. Drag any document into the drop zone to extract its acronyms and add to your vocabulary in one step.',
+    position: 'top',
+    navigateTo: 'settings#transcription',
   },
   {
-    id: 'settings-transcription',
+    id: 'settings-post-tx',
     category: 'Customize',
-    target: '[data-tour="settings-transcription"]',
-    title: 'Transcription — accuracy controls',
-    description: 'Engine (mlx-whisper / faster-whisper / external like Deepgram), model size, GPU acceleration, speaker diarization (requires HuggingFace token), audio enhancement, custom vocabulary corpus, post-transcription automation.',
-    position: 'bottom',
+    target: '[data-tour="settings-post-tx"]',
+    title: 'Post-transcription automation',
+    description: 'Choose what runs automatically after each transcription completes. Auto-summarize, auto-vocabulary-correction, auto-AI-cleanup, auto-learn from manual edits, auto-export.',
+    position: 'top',
     navigateTo: 'settings#transcription',
     recommendations: [
       {
-        label: 'Toggle on "Vocabulary auto-correction"',
-        reason: 'Phase 2 phonetic post-correction. Catches typos and near-spellings via Double Metaphone matching against your custom vocabulary. Adds milliseconds, runs offline.',
+        label: 'Toggle on Vocabulary auto-correction',
+        reason: 'Fast (millisecond-scale) phonetic post-correction. Catches typos and near-spellings via Double Metaphone matching against your custom vocabulary. Low false-positive risk.',
       },
       {
-        label: 'Toggle on "AI vocabulary cleanup"',
-        reason: 'Slower (~5–7 min per 30-min recording) but catches the long tail Phase 2 misses — acronyms whose spoken form diverges from the spelling, multi-word terms Whisper splits incorrectly. Best for high-stakes recordings where accuracy matters most.',
+        label: 'Toggle on AI vocabulary cleanup',
+        reason: 'Slower (~5-7 min per 30-min recording) but catches the long tail Phase 2 misses — acronyms whose spoken form diverges from spelling, multi-word terms Whisper splits incorrectly. Best for high-stakes recordings.',
       },
       {
-        label: 'Download the full semantic corpus',
-        reason: 'Adds 555K-term semantic retrieval (medical, legal, military, tech, etc) for vocabulary correction. ~1.1 GB; can be removed anytime.',
+        label: 'Toggle on Auto-learn from corrections',
+        reason: 'When you fix a transcript word manually, Verbatim auto-adds proper-noun corrections to your vocabulary. Future recordings pick them up — accuracy compounds over time.',
       },
     ],
   },
   {
-    id: 'settings-ai',
+    id: 'settings-ai-language',
     category: 'Customize',
-    target: '[data-tour="settings-ai"]',
-    title: 'AI — local + remote models',
-    description: 'Download or activate local AI models (vision/OCR, language for Max + summarization, text-to-speech). Optional GPU acceleration on Windows. Bring-your-own-key for OpenAI / Anthropic / Groq / Ollama / LM Studio. Web-search provider for live-data questions.',
-    position: 'bottom',
+    target: '[data-tour="settings-ai-language-models"]',
+    title: 'AI: Language Models',
+    description: 'The bundled language model is what powers chat with Max, document summarization, vocabulary extraction, and AI vocabulary cleanup. Granite-Tiny is the default — small (~2 GB), runs on CPU or GPU.',
+    position: 'top',
     navigateTo: 'settings#ai',
     recommendations: [
       {
-        label: 'Download Granite-Tiny',
-        reason: 'Required for chat with Max, AI vocabulary cleanup, summarization, and document extraction. ~2 GB; runs locally on CPU or GPU.',
+        label: 'Download Granite-Tiny if you haven\'t',
+        reason: 'Required for any feature that says "Max" or "AI cleanup" or "extract" or "summarize". The chat bubble in the corner stays disabled until you download one.',
       },
+    ],
+  },
+  {
+    id: 'settings-ai-vision',
+    category: 'Customize',
+    target: '[data-tour="settings-ai-vision-models"]',
+    title: 'AI: Vision Models (OCR)',
+    description: 'For scanned PDFs, handwritten notes, photographed whiteboards. Two tiers: fast traditional OCR (~500 MB) for clean printed text, and vision-language models (~3-4 GB) for handwriting, complex layouts, and figure descriptions.',
+    position: 'top',
+    navigateTo: 'settings#ai',
+    recommendations: [
       {
-        label: 'Download Qwen-VL or similar vision model',
-        reason: 'Enables OCR on scanned PDFs and handwritten content. The bundled vision model is best for layouts, handwriting, and figures.',
-      },
-      {
-        label: 'Add a HuggingFace token in Transcription',
-        reason: 'Required for speaker diarization. Free token from huggingface.co/settings/tokens — paste into Settings → Transcription → HF Token.',
+        label: 'Download a vision model for handwriting',
+        reason: 'The handwritten notes in your sample workspace are exactly what the vision-language model is built for. Without it, "Run OCR" stays disabled.',
       },
     ],
   },
@@ -322,6 +333,18 @@ export const TOUR_STEPS: TourStep[] = [
     position: 'top',
     externalUrl: 'https://chromewebstore.google.com/search/verbatim%20studio',
     externalUrlLabel: 'Open Chrome Web Store',
+  },
+
+  // ── Section 8: Sample-data lifecycle ────────────────────────────────
+  {
+    id: 'sample-data-lifecycle',
+    category: 'Sample data',
+    target: '[data-tour="onboarding-section"]',
+    title: 'Where to find this later',
+    description: 'Settings → General → Onboarding Tour is your home for everything tour-related: retake the tour anytime, install the sample workspace if you skipped it, or remove it cleanly. Removal deletes only the tour-tagged content; your real recordings, documents, and chats are untouched.',
+    position: 'top',
+    navigateTo: 'settings#general',
+    requiresDemo: true,
   },
 ];
 
