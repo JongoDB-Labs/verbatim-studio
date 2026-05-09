@@ -61,3 +61,9 @@ numpy==2.0.2
 # livekit-protocol>=1.1.0
 # livekit>=1.1.0
 # kokoro-onnx>=0.4.0         # on-demand install (onnxruntime ~200MB)
+
+# Live transcription VAD gate (Whisper hallucinates badly on silence —
+# silero-vad lets us skip transcription on silent chunks). Tiny (~16 MB
+# model, pure-Python wrapper); no native deps so it bundles cleanly on
+# Windows.
+silero-vad>=5.0

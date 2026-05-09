@@ -59,6 +59,12 @@ livekit-plugins-silero>=1.5.0
 livekit-protocol>=1.1.0
 livekit>=1.1.0
 
+# Live transcription VAD gate (skips Whisper on silent chunks).
+# NOT to be confused with livekit-plugins-silero above — this is the
+# raw silero-vad model wrapper used by services/vad_service.py for the
+# rolling-buffer pipeline.
+silero-vad>=5.0
+
 # =============================================================================
 # Other ML dependencies with strict pins
 # =============================================================================

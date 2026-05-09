@@ -39,33 +39,55 @@ _model_lock = threading.Lock()
 _model: Any = None
 _get_speech_timestamps: Any = None
 _torch: Any = None
+# Sticky flag — set on first failed load so we stop spamming logs and
+# hot-loop importlib lookups every chunk.
+_load_failed: bool = False
 
 
-def _ensure_loaded() -> None:
-    """Lazy-load Silero VAD on first call. Thread-safe."""
-    global _model, _get_speech_timestamps, _torch
+def _ensure_loaded() -> bool:
+    """Lazy-load Silero VAD on first call. Thread-safe.
+
+    Returns True if the model is ready, False if silero-vad / torch
+    aren't installed. Callers should treat False as "VAD unavailable —
+    proceed without gating", NOT as an error: a missing VAD just means
+    we lose the silence-skip optimization, transcription itself is
+    unaffected.
+    """
+    global _model, _get_speech_timestamps, _torch, _load_failed
 
     if _model is not None:
-        return
+        return True
+    if _load_failed:
+        return False
 
     with _model_lock:
         if _model is not None:
-            return
+            return True
+        if _load_failed:
+            return False
 
         try:
             import torch
             from silero_vad import get_speech_timestamps, load_silero_vad
         except ImportError as exc:
-            raise ImportError(
-                "silero-vad / torch not installed. Install with:"
-                " pip install 'verbatim-backend[ml]'"
-            ) from exc
+            # Bundled-Python builds prior to v0.65.10 shipped without
+            # silero-vad in requirements-ml.txt; mark unavailable and
+            # let the caller fall back to "treat all chunks as voiced".
+            logger.warning(
+                "Silero VAD unavailable (%s) — live transcription will run"
+                " without the silence gate (Whisper may produce occasional"
+                " hallucinations on dead audio).",
+                exc,
+            )
+            _load_failed = True
+            return False
 
         logger.info("Loading Silero VAD model")
         _model = load_silero_vad(onnx=False)
         _get_speech_timestamps = get_speech_timestamps
         _torch = torch
         logger.info("Silero VAD ready")
+        return True
 
 
 def is_available() -> bool:
@@ -85,11 +107,12 @@ def speech_timestamps(
     *,
     threshold: float = DEFAULT_SPEECH_THRESHOLD,
     min_speech_ms: int = MIN_SPEECH_MS,
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int]] | None:
     """Run VAD and return speech regions as (start_sample, end_sample).
 
-    Returns an empty list if no speech is detected, or if the input is
-    too short for the model (< 31 ms at 16 kHz).
+    Returns an empty list if the input has no speech or is too short.
+    Returns None if Silero VAD isn't installed — callers should treat
+    None as "VAD unavailable, don't gate" rather than as silence.
     """
     if pcm.size == 0:
         return []
@@ -99,7 +122,8 @@ def speech_timestamps(
     if pcm.size < 512:
         return []
 
-    _ensure_loaded()
+    if not _ensure_loaded():
+        return None
 
     tensor = _torch.from_numpy(np.ascontiguousarray(pcm.astype(np.float32)))
 
@@ -120,24 +144,28 @@ def has_speech(
     threshold: float = DEFAULT_SPEECH_THRESHOLD,
     min_speech_ms: int = MIN_SPEECH_MS,
 ) -> bool:
-    """True if VAD detects at least one speech region in *pcm*."""
-    return bool(speech_timestamps(
-        pcm,
-        threshold=threshold,
-        min_speech_ms=min_speech_ms,
-    ))
+    """True if VAD detects at least one speech region in *pcm*.
+
+    When Silero VAD isn't installed we return True so the live pipeline
+    keeps working without the silence-skip optimization.
+    """
+    spans = speech_timestamps(pcm, threshold=threshold, min_speech_ms=min_speech_ms)
+    if spans is None:
+        return True
+    return bool(spans)
 
 
 def speech_ratio(pcm: np.ndarray) -> float:
     """Fraction of *pcm* covered by speech regions, in [0, 1].
 
-    Useful as a "noise floor" indicator — if a chunk is 95% silence we
-    can still safely transcribe the 5% that is speech, but if it's 0%
-    we want to skip entirely.
+    Returns 1.0 when VAD isn't available — same fallback rationale as
+    has_speech: pretend the buffer is all speech so callers don't gate.
     """
     if pcm.size == 0:
         return 0.0
     spans = speech_timestamps(pcm)
+    if spans is None:
+        return 1.0
     if not spans:
         return 0.0
     speech_samples = sum(end - start for start, end in spans)
