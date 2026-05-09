@@ -5,9 +5,8 @@ import { getSpeakerPalette } from '@/lib/speakerColors';
 
 interface LiveSegmentProps {
   segment: TranscriptSegment;
-  onEditText: (index: number, newText: string) => void;
-  onDelete: (index: number) => void;
-  index: number;
+  onEditText: (id: string, newText: string) => void;
+  onDelete: (id: string) => void;
   showTimestamps: boolean;
   showConfidence: boolean;
   /**
@@ -22,7 +21,6 @@ export function LiveSegment({
   segment,
   onEditText,
   onDelete,
-  index,
   showTimestamps,
   showConfidence,
   hideSpeaker = false,
@@ -47,7 +45,7 @@ export function LiveSegment({
   const handleSave = () => {
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== segment.text) {
-      onEditText(index, trimmed);
+      onEditText(segment.id, trimmed);
     } else {
       setEditValue(segment.text);
     }
@@ -65,6 +63,7 @@ export function LiveSegment({
   };
 
   const palette = getSpeakerPalette(segment.speaker);
+  const isTentative = !!segment.tentative;
 
   const getConfidenceClass = (confidence: number | null | undefined) => {
     if (confidence == null) return '';
@@ -79,7 +78,10 @@ export function LiveSegment({
         isEditing
           ? 'bg-purple-50 dark:bg-purple-900/20 ring-1 ring-purple-300 dark:ring-purple-700'
           : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
-      } ${segment.edited_by ? `border-l-2 ${palette.border}` : ''}`}
+      } ${segment.edited_by ? `border-l-2 ${palette.border}` : ''} ${
+        isTentative ? 'opacity-80' : ''
+      }`}
+      data-tentative={isTentative ? 'true' : undefined}
     >
       {/* Timestamp */}
       {showTimestamps && (
@@ -116,8 +118,12 @@ export function LiveSegment({
         ) : (
           <p
             onClick={() => setIsEditing(true)}
-            className="text-sm text-gray-900 dark:text-gray-100 cursor-text leading-relaxed"
-            title="Click to edit"
+            className={`text-sm cursor-text leading-relaxed ${
+              isTentative
+                ? 'text-gray-600 dark:text-gray-400 italic'
+                : 'text-gray-900 dark:text-gray-100'
+            }`}
+            title={isTentative ? 'Tentative — text may revise as more audio arrives' : 'Click to edit'}
           >
             {showConfidence && segment.words ? (
               segment.words.map((w, wi) => (
@@ -136,8 +142,18 @@ export function LiveSegment({
         )}
       </div>
 
+      {/* Tentative indicator */}
+      {isTentative && !isEditing && (
+        <span
+          className="shrink-0 self-center text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-medium"
+          title="This segment may revise as more audio arrives"
+        >
+          live
+        </span>
+      )}
+
       {/* Action buttons on hover */}
-      {!isEditing && (
+      {!isEditing && !isTentative && (
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0 pt-0.5">
           <button
             onClick={() => setIsEditing(true)}
@@ -150,7 +166,7 @@ export function LiveSegment({
             </svg>
           </button>
           <button
-            onClick={() => onDelete(index)}
+            onClick={() => onDelete(segment.id)}
             className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
             title="Delete segment"
             aria-label="Delete segment"

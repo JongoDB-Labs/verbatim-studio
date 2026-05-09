@@ -569,9 +569,8 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
                     const sameSpeakerAsPrev = !!(prev && prev.speaker && prev.speaker === seg.speaker);
                     return (
                       <LiveSegment
-                        key={`${i}-${seg.start}`}
+                        key={seg.id}
                         segment={seg}
-                        index={i}
                         onEditText={updateSegmentText}
                         onDelete={deleteSegment}
                         showTimestamps={true}

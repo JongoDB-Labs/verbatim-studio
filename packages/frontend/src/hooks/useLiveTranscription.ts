@@ -1,4 +1,23 @@
 // packages/frontend/src/hooks/useLiveTranscription.ts
+//
+// Maintains the live transcription state for the page. The backend uses
+// a rolling-buffer pipeline (services/live_transcription_service.py) and
+// emits two kinds of segment messages:
+//
+//   - "segments_replace" — the authoritative current state; carries the
+//     full confirmed list (append-only on the client) and the full
+//     tentative list (replaceable wholesale). The hook stores them
+//     separately so the UI can render tentative segments with a
+//     subtle "may revise" cue.
+//
+//   - "speaker_update" — pyannote results land out-of-band on a slower
+//     cadence than transcription. We patch the speaker label in place
+//     for any matching segment id (confirmed or tentative).
+//
+// `segments` (the public API) is the merged confirmed + tentative list,
+// always sorted by start time. Edits hit the REST endpoint so the
+// authoritative state stays on the server.
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getWebSocketUrl, getApiUrl } from '@/lib/api';
 
@@ -12,14 +31,16 @@ export interface WordData {
 }
 
 export interface TranscriptSegment {
+  id: string;
   text: string;
   start: number;
   end: number;
-  chunkIndex: number;
   speaker?: string | null;
   confidence?: number | null;
   words?: WordData[] | null;
   edited_by?: 'human' | 'ai' | null;
+  /** Tentative segments are inside the live buffer and may revise. */
+  tentative?: boolean;
 }
 
 export interface LiveError {
@@ -40,6 +61,8 @@ export interface UseLiveTranscriptionReturn {
   isMuted: boolean;
   highDetailMode: boolean;
   stream: MediaStream | null;
+  /** Number of tentative segments currently in flight (may revise). */
+  tentativeCount: number;
   connect: () => Promise<void>;
   disconnect: () => void;
   startRecording: (language: string, highDetail?: boolean) => void;
@@ -47,29 +70,53 @@ export interface UseLiveTranscriptionReturn {
   pauseRecording: () => void;
   resumeRecording: () => void;
   toggleMute: () => void;
-  updateSegmentText: (index: number, newText: string) => void;
-  deleteSegment: (index: number) => void;
+  updateSegmentText: (id: string, newText: string) => void;
+  deleteSegment: (id: string) => void;
   clearTranscript: () => Promise<void>;
   dismissError: () => void;
 }
 
-// Chunk interval in milliseconds (1.5 seconds for lower latency)
+// Chunk interval in milliseconds. The backend re-transcribes the full
+// rolling buffer on each chunk arrival, so smaller chunks = lower
+// perceived latency at the cost of more frequent re-runs.
 const CHUNK_INTERVAL_MS = 1500;
 
-// Auto-save interval in milliseconds (30 seconds)
 const AUTOSAVE_INTERVAL_MS = 30_000;
-
-// Reconnection settings
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_RECONNECT_DELAY_MS = 1000;
-
-// Allow time for final chunk processing: chunk interval + backend processing buffer
 const FINAL_CHUNK_WAIT_MS = CHUNK_INTERVAL_MS + 1000;
+
+interface WireSegment {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+  speaker?: string | null;
+  confidence?: number | null;
+  words?: WordData[] | null;
+  edited_by?: 'human' | 'ai' | null;
+  tentative?: boolean;
+}
+
+function wireToSegment(w: WireSegment): TranscriptSegment {
+  return {
+    id: w.id,
+    start: w.start,
+    end: w.end,
+    text: w.text,
+    speaker: w.speaker ?? null,
+    confidence: w.confidence ?? null,
+    words: w.words ?? null,
+    edited_by: w.edited_by ?? null,
+    tentative: w.tentative ?? false,
+  };
+}
 
 export function useLiveTranscription(): UseLiveTranscriptionReturn {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  const [confirmed, setConfirmed] = useState<TranscriptSegment[]>([]);
+  const [tentative, setTentative] = useState<TranscriptSegment[]>([]);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<LiveError | null>(null);
   const [lastAutoSave, setLastAutoSave] = useState<Date | null>(null);
@@ -88,12 +135,10 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
   const userDisconnectedRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
 
-  // Keep ref in sync for use in callbacks
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
-  // Shared cleanup — stops all timers, media, and WebSocket
   const cleanup = useCallback((sendDisconnect = false) => {
     isRecordingRef.current = false;
 
@@ -118,7 +163,6 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     setIsMuted(false);
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => () => cleanup(), [cleanup]);
 
   const startAutosave = useCallback(() => {
@@ -137,7 +181,7 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
         });
         setLastAutoSave(new Date());
       } catch {
-        // Autosave is best-effort, don't interrupt recording
+        // Autosave is best-effort
       }
     }, AUTOSAVE_INTERVAL_MS);
   }, []);
@@ -167,18 +211,53 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
         setSessionId(data.session_id as string);
         break;
 
-      case 'transcript':
-        setSegments(prev => [...prev, {
-          text: data.text as string,
-          start: data.start as number,
-          end: data.end as number,
-          chunkIndex: data.chunk_index as number,
-          speaker: (data.speaker as string) ?? null,
-          confidence: (data.confidence as number) ?? null,
-          words: (data.words as WordData[]) ?? null,
-          edited_by: null,
-        }]);
+      case 'segments_replace': {
+        // Authoritative state from server.
+        const wireConfirmed = (data.confirmed as WireSegment[]) ?? [];
+        const wireTentative = (data.tentative as WireSegment[]) ?? [];
+
+        // Confirmed list is append-only on the wire — server can be
+        // trusted, but we still merge by id to preserve any local
+        // edits made via the REST endpoints (edited_by stays sticky).
+        setConfirmed(prev => {
+          const byId = new Map(prev.map(s => [s.id, s]));
+          for (const w of wireConfirmed) {
+            const existing = byId.get(w.id);
+            byId.set(w.id, {
+              ...wireToSegment(w),
+              // Preserve client edits if any
+              text: existing?.edited_by === 'human' ? existing.text : w.text,
+              edited_by: existing?.edited_by ?? w.edited_by ?? null,
+            });
+          }
+          // Order by start time
+          return [...byId.values()].sort((a, b) => a.start - b.start);
+        });
+
+        setTentative(wireTentative.map(wireToSegment).sort((a, b) => a.start - b.start));
+
+        if (typeof data.duration === 'number') {
+          // Server-authoritative duration tracks the buffer clock; only
+          // update if it's larger than the local timer so we don't jump
+          // backwards mid-pause.
+          setDuration(prev => Math.max(prev, Math.floor(data.duration as number)));
+        }
         break;
+      }
+
+      case 'speaker_update': {
+        // Patch speaker labels for matching segment ids in either list.
+        const updates = (data.updates as Array<{ id: string; speaker: string }>) ?? [];
+        if (updates.length === 0) break;
+        const map = new Map(updates.map(u => [u.id, u.speaker]));
+        setConfirmed(prev =>
+          prev.map(s => map.has(s.id) ? { ...s, speaker: map.get(s.id)! } : s),
+        );
+        setTentative(prev =>
+          prev.map(s => map.has(s.id) ? { ...s, speaker: map.get(s.id)! } : s),
+        );
+        break;
+      }
 
       case 'session_end':
         break;
@@ -204,7 +283,6 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     }
   }, []);
 
-  // Unified WebSocket creation — used by both connect() and reconnect
   const createWebSocket = useCallback((onInitialError?: () => void) => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -235,7 +313,7 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
       } else if (isRecordingRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
         const delay = Math.min(
           BASE_RECONNECT_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current),
-          30_000
+          30_000,
         );
         reconnectAttemptsRef.current += 1;
         reconnectTimeoutRef.current = window.setTimeout(() => createWebSocket(), delay);
@@ -292,7 +370,6 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     setConnectionState('disconnected');
   }, [cleanup]);
 
-  // Create a new MediaRecorder and start recording a chunk
   const startNewChunk = useCallback(() => {
     if (!streamRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
@@ -320,7 +397,6 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     mediaRecorder.start();
   }, []);
 
-  // Shared helper: start chunk cycling + duration timer
   const startRecordingTimers = useCallback(() => {
     startNewChunk();
 
@@ -337,7 +413,6 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     }, 1000);
   }, [startNewChunk]);
 
-  // Shared helper: stop chunk cycling + duration timer
   const stopRecordingTimers = useCallback(() => {
     if (chunkIntervalRef.current) {
       clearInterval(chunkIntervalRef.current);
@@ -379,7 +454,6 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     stopRecordingTimers();
     stopAutosave();
 
-    // Wait for final chunk to be transcribed before ending session
     setTimeout(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'stop' }));
@@ -389,24 +463,20 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     setConnectionState('connected');
   }, [stopRecordingTimers, stopAutosave]);
 
-  // Pause: stop chunk cycling, keep WS alive
   const pauseRecording = useCallback(() => {
     stopRecordingTimers();
     setConnectionState('paused');
   }, [stopRecordingTimers]);
 
-  // Resume: restart chunk cycling and duration timer
   const resumeRecording = useCallback(() => {
     if (!isRecordingRef.current) return;
     if (!streamRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
     }
-
     startRecordingTimers();
     setConnectionState('recording');
   }, [startRecordingTimers]);
 
-  // Mute: disable audio tracks (backend receives silence)
   const toggleMute = useCallback(() => {
     if (!streamRef.current) return;
     const audioTracks = streamRef.current.getAudioTracks();
@@ -415,20 +485,42 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     setIsMuted(newMuted);
   }, [isMuted]);
 
-  // Edit a segment's text before saving
-  const updateSegmentText = useCallback((index: number, newText: string) => {
-    setSegments(prev => prev.map((seg, i) =>
-      i === index ? { ...seg, text: newText, edited_by: 'human' as const } : seg
-    ));
+  const updateSegmentText = useCallback(async (id: string, newText: string) => {
+    const sid = sessionIdRef.current;
+    // Optimistic update
+    setConfirmed(prev =>
+      prev.map(s => s.id === id ? { ...s, text: newText, edited_by: 'human' } : s),
+    );
+    setTentative(prev =>
+      prev.map(s => s.id === id ? { ...s, text: newText, edited_by: 'human' } : s),
+    );
+    if (!sid) return;
+    try {
+      await fetch(getApiUrl(`/api/live/session/${sid}/segment/${id}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: newText }),
+      });
+    } catch {
+      // Optimistic — surface errors silently for now
+    }
   }, []);
 
-  // Delete a segment
-  const deleteSegment = useCallback((index: number) => {
-    setSegments(prev => prev.filter((_, i) => i !== index));
+  const deleteSegment = useCallback(async (id: string) => {
+    const sid = sessionIdRef.current;
+    setConfirmed(prev => prev.filter(s => s.id !== id));
+    setTentative(prev => prev.filter(s => s.id !== id));
+    if (!sid) return;
+    try {
+      await fetch(getApiUrl(`/api/live/session/${sid}/segment/${id}`), {
+        method: 'DELETE',
+      });
+    } catch {
+      // Optimistic
+    }
   }, []);
 
   const clearTranscript = useCallback(async () => {
-    // Don't clear while actively recording — would orphan the backend session
     if (isRecordingRef.current) return;
 
     if (sessionId) {
@@ -437,10 +529,11 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
           method: 'DELETE',
         });
       } catch {
-        // Ignore — session might already be gone
+        // Ignore
       }
     }
-    setSegments([]);
+    setConfirmed([]);
+    setTentative([]);
     setSessionId(null);
     setDuration(0);
     setLastAutoSave(null);
@@ -449,6 +542,13 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
   const dismissError = useCallback(() => {
     setError(null);
   }, []);
+
+  // Merged + sorted segments for the page to render.
+  const segments = (() => {
+    const merged = [...confirmed, ...tentative];
+    merged.sort((a, b) => a.start - b.start);
+    return merged;
+  })();
 
   const fullText = segments.map(s => s.text).join(' ');
   const wordCount = fullText.split(/\s+/).filter(Boolean).length;
@@ -465,6 +565,7 @@ export function useLiveTranscription(): UseLiveTranscriptionReturn {
     isMuted,
     highDetailMode,
     stream: streamRef.current,
+    tentativeCount: tentative.length,
     connect,
     disconnect,
     startRecording,
