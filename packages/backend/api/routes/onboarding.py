@@ -48,6 +48,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.routes.sync import broadcast
 from persistence import get_db
 
 logger = logging.getLogger(__name__)
@@ -392,6 +393,15 @@ async def install_sample_workspace(
 
         await db.commit()
 
+        # Broadcast project creation so the sidebar / projects page
+        # refresh immediately rather than waiting for the websocket
+        # ping-poll to catch up.
+        for pid in project_id_map.values():
+            try:
+                await broadcast("projects", "created", pid)
+            except Exception as e:
+                logger.debug("broadcast skipped: %s", e)
+
         primary = project_id_map.get("primary")
         return InstallResponse(
             installed=True,
@@ -508,13 +518,26 @@ async def remove_sample_workspace(
 
     # Finally remove the demo projects themselves
     from services.storage import storage_service
+    deleted_project_ids: list[str] = []
     for project in demo_projects:
         try:
             await storage_service.delete_project_folder(project.name, delete_contents=True)
         except Exception as e:
             logger.debug("project folder cleanup skipped: %s", e)
+        deleted_project_ids.append(project.id)
         await db.delete(project)
         counts["projects"] += 1
 
     await db.commit()
+
+    # Broadcast deletion so connected clients (sidebar dropdown,
+    # projects page, project store) refresh immediately. Without this,
+    # the websocket-listening UI keeps showing stale projects until
+    # the next manual refresh — user reported a 10-second lag.
+    for pid in deleted_project_ids:
+        try:
+            await broadcast("projects", "deleted", pid)
+        except Exception as e:
+            logger.debug("broadcast skipped: %s", e)
+
     return RemoveResponse(removed=True, counts=counts)

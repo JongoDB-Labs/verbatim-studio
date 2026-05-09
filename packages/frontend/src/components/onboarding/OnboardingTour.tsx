@@ -64,18 +64,35 @@ export function OnboardingTour({ isActive, onComplete, onSkip, onNavigate, hasSa
 
         // Add highlight class
         target.setAttribute('data-tour-active', 'true');
+
+        // Scroll the target into view if it's outside the viewport.
+        // Common case: Settings tab subsections are far down the page,
+        // so just navigating to "settings#transcription" lands at the
+        // top — the tour highlight points at a section the user can't
+        // see without scrolling.
+        const rect = target.getBoundingClientRect();
+        const inView =
+          rect.top >= 0 &&
+          rect.bottom <= (window.innerHeight || document.documentElement.clientHeight);
+        if (!inView) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
       }
     };
 
     // Initial find with a small delay to allow for navigation/rendering
-    const initialTimeout = setTimeout(findTarget, 100);
+    const initialTimeout = setTimeout(findTarget, 150);
 
     // Retry finding target if not found immediately (for navigation cases)
     const retryTimeout = setTimeout(() => {
       if (!targetElement) {
         findTarget();
+      } else {
+        // Already found — re-check scroll position after navigation
+        // settles (settings page hash-change can shift content).
+        findTarget();
       }
-    }, 300);
+    }, 500);
 
     // Update position on scroll/resize
     const handleUpdate = () => {

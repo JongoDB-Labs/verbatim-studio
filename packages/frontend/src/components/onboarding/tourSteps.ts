@@ -320,8 +320,8 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'assistant',
     category: 'Always within reach',
     target: '[data-tour="assistant"]',
-    title: 'Assistant FAB — anywhere',
-    description: 'The bubble in the bottom-right opens Max from any page without losing your current view. Quick questions, app help, draft assistance — without context-switching.',
+    title: 'Assistant FAB — anywhere, context-aware',
+    description: 'The bubble in the bottom-right opens Max from any page without losing your current view. Max picks up the context of whatever you\'re looking at — open a transcript and ask "what was the action item?", open a document and ask "summarize this", open the search page and ask Max to refine your query. The conversation is grounded in what\'s on screen, so you don\'t have to paste or describe what you mean.',
     position: 'top',
   },
   {
