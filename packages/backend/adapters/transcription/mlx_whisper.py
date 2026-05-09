@@ -85,13 +85,21 @@ class MlxWhisperTranscriptionEngine(ITranscriptionEngine):
         )
 
         # Run transcription in thread to avoid blocking event loop
+        transcribe_kwargs: dict[str, Any] = {
+            "path_or_hf_repo": self._model_repo,
+            "word_timestamps": options.word_timestamps,
+            "language": options.language,
+        }
+        # initial_prompt provides Whisper with prior-context conditioning,
+        # critical for live streaming where each chunk would otherwise be
+        # transcribed cold (causing boundary words to be re-guessed).
+        if options.initial_prompt:
+            transcribe_kwargs["initial_prompt"] = options.initial_prompt
         try:
             result = await asyncio.to_thread(
                 mlx_whisper.transcribe,
                 str(path),
-                path_or_hf_repo=self._model_repo,
-                word_timestamps=options.word_timestamps,
-                language=options.language,
+                **transcribe_kwargs,
             )
         except Exception as e:
             error_msg = str(e)
@@ -152,12 +160,17 @@ class MlxWhisperTranscriptionEngine(ITranscriptionEngine):
         )
 
         # Run transcription in thread to avoid blocking
+        stream_kwargs: dict[str, Any] = {
+            "path_or_hf_repo": self._model_repo,
+            "word_timestamps": options.word_timestamps,
+            "language": options.language,
+        }
+        if options.initial_prompt:
+            stream_kwargs["initial_prompt"] = options.initial_prompt
         result = await asyncio.to_thread(
             mlx_whisper.transcribe,
             str(path),
-            path_or_hf_repo=self._model_repo,
-            word_timestamps=options.word_timestamps,
-            language=options.language,
+            **stream_kwargs,
         )
 
         detected_language = result.get("language", options.language or "en")

@@ -59,6 +59,23 @@ class LiveSession:
     speakers_found: set = field(default_factory=set)
     diarization_warned: bool = False
     disconnected_at: datetime | None = None
+    # Rolling tail of recent transcript text used as Whisper initial_prompt
+    # so word boundaries at chunk seams resolve correctly. Capped at
+    # ~200 chars (Whisper conditioning is most useful for the recent past).
+    prompt_context: str = ""
+    # Cross-chunk speaker stitching: maps the per-chunk pyannote label
+    # ("SPEAKER_00", "SPEAKER_01", ...) to a stable session label. Without
+    # this, the same person's label flips between chunks because pyannote
+    # clusters each 1.5s window independently.
+    speaker_label_map: dict[str, str] = field(default_factory=dict)
+    # Greedy session-label allocator
+    next_speaker_id: int = 0
+
+
+# Maximum characters to feed back into Whisper as initial_prompt. Whisper
+# conditioning is "soft" — too much context biases the model heavily, too
+# little gives no benefit. ~200 chars (~40 words) hits the sweet spot.
+PROMPT_CONTEXT_CHARS = 200
 
 
 class SaveSessionRequest(BaseModel):
@@ -307,10 +324,15 @@ async def live_transcribe(websocket: WebSocket):
                     tmp_path = tmp.name
 
                 try:
-                    # Transcribe just this chunk
+                    # Transcribe just this chunk. Pass the rolling tail of
+                    # recent transcript text as initial_prompt so Whisper
+                    # has continuity context across chunk seams — this is
+                    # the single biggest accuracy improvement for live
+                    # streaming because chunks otherwise start cold.
                     options = TranscriptionOptions(
                         language=session.language,
                         word_timestamps=session.high_detail_mode,
+                        initial_prompt=session.prompt_context or None,
                     )
 
                     result = await engine.transcribe(tmp_path, options)
@@ -343,8 +365,10 @@ async def live_transcribe(websocket: WebSocket):
                                 segments=segments_data,
                             )
                             diarized_segments = dia_result.get("segments", [])
-                            for speaker in dia_result.get("speakers", []):
-                                session.speakers_found.add(speaker)
+                            # Don't add raw pyannote labels here — the
+                            # per-chunk labels aren't session-stable.
+                            # speakers_found is populated below using the
+                            # stitched session-level labels instead.
                         except Exception as dia_err:
                             logger.warning(
                                 "Diarization failed for chunk %d: %s",
@@ -369,6 +393,13 @@ async def live_transcribe(websocket: WebSocket):
                                     ),
                                 })
 
+                    # Track previous accepted text for stuck-loop detection.
+                    # Whisper sometimes emits the same phrase twice when the
+                    # second chunk has no real speech — drop the duplicate.
+                    prev_accepted_text: str | None = (
+                        session.segments[-1]["text"] if session.segments else None
+                    )
+
                     # Process segments with time offset applied
                     for i, seg in enumerate(result.segments):
                         # Drop Whisper hallucinations (silence/music/short
@@ -381,6 +412,7 @@ async def live_transcribe(websocket: WebSocket):
                             seg.text,
                             confidence=seg.confidence,
                             duration=seg_duration,
+                            prev_text=prev_accepted_text,
                         ):
                             logger.debug(
                                 "Filtered hallucinated segment: %r (conf=%s, dur=%s)",
@@ -388,9 +420,25 @@ async def live_transcribe(websocket: WebSocket):
                             )
                             continue
 
+                        # Resolve speaker label, stitching across chunks so
+                        # SPEAKER_00 in this chunk maps to the same session
+                        # label that the same voice received in earlier
+                        # chunks. Pyannote clusters each chunk independently,
+                        # so without this the labels are unstable.
                         speaker = None
+                        chunk_speaker = None
                         if diarized_segments and i < len(diarized_segments):
-                            speaker = diarized_segments[i].get("speaker")
+                            chunk_speaker = diarized_segments[i].get("speaker")
+                        chunk_speaker = chunk_speaker or seg.speaker
+
+                        if chunk_speaker:
+                            mapped = session.speaker_label_map.get(chunk_speaker)
+                            if mapped is None:
+                                mapped = f"Speaker {session.next_speaker_id + 1}"
+                                session.speaker_label_map[chunk_speaker] = mapped
+                                session.next_speaker_id += 1
+                            speaker = mapped
+                            session.speakers_found.add(mapped)
 
                         # Build word data for high detail mode
                         words_data = None
@@ -409,12 +457,13 @@ async def live_transcribe(websocket: WebSocket):
                             "text": seg.text,
                             "start": time_offset + seg.start,
                             "end": time_offset + seg.end,
-                            "speaker": speaker or seg.speaker,
+                            "speaker": speaker,
                             "confidence": seg.confidence,
                             "words": words_data,
                             "edited_by": None,
                         }
                         session.segments.append(segment_data)
+                        prev_accepted_text = seg.text
 
                         # Send segment to client
                         msg = {
@@ -429,6 +478,15 @@ async def live_transcribe(websocket: WebSocket):
                         if words_data:
                             msg["words"] = words_data
                         await websocket.send_json(msg)
+
+                    # Refresh the rolling prompt_context with the latest
+                    # accepted text. Capped to PROMPT_CONTEXT_CHARS so the
+                    # initial_prompt never grows unbounded.
+                    if session.segments:
+                        tail = " ".join(
+                            s["text"] for s in session.segments[-6:]
+                        ).strip()
+                        session.prompt_context = tail[-PROMPT_CONTEXT_CHARS:]
 
                     # Update tracking
                     session.chunk_count += 1

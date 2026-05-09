@@ -32,6 +32,12 @@ const DEFAULT_METADATA: LiveMetadata = {
   saveAudio: true,
 };
 
+// Distance from the bottom (in px) within which we consider the user to
+// be "tailing" the transcript. New segments only auto-scroll when within
+// this band; otherwise the user is reviewing earlier text and should be
+// left alone.
+const AUTOSCROLL_TAIL_PX = 80;
+
 export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRecordings, onViewRecording }: LiveTranscriptionPageProps) {
   const getDisplayLabel = useKeybindingStore(s => s.getDisplayLabel);
   const {
@@ -66,29 +72,66 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
   const [metadata, setMetadata] = useState<LiveMetadata>(DEFAULT_METADATA);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isEditingSegment, setIsEditingSegment] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   const isActive = connectionState === 'recording' || connectionState === 'paused';
+  const isRecording = connectionState === 'recording';
 
-  // Auto-scroll to bottom when new segments arrive (paused during editing)
+  // Smart auto-scroll: only follow new segments if the user was already
+  // at (or near) the bottom — avoids yanking them out of earlier content
+  // they were reviewing.
   useEffect(() => {
-    if (!isEditingSegment) {
-      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [segments, isEditingSegment]);
+    if (isEditingSegment) return;
+    if (!isAtBottom) return;
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [segments, isAtBottom, isEditingSegment]);
+
+  // Track whether the transcript scroll position is at the tail.
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setIsAtBottom(distanceFromBottom <= AUTOSCROLL_TAIL_PX);
+  }, []);
 
   const handleStartRecording = useCallback(() => {
     startRecording(language, highDetail);
   }, [startRecording, language, highDetail]);
 
+  // One-tap "Connect & Record" — if disconnected, connect first then start.
+  const connectThenRecordRef = useRef<{ pending: boolean }>({ pending: false });
+  const handleConnectAndRecord = useCallback(async () => {
+    if (connectionState === 'connected') {
+      handleStartRecording();
+      return;
+    }
+    if (connectionState === 'disconnected') {
+      connectThenRecordRef.current.pending = true;
+      await connect();
+    }
+  }, [connectionState, connect, handleStartRecording]);
+
+  // When connection completes after a "connect & record" intent, kick off
+  // recording automatically.
+  useEffect(() => {
+    if (connectionState === 'connected' && connectThenRecordRef.current.pending) {
+      connectThenRecordRef.current.pending = false;
+      handleStartRecording();
+    }
+  }, [connectionState, handleStartRecording]);
+
   const handleToggleRecording = useCallback(() => {
-    if (connectionState === 'recording' || connectionState === 'paused') {
+    if (isRecording || connectionState === 'paused') {
       stopRecording();
     } else if (connectionState === 'connected') {
       handleStartRecording();
+    } else if (connectionState === 'disconnected') {
+      handleConnectAndRecord();
     }
-  }, [connectionState, stopRecording, handleStartRecording]);
+  }, [connectionState, isRecording, stopRecording, handleStartRecording, handleConnectAndRecord]);
 
   const handlePauseResume = useCallback(() => {
     if (connectionState === 'recording') {
@@ -142,7 +185,6 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
       setShowSaveConfirm(false);
       setMetadata(DEFAULT_METADATA);
 
-      // Navigate first, then clean up state (save already deleted the session)
       onViewRecording(data.recording_id);
       clearTranscript();
     } catch (err) {
@@ -157,59 +199,89 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
     setShowSaveConfirm(true);
   }, [segments, sessionId]);
 
-  // Keyboard shortcuts
   useLiveShortcuts({
     onToggleRecording: handleToggleRecording,
     onPauseResume: handlePauseResume,
     onSave: handleSaveClick,
     onToggleMute: toggleMute,
     onDiscard: () => {
-      if (segments.length > 0 && sessionId) {
-        clearTranscript();
-      }
+      if (segments.length > 0 && sessionId) clearTranscript();
     },
     onClear: () => {
-      if (segments.length > 0) {
-        clearTranscript();
-      }
+      if (segments.length > 0) clearTranscript();
     },
     onDisconnect: () => {
-      if (connectionState !== 'disconnected') {
-        disconnect();
-      }
+      if (connectionState !== 'disconnected') disconnect();
     },
     enabled: connectionState !== 'disconnected' && !showSaveConfirm,
   });
 
+  const statusLabel = (() => {
+    switch (connectionState) {
+      case 'recording': return 'Recording';
+      case 'paused': return 'Paused';
+      case 'connected': return 'Ready';
+      case 'connecting': return 'Connecting…';
+      default: return 'Disconnected';
+    }
+  })();
+
+  const statusDotClass = (() => {
+    switch (connectionState) {
+      case 'recording': return 'bg-red-500 animate-pulse';
+      case 'paused': return 'bg-amber-400';
+      case 'connected': return 'bg-emerald-400';
+      case 'connecting': return 'bg-amber-400 animate-pulse';
+      default: return 'bg-gray-400';
+    }
+  })();
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <svg className="w-8 h-8 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shadow-sm">
+            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+          </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Live Transcription</h1>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">Live Transcription</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
               Real-time speech-to-text with low-latency processing
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setShowShortcuts(!showShortcuts)}
-          className={`inline-flex items-center gap-1.5 text-xs transition-colors ${
-            showShortcuts
-              ? 'text-purple-600 dark:text-purple-400'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          }`}
-          title="Keyboard shortcuts"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-          Shortcuts
-        </button>
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium border ${
+            isRecording
+              ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
+              : connectionState === 'paused'
+                ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                : connectionState === 'connected'
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${statusDotClass}`} />
+            {statusLabel}
+            {isMuted && isActive && <span className="ml-1 text-red-500">· Muted</span>}
+          </span>
+          <button
+            onClick={() => setShowShortcuts(!showShortcuts)}
+            className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors ${
+              showShortcuts
+                ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+            }`}
+            title="Keyboard shortcuts"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            Shortcuts
+          </button>
+        </div>
       </div>
 
       {/* Keyboard Shortcuts Panel */}
@@ -258,129 +330,62 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
 
       {/* Main Content */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Panel - Connection & Recording */}
+        {/* Left Panel - Recording controls */}
         <div className="space-y-4">
-          {/* Connection Card */}
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Connection</h2>
-
-            {/* Status */}
-            <div className="flex items-center gap-2 mb-4">
-              <span className={`w-2.5 h-2.5 rounded-full ${
-                connectionState === 'disconnected' ? 'bg-gray-400' :
-                connectionState === 'connecting' ? 'bg-yellow-400 animate-pulse' :
-                connectionState === 'connected' ? 'bg-green-400' :
-                connectionState === 'paused' ? 'bg-yellow-400' :
-                'bg-red-400 animate-pulse'
-              }`} />
-              <span className="text-sm text-gray-600 dark:text-gray-400 capitalize">
-                {connectionState === 'recording' ? 'Recording' :
-                 connectionState === 'paused' ? 'Paused' :
-                 connectionState}
-              </span>
-              {isMuted && isActive && (
-                <span className="text-xs text-red-500 font-medium ml-1">(Muted)</span>
-              )}
-            </div>
-
-            {/* Language Selection */}
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Language
-              </label>
-              <select
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                disabled={isActive}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 py-2 px-3 text-sm text-gray-900 dark:text-gray-100 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
-              >
-                {LANGUAGES.map(lang => (
-                  <option key={lang.code} value={lang.code}>{lang.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* High Detail Mode toggle */}
-            <label className="flex items-center gap-2 mb-4 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={highDetail}
-                onChange={(e) => setHighDetail(e.target.checked)}
-                disabled={isActive}
-                className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-              />
-              <span className="text-sm text-gray-700 dark:text-gray-300">
-                High detail mode
-              </span>
-              <span className="text-xs text-gray-500 dark:text-gray-400" title="Enables speaker diarization and word-level confidence. Slower but more detailed.">
-                ?
-              </span>
-            </label>
-
-            {/* Connect/Disconnect Button */}
-            {connectionState === 'disconnected' ? (
-              <button
-                onClick={connect}
-                className="w-full py-2.5 rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 transition-colors"
-              >
-                Connect
-              </button>
-            ) : (
-              <button
-                onClick={disconnect}
-                disabled={connectionState === 'connecting'}
-                className="w-full py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-
-          {/* Recording Card */}
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Recording</h2>
-
+          {/* Recording Card (hero when active) */}
+          <div className={`rounded-xl border p-5 transition-colors ${
+            isRecording
+              ? 'border-red-200 dark:border-red-800 bg-gradient-to-b from-red-50 to-white dark:from-red-900/10 dark:to-gray-800'
+              : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
+          }`}>
             {/* Timer */}
-            <div className="text-4xl font-mono font-bold text-center text-gray-900 dark:text-gray-100 mb-2">
-              {formatDuration(duration)}
+            <div className="flex items-baseline justify-center gap-2 mb-3">
+              <div className="text-5xl font-mono font-bold tabular-nums text-gray-900 dark:text-gray-100">
+                {formatDuration(duration)}
+              </div>
             </div>
 
             {/* Audio Level Meter */}
-            {isActive && (
-              <div className="mb-4">
+            <div className="mb-4 h-2">
+              {isActive ? (
                 <AudioLevelMeter stream={stream} isActive={isActive && !isMuted} />
-              </div>
-            )}
+              ) : (
+                <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-700/50 rounded-full" />
+              )}
+            </div>
 
-            {/* Record / Stop / Pause buttons */}
-            {isActive ? (
-              <div className="flex gap-2">
-                {/* Pause/Resume */}
+            {/* Primary action */}
+            {!isActive ? (
+              <button
+                onClick={handleConnectAndRecord}
+                disabled={connectionState === 'connecting'}
+                className="w-full py-3 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
+              >
+                <span className="w-2.5 h-2.5 rounded-full bg-white" />
+                {connectionState === 'connecting' ? 'Connecting…' : 'Start Recording'}
+              </button>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={handlePauseResume}
-                  className="flex-1 py-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2"
+                  className="py-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-1.5"
+                  title={connectionState === 'paused' ? 'Resume' : 'Pause'}
                 >
                   {connectionState === 'paused' ? (
-                    <>
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                      Resume
-                    </>
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
                   ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                      </svg>
-                      Pause
-                    </>
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
                   )}
+                  <span className="text-sm">{connectionState === 'paused' ? 'Resume' : 'Pause'}</span>
                 </button>
 
-                {/* Mute */}
                 <button
                   onClick={toggleMute}
-                  className={`px-3 py-3 rounded-lg border transition-colors ${
+                  className={`py-3 rounded-lg border transition-colors flex items-center justify-center gap-1.5 ${
                     isMuted
                       ? 'border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20'
                       : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -388,69 +393,100 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
                   title={isMuted ? 'Unmute' : 'Mute'}
                 >
                   {isMuted ? (
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                       <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
                     </svg>
                   ) : (
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                     </svg>
                   )}
+                  <span className="text-sm">{isMuted ? 'Unmute' : 'Mute'}</span>
                 </button>
 
-                {/* Stop */}
                 <button
                   onClick={stopRecording}
-                  className="flex-1 py-3 rounded-lg bg-destructive text-destructive-foreground font-medium hover:bg-destructive/90 transition-colors flex items-center justify-center gap-2"
+                  className="py-3 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors flex items-center justify-center gap-1.5"
+                  title="Stop recording"
                 >
                   <span className="w-3 h-3 rounded-sm bg-white" />
-                  Stop
+                  <span className="text-sm">Stop</span>
                 </button>
               </div>
-            ) : (
-              <button
-                onClick={handleStartRecording}
-                disabled={connectionState !== 'connected'}
-                className="w-full py-3 rounded-lg bg-destructive text-destructive-foreground font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            )}
+
+            {/* Footer hints */}
+            <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
+              {isActive && lastAutoSave ? (
+                <p className="text-xs text-center text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Auto-saved {lastAutoSave.toLocaleTimeString()}
+                </p>
+              ) : (
+                <div className="flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500">
+                  <span>
+                    <kbd className="font-mono px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-700">{getDisplayLabel('live.toggleRecording')}</kbd> Start/Stop
+                  </span>
+                  <span>
+                    <kbd className="font-mono px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-700">{getDisplayLabel('live.save')}</kbd> Save
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Settings Card */}
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Settings</h2>
+
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Language
+              </label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                disabled={isActive}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 py-1.5 px-2.5 text-sm text-gray-900 dark:text-gray-100 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-                Start Recording
+                {LANGUAGES.map(lang => (
+                  <option key={lang.code} value={lang.code}>{lang.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={highDetail}
+                onChange={(e) => setHighDetail(e.target.checked)}
+                disabled={isActive}
+                className="mt-0.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+              />
+              <span className="flex-1">
+                <span className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                  High detail mode
+                </span>
+                <span className="block text-[11px] text-gray-500 dark:text-gray-400 leading-snug">
+                  Speaker labels + word-level confidence. Slower per chunk.
+                </span>
+              </span>
+            </label>
+
+            {connectionState !== 'disconnected' && !isActive && (
+              <button
+                onClick={disconnect}
+                className="mt-3 w-full py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                Disconnect
               </button>
-            )}
-
-            {connectionState === 'disconnected' && (
-              <p className="mt-2 text-xs text-center text-gray-500 dark:text-gray-400">
-                Connect to server first
-              </p>
-            )}
-
-            {/* Autosave indicator */}
-            {lastAutoSave && isActive && (
-              <p className="mt-2 text-xs text-center text-green-600 dark:text-green-400">
-                Auto-saved {lastAutoSave.toLocaleTimeString()}
-              </p>
-            )}
-
-            {/* High detail badge */}
-            {highDetailMode && isActive && (
-              <p className="mt-2 text-xs text-center text-purple-600 dark:text-purple-400">
-                High detail: speakers + word confidence
-              </p>
-            )}
-
-            {/* Compact shortcut hints */}
-            {connectionState !== 'disconnected' && (
-              <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 text-xs text-gray-400 dark:text-gray-500 space-y-0.5">
-                <div className="flex justify-between"><span><kbd className="font-mono">{getDisplayLabel('live.toggleRecording')}</kbd> Start/Stop</span><span><kbd className="font-mono">{getDisplayLabel('live.pauseResume')}</kbd> Pause</span></div>
-                <div className="flex justify-between"><span><kbd className="font-mono">{getDisplayLabel('live.toggleMute')}</kbd> Mute</span><span><kbd className="font-mono">{getDisplayLabel('live.save')}</kbd> Save</span></div>
-              </div>
             )}
           </div>
 
-          {/* Metadata Panel */}
+          {/* Metadata */}
           <MetadataPanel
             metadata={metadata}
             onChange={setMetadata}
@@ -460,10 +496,17 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
 
         {/* Right Panel - Transcript */}
         <div className="lg:col-span-2">
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 h-full flex flex-col">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 h-full flex flex-col min-h-[500px]">
             {/* Header */}
-            <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Live Transcript</h2>
+            <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sticky top-0 bg-white dark:bg-gray-800 rounded-t-xl z-10">
+              <div className="flex items-center gap-3">
+                <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Live Transcript</h2>
+                {segments.length > 0 && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                    {segments.length} segment{segments.length === 1 ? '' : 's'} · {wordCount} word{wordCount === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleSaveClick}
@@ -495,55 +538,95 @@ export function LiveTranscriptionPage({ onNavigateToRecordings: _onNavigateToRec
               </div>
             </div>
 
-            {/* Transcript Content — Segment-based display */}
+            {/* Transcript Content */}
             <div
-              className="flex-1 p-3 overflow-y-auto min-h-[400px] max-h-[600px]"
+              ref={transcriptScrollRef}
+              onScroll={handleTranscriptScroll}
+              className="flex-1 p-3 overflow-y-auto min-h-[480px] max-h-[680px]"
               onFocusCapture={() => setIsEditingSegment(true)}
               onBlurCapture={() => setIsEditingSegment(false)}
             >
               {segments.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
-                  <svg className="w-16 h-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                  <p className="text-lg font-medium">No transcription yet</p>
-                  <p className="text-sm">Start recording to see live transcripts</p>
+                <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 px-6 py-12">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-100 to-purple-200 dark:from-purple-900/30 dark:to-purple-800/30 flex items-center justify-center mb-4">
+                    <svg className="w-8 h-8 text-purple-500 dark:text-purple-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  </div>
+                  <p className="text-base font-semibold text-gray-700 dark:text-gray-200">Ready when you are</p>
+                  <p className="text-sm mt-1 text-center max-w-sm">
+                    {connectionState === 'disconnected'
+                      ? 'Click Start Recording to connect your microphone and begin transcribing in real time.'
+                      : connectionState === 'connecting'
+                        ? 'Connecting to the transcription server…'
+                        : 'Microphone is ready. Press Start Recording to begin.'}
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-0.5">
-                  {segments.map((seg, i) => (
-                    <LiveSegment
-                      key={`${i}-${seg.start}`}
-                      segment={seg}
-                      index={i}
-                      onEditText={updateSegmentText}
-                      onDelete={deleteSegment}
-                      showTimestamps={true}
-                      showConfidence={highDetailMode}
-                    />
-                  ))}
+                <div className="space-y-1">
+                  {segments.map((seg, i) => {
+                    const prev = i > 0 ? segments[i - 1] : null;
+                    const sameSpeakerAsPrev = !!(prev && prev.speaker && prev.speaker === seg.speaker);
+                    return (
+                      <LiveSegment
+                        key={`${i}-${seg.start}`}
+                        segment={seg}
+                        index={i}
+                        onEditText={updateSegmentText}
+                        onDelete={deleteSegment}
+                        showTimestamps={true}
+                        showConfidence={highDetailMode}
+                        hideSpeaker={sameSpeakerAsPrev}
+                      />
+                    );
+                  })}
+
+                  {/* "Listening" pulse — shown while recording, just below the
+                       latest segment, so the user knows more is coming. */}
+                  {isRecording && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-400 dark:text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-pulse [animation-delay:0ms]" />
+                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-pulse [animation-delay:150ms]" />
+                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-pulse [animation-delay:300ms]" />
+                      </span>
+                      <span>Listening…</span>
+                    </div>
+                  )}
                 </div>
               )}
               <div ref={transcriptEndRef} />
             </div>
 
+            {/* "Jump to bottom" pill — appears when user scrolled up while
+                  new segments are arriving. */}
+            {!isAtBottom && segments.length > 0 && (
+              <div className="absolute bottom-20 right-8 pointer-events-auto">
+                <button
+                  onClick={() => {
+                    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    setIsAtBottom(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-900 dark:bg-gray-700 text-white text-xs shadow-lg hover:bg-gray-800 dark:hover:bg-gray-600 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                  Jump to latest
+                </button>
+              </div>
+            )}
+
             {/* Footer Stats */}
-            {segments.length > 0 && (
-              <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <div className="flex items-center gap-4">
-                  <span>{segments.length} segments</span>
-                  <span>{wordCount} words</span>
-                  {segments.some(s => s.edited_by) && (
-                    <span className="text-purple-500">Edited</span>
-                  )}
-                </div>
-                {highDetailMode && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-gray-400">Confidence:</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700" /> Uncertain</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700" /> Low</span>
-                  </div>
-                )}
+            {segments.length > 0 && highDetailMode && (
+              <div className="px-5 py-2.5 border-t border-gray-200 dark:border-gray-700 flex items-center justify-end text-xs text-gray-500 dark:text-gray-400 gap-3">
+                <span className="text-gray-400">Confidence:</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-3 h-0.5 bg-amber-400 rounded" /> Uncertain
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-3 h-0.5 bg-red-400 rounded" /> Low
+                </span>
               </div>
             )}
           </div>

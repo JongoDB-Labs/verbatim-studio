@@ -2342,6 +2342,18 @@ class ApiClient {
       );
     },
 
+    updateSummary: (
+      transcriptId: string,
+      patch: Partial<SummarizationResponse>,
+    ) =>
+      this.request<SummarizationResponse>(
+        `/api/ai/transcripts/${transcriptId}/summary`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        },
+      ),
+
     analyze: (transcriptId: string, analysisType: AnalysisType, temperature = 0.3) => {
       const params = new URLSearchParams({
         analysis_type: analysisType,

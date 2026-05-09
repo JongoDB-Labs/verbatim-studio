@@ -251,6 +251,21 @@ class SummarizationResponse(BaseModel):
     named_entities: list[str] | None
 
 
+class SummarizationUpdateRequest(BaseModel):
+    """Request to overwrite a transcript's stored AI summary with edited values.
+
+    All fields are optional — only provided fields are persisted, leaving
+    the rest of the existing summary untouched. Used by the in-place
+    "edit summary" UX so users can correct typos before exporting.
+    """
+
+    summary: str | None = None
+    key_points: list[str] | None = None
+    action_items: list[str] | None = None
+    topics: list[str] | None = None
+    named_entities: list[str] | None = None
+
+
 class AnalysisResponse(BaseModel):
     """Response model for transcript analysis."""
 
@@ -1044,6 +1059,59 @@ async def summarize_transcript(
     except Exception as e:
         logger.exception("Summarization failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch(
+    "/transcripts/{transcript_id}/summary",
+    response_model=SummarizationResponse,
+)
+async def update_transcript_summary(
+    transcript_id: str,
+    request: SummarizationUpdateRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> SummarizationResponse:
+    """Persist user-edited AI summary fields for a transcript.
+
+    The previously generated summary is merged with whatever fields are
+    present on *request*, so partial updates (e.g. fixing one typo in
+    the summary text) leave the rest intact. Returns the merged result
+    so the frontend can stay in sync without a follow-up GET.
+    """
+    result = await db.execute(select(Transcript).where(Transcript.id == transcript_id))
+    transcript = result.scalar_one_or_none()
+    if not transcript:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+
+    if not transcript.ai_summary:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transcript has no AI summary yet. Generate one before editing."
+            ),
+        )
+
+    # Merge: existing fields stay unless explicitly overwritten by the
+    # request. None on the request means "leave alone"; an empty list
+    # means "set to empty list" — the difference matters for clearing.
+    updated = dict(transcript.ai_summary)
+    patch = request.model_dump(exclude_unset=True)
+    for key, value in patch.items():
+        updated[key] = value
+
+    await db.execute(
+        update(Transcript)
+        .where(Transcript.id == transcript_id)
+        .values(ai_summary=updated)
+    )
+    await db.commit()
+
+    return SummarizationResponse(
+        summary=updated.get("summary", "") or "",
+        key_points=updated.get("key_points"),
+        action_items=updated.get("action_items"),
+        topics=updated.get("topics"),
+        named_entities=updated.get("named_entities"),
+    )
 
 
 @router.post("/transcripts/{transcript_id}/analyze", response_model=AnalysisResponse)

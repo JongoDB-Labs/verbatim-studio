@@ -7,7 +7,8 @@ words. This module centralizes the filter so live mode, voice chat, and
 chunked file transcription all share the same logic.
 
 Public API:
-    is_hallucination(text, *, confidence=None, duration=None) -> bool
+    is_hallucination(text, *, confidence=None, duration=None,
+                     prev_text=None) -> bool
 
 Returns True when *text* is most likely a Whisper hallucination and the
 caller should drop the segment.
@@ -17,51 +18,107 @@ from __future__ import annotations
 
 import re
 
-# Phrases Whisper emits on silence/music. Lowercased for comparison.
-# Trailing punctuation is stripped before matching.
-_HALLUCINATION_PHRASES: frozenset[str] = frozenset({
+# ABSOLUTE phrases — never legitimate speech. Always drop when matched,
+# regardless of duration/confidence. These are training-set artifacts that
+# Whisper invents from silence/music/noise.
+_ABSOLUTE_HALLUCINATION_PHRASES: frozenset[str] = frozenset({
     # YouTube/captioning artifacts
     "thanks for watching",
     "thank you for watching",
-    "thanks for watching!",
+    "thanks for watching the video",
+    "thanks for watching this video",
     "please subscribe",
     "like and subscribe",
+    "like comment and subscribe",
+    "don't forget to like and subscribe",
     "don't forget to subscribe",
+    "subscribe to my channel",
+    "subscribe to the channel",
+    "click the bell icon",
+    "hit the bell icon",
+    "smash the like button",
     "see you in the next video",
     "i'll see you in the next video",
-    "see you next time",
+    "see you in the next one",
+    "see you guys in the next one",
+    "thanks for listening",
+    "thank you for listening",
+    "thanks so much for watching",
+    # Captioning credit artifacts
     "subtitles by the amara.org community",
     "subtitles by the amara.org",
     "amara.org",
     "transcribed by",
-    # Captioning brackets
+    "transcript by",
+    "translation by",
+    "captions by",
+    # Captioning brackets and music tags
     "[music]",
     "[applause]",
     "[silence]",
     "[no audio]",
-    "music",
-    "applause",
-    # Generic short hallucinations
+    "[laughter]",
+    "[laughs]",
+    "[inaudible]",
+    "[crosstalk]",
+    "(music)",
+    "(applause)",
+    "(silence)",
+    "♪",
+    "♫",
+    "♪♪",
+    "♬",
+})
+
+# WEAK phrases — commonly hallucinated but ALSO legitimate speech.
+# Drop only if the segment is also short (<0.6s) or low-confidence
+# (<-0.7). A real "thank you" usually has decent confidence and ~0.5s+
+# duration, while a hallucinated "thank you" is almost always either
+# too short or too uncertain.
+_WEAK_HALLUCINATION_PHRASES: frozenset[str] = frozenset({
     "you",
     "thank you",
+    "thank you very much",
+    "thanks",
     "bye",
-    "bye!",
     "bye bye",
     "goodbye",
     "okay",
     "ok",
-    "hmm",
-    "uh",
-    "um",
-    "...",
-    ". . .",
+    "yeah",
+    "yep",
+    "mhm",
+    "mm-hmm",
+    "uh-huh",
+    "uh huh",
+    "oh",
+    "ah",
+    "huh",
+    "wow",
+    "music",
+    "applause",
 })
+
+# Keep _HALLUCINATION_PHRASES as the union for any external consumers.
+_HALLUCINATION_PHRASES: frozenset[str] = (
+    _ABSOLUTE_HALLUCINATION_PHRASES | _WEAK_HALLUCINATION_PHRASES
+)
 
 # Strip leading/trailing punctuation (incl. unicode ellipsis) and whitespace
 _STRIP_RE = re.compile(r"^[\s\.\!\?\,…\[\]\(\)\-]+|[\s\.\!\?\,…\[\]\(\)\-]+$")
 
 # Patterns where a few words repeat over and over (common low-SNR pattern)
 _REPETITIVE_WORD_RE = re.compile(r"\b(\w{2,})\b(?:\s+\1\b){2,}", re.IGNORECASE)
+
+# Confidence threshold — Whisper avg_logprob below this is essentially noise
+_CONFIDENCE_NOISE_THRESHOLD = -1.0
+# Confidence threshold for treating a WEAK match as a hallucination
+_WEAK_CONFIDENCE_THRESHOLD = -0.7
+# Duration threshold below which any speech is suspect
+_MIN_REAL_DURATION = 0.3
+# Duration threshold for treating a WEAK match as a hallucination when
+# confidence is missing
+_WEAK_DURATION_THRESHOLD = 0.6
 
 
 def _normalize(text: str) -> str:
@@ -75,6 +132,7 @@ def is_hallucination(
     *,
     confidence: float | None = None,
     duration: float | None = None,
+    prev_text: str | None = None,
 ) -> bool:
     """Decide whether *text* is most likely a Whisper hallucination.
 
@@ -84,6 +142,9 @@ def is_hallucination(
             below ~-1.0 are essentially noise.
         duration: Optional segment duration in seconds. Segments < 0.3s
             are too short to contain meaningful speech.
+        prev_text: Optional text of the previous segment. If this segment
+            is an exact repeat of the previous one, treat as a stuck-loop
+            hallucination (Whisper sometimes echoes when audio is silent).
     """
     if text is None:
         return True
@@ -93,24 +154,40 @@ def is_hallucination(
         return True
 
     # Drop ultra-short segments — under ~0.3s no real word fits
-    if duration is not None and duration < 0.3:
+    if duration is not None and duration < _MIN_REAL_DURATION:
         return True
 
     # Drop very low confidence — Whisper avg_logprob below -1.0 is noise
-    if confidence is not None and confidence < -1.0:
+    if confidence is not None and confidence < _CONFIDENCE_NOISE_THRESHOLD:
         return True
 
     norm = _normalize(raw)
     if not norm:
         return True
 
-    # Direct match against known canned phrases
-    if norm in _HALLUCINATION_PHRASES:
+    # Stuck-loop detection: identical to previous segment
+    if prev_text and _normalize(prev_text) == norm:
         return True
 
-    # Phrase-prefix match: "thanks for watching" inside "thanks for watching!"
-    for phrase in _HALLUCINATION_PHRASES:
+    # ABSOLUTE phrases — drop unconditionally
+    if norm in _ABSOLUTE_HALLUCINATION_PHRASES:
+        return True
+
+    # Phrase-prefix match for ABSOLUTE: "thanks for watching" inside
+    # "thanks for watching everyone"
+    for phrase in _ABSOLUTE_HALLUCINATION_PHRASES:
         if len(phrase) >= 12 and (norm == phrase or norm.startswith(phrase + " ")):
+            return True
+
+    # WEAK phrases — only drop if also short OR low-confidence. Otherwise
+    # legitimate "thank you", "yeah", "ok" survive.
+    if norm in _WEAK_HALLUCINATION_PHRASES:
+        weak_short = duration is not None and duration < _WEAK_DURATION_THRESHOLD
+        weak_low_conf = (
+            confidence is not None and confidence < _WEAK_CONFIDENCE_THRESHOLD
+        )
+        weak_unknown = duration is None and confidence is None
+        if weak_short or weak_low_conf or weak_unknown:
             return True
 
     # Limited alphabet artifacts: "aaaa", "ababababab", etc.  Requires
@@ -154,12 +231,19 @@ def filter_segments(
             each dict.
     """
     out: list[dict] = []
+    prev_text: str | None = None
     for seg in segments:
         text = seg.get(text_key, "")
         conf = seg.get(confidence_key)
         start = seg.get(start_key)
         end = seg.get(end_key)
         duration = (end - start) if (start is not None and end is not None) else None
-        if not is_hallucination(text, confidence=conf, duration=duration):
+        if not is_hallucination(
+            text,
+            confidence=conf,
+            duration=duration,
+            prev_text=prev_text,
+        ):
             out.append(seg)
+            prev_text = text
     return out
