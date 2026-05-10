@@ -89,9 +89,12 @@ BUFFER_SECONDS = 8.0
 STABILITY_SECONDS = 4.0
 
 # Run pyannote no more often than this. Pyannote is the heaviest stage
-# in the pipeline; running it on every chunk would push end-to-end
-# latency unacceptably high.
-DIARIZATION_INTERVAL_SECONDS = 4.0
+# in the pipeline (1-3s per run on Apple Silicon) and its clusterer
+# needs ~6s of context to reliably discriminate speakers anyway, so
+# running it more frequently mostly redoes work over the same audio.
+# Threaded out via asyncio.to_thread so it no longer blocks the event
+# loop; this interval just trims redundant CPU load.
+DIARIZATION_INTERVAL_SECONDS = 6.0
 
 # Maximum prompt context fed to Whisper as initial_prompt. Whisper's
 # conditioning is "soft" — too much biases the model heavily toward the
@@ -555,6 +558,7 @@ class RollingTranscriber:
             dia_segs = dia_result.get("segments", [])
             updates: list[dict[str, Any]] = []
 
+            confirmed_ids = {s.id for s in self.state.confirmed}
             i = 0
             for seg in [*self.state.confirmed, *self.state.tentative]:
                 if seg.end < self.state.buffer_start_time:
@@ -571,6 +575,16 @@ class RollingTranscriber:
                     stitched = f"Speaker {self.state.next_speaker_id}"
                     self.state.speaker_label_map[raw_label] = stitched
                     self.state.speakers_found.add(stitched)
+
+                # Confirmed segments lock on first assignment. Pyannote's
+                # cluster labels are unstable across calls (the same
+                # speaker can be "SPEAKER_00" in one window and
+                # "SPEAKER_01" in the next), so re-running diarization
+                # over an overlapping window would otherwise flap the
+                # labels of previously-confirmed segments. Tentative
+                # segments still update freely until they get promoted.
+                if seg.id in confirmed_ids and seg.speaker is not None:
+                    continue
 
                 if seg.speaker != stitched:
                     seg.speaker = stitched

@@ -1,5 +1,6 @@
 """Diarization service using WhisperX's DiarizationPipeline (pyannote-based)."""
 
+import asyncio
 import logging
 import os
 import threading
@@ -182,18 +183,27 @@ class DiarizationService:
         if progress_callback:
             await progress_callback(10)
 
-        # Run diarization via WhisperX's pipeline (returns pandas DataFrame)
+        # Run diarization via WhisperX's pipeline (returns pandas DataFrame).
+        # Off-load to a thread so this doesn't freeze the event loop —
+        # pyannote spends 1-3s per call on Apple Silicon and was the
+        # reason live transcription stalled in high-detail mode.
         logger.info("Running diarization on: %s", audio_path)
-        diarize_df = self._pipeline(str(audio_path))
+        diarize_df = await asyncio.to_thread(self._pipeline, str(audio_path))
 
         if progress_callback:
             await progress_callback(70)
 
         logger.info("Diarization found %d speaker turns", len(diarize_df))
 
-        # Assign speakers to transcript segments using whisperx
+        # Assign speakers to transcript segments using whisperx. Same
+        # rationale — runs on potentially many segments / words and
+        # shouldn't block the loop.
         logger.info("Assigning speakers to transcript segments...")
-        result = self._whisperx.assign_word_speakers(diarize_df, {"segments": segments})
+        result = await asyncio.to_thread(
+            self._whisperx.assign_word_speakers,
+            diarize_df,
+            {"segments": segments},
+        )
 
         if progress_callback:
             await progress_callback(90)
