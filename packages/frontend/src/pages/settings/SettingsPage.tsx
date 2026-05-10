@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, getApiUrl, type ArchiveInfo, type TranscriptionSettings, type AIModel, type AIModelDownloadEvent, type AISettingsResponse, type OCRModel, type OCRModelDownloadEvent, type WhisperModel, type WhisperModelDownloadEvent, type DiarizationModel, type DiarizationModelDownloadEvent, type TtsModelDownloadEvent, type SystemInfo, type MLStatus, type HardwareInfo, type StorageLocation, type MigrationStatus, type TransferStatus, type SyncResult, type StorageType, type StorageSubtype, type StorageLocationConfig, type OAuthStatusResponse, type CategoryCount, type ClearableCategory, type GpuStatus, type WebSearchSettings, type WebSearchSettingsUpdate, type DictionaryEntry, type PostTranscriptionSettings, type ExtractionCandidate, type Project } from '@/lib/api';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useKeybindingStore, DEFAULT_ACTIONS, formatCombo, type KeyCombo, type ActionCategory } from '@/stores/keybindingStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { StorageTypeSelector } from '@/components/storage/StorageTypeSelector';
 import { StorageSubtypeSelector } from '@/components/storage/StorageSubtypeSelector';
 import { StorageConfigForm } from '@/components/storage/StorageConfigForm';
@@ -319,6 +320,23 @@ function SampleWorkspaceSection() {
     setWorking(true);
     try {
       await api.onboarding.removeSampleWorkspace();
+      // The sample workspace creates one or more projects. If any of
+      // them were currently selected in the project dropdown, the
+      // selection now points at deleted IDs — switch to "All Projects"
+      // by dropping any vanished IDs from the store.
+      try {
+        const fresh = await api.projects.list({ include_archived: true });
+        const validIds = new Set(fresh.items.map((p) => p.id));
+        const { selectedProjects, setSelectedProjects } = useProjectStore.getState();
+        const stillValid = selectedProjects.filter((p) => validIds.has(p.id));
+        if (stillValid.length !== selectedProjects.length) {
+          setSelectedProjects(stillValid);
+        }
+      } catch {
+        // Best-effort cleanup — if the project list fetch fails, leave
+        // the store alone rather than wiping a possibly-still-valid
+        // selection.
+      }
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Remove failed');
